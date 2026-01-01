@@ -211,6 +211,19 @@ if (!isDev) {
         repo: 'devbench-kit',
     });
     
+    // Platform-specific update settings
+    if (process.platform === 'darwin') {
+        // macOS: Works with DMG, but code signing recommended for best experience
+        autoUpdater.allowPrerelease = false;
+    } else if (process.platform === 'win32') {
+        // Windows: Works with NSIS installer and portable
+        autoUpdater.allowPrerelease = false;
+    } else if (process.platform === 'linux') {
+        // Linux: Limited support, works best with AppImage
+        // Note: deb/rpm packages may have limited auto-update support
+        autoUpdater.allowPrerelease = false;
+    }
+    
     autoUpdater.autoDownload = false; // Don't auto-download, let user decide
     autoUpdater.autoInstallOnAppQuit = true; // Install on app quit if downloaded
     
