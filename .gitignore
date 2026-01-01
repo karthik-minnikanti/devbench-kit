@@ -21,7 +21,9 @@ AuthKey_*.p8
 # macOS
 .DS_Store
 *.log
+# Ignore all .md files except README.md
 *.md
+!README.md
 /node_modules
 /build
 
