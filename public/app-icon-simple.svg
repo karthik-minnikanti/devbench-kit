@@ -1,0 +1,54 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradient matching BrandLogo -->
+    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:rgba(37,99,235,0.7);stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background - rounded square matching BrandLogo -->
+  <rect width="1024" height="1024" rx="180" fill="url(#gradient)"/>
+  
+  <!-- Code Icon (matching the Code icon from Icons.tsx) -->
+  <g transform="translate(512, 512) scale(8)">
+    <!-- Code brackets: < > -->
+    <path 
+      d="M -40 0 L -20 -20 M 20 -20 L 40 0 M 20 20 L 40 0 M -20 20 L -40 0"
+      stroke="white" 
+      stroke-width="2.5" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      fill="none"
+    />
+    <!-- Inner code lines -->
+    <path 
+      d="M -20 -20 L 0 -10 M 0 -10 L 20 -20"
+      stroke="white" 
+      stroke-width="2" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      fill="none"
+      opacity="0.8"
+    />
+    <path 
+      d="M -20 20 L 0 10 M 0 10 L 20 20"
+      stroke="white" 
+      stroke-width="2" 
+      stroke-linecap="round" 
+      stroke-linejoin="round"
+      fill="none"
+      opacity="0.8"
+    />
+  </g>
+  
+  <!-- Pulsing dot in top-right (matching BrandLogo) -->
+  <circle cx="850" cy="174" r="80" fill="#2563eb" opacity="0.9"/>
+</svg>
+
+
+
+
+
+
+

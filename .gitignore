@@ -1,0 +1,32 @@
+# Build outputs
+dist/
+dist-electron/
+release/
+*.dmg
+*.pkg
+*.zip
+
+# Environment variables
+.env
+.env.local
+.env.build
+
+# Certificates and keys (NEVER commit these!)
+*.p12
+*.cer
+*.key
+*.p8
+AuthKey_*.p8
+
+# macOS
+.DS_Store
+*.log
+*.md
+/node_modules
+/build
+
+
+
+
+
+

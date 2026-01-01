@@ -1,0 +1,94 @@
+appId: com.devbench.app
+productName: DevBench
+electronVersion: 32.0.0
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: mas
+      arch:
+        - x64
+        - arm64
+  # For development/testing without code signing:
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  # For production with code signing, uncomment and set:
+  # hardenedRuntime: true
+  # identity: "Developer ID Application: Your Name (TEAM_ID)"
+  # entitlements: build/entitlements.mas.plist
+  # entitlementsInherit: build/entitlements.mas.inherit.plist
+mas:
+  entitlements: build/entitlements.mas.plist
+  entitlementsInherit: build/entitlements.mas.inherit.plist
+  # Uncomment and set these for App Store submission:
+  # type: distribution
+  # identity: "3rd Party Mac Developer Application: Your Name (TEAM_ID)"
+dmg:
+  title: ${productName} ${version}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  # Uncomment for notarization:
+  # sign: true
+win:
+  # electron-builder will auto-convert PNG to ICO if .ico doesn't exist
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+    - target: portable
+      arch:
+        - x64
+        - ia32
+  publisherName: Karthik Minnikanti
+  # Signing certificate (uncomment for code signing):
+  # certificateFile: path/to/certificate.pfx
+  # certificatePassword: your-password
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DevBench
+  # Optional: Custom installer script
+  # include: build/installer.nsh
+linux:
+  icon: build/icon.png
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+  category: Development
+  maintainer: Karthik Minnikanti <karthik@devbench.app>
+  desktop:
+    Name: DevBench
+    Comment: Developer Tools Suite
+    Categories: Development;Utility;
