@@ -578,6 +578,87 @@ export function Notes() {
         }
     }, [selectedNote]);
 
+    const handleExportPDF = useCallback(async () => {
+        if (!selectedNote || !editorRef.current) return;
+        
+        try {
+            const note = notes.find(n => n.id === selectedNote);
+            if (!note) return;
+
+            // Get the editor content as HTML
+            const htmlContent = await editorRef.current.blocksToHTMLLossy(editorRef.current.document);
+            
+            // Create a temporary container with the note content
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                alert('Please allow popups to export PDF');
+                return;
+            }
+
+            const isDark = document.documentElement.classList.contains('dark');
+            const bgColor = isDark ? '#111827' : '#fafafa';
+            const textColor = isDark ? '#f9fafb' : '#111827';
+            const borderColor = isDark ? '#374151' : '#e5e7eb';
+
+            printWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>${note.title || 'Untitled Note'}</title>
+                    <style>
+                        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+                        * {
+                            margin: 0;
+                            padding: 0;
+                            box-sizing: border-box;
+                        }
+                        body {
+                            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+                            background: ${bgColor};
+                            color: ${textColor};
+                            padding: 40px;
+                            line-height: 1.6;
+                        }
+                        h1 {
+                            font-size: 28px;
+                            font-weight: 700;
+                            margin-bottom: 24px;
+                            color: ${textColor};
+                            border-bottom: 2px solid ${borderColor};
+                            padding-bottom: 12px;
+                        }
+                        .content {
+                            max-width: 800px;
+                            margin: 0 auto;
+                        }
+                        @media print {
+                            body {
+                                padding: 20px;
+                            }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="content">
+                        <h1>${note.title || 'Untitled Note'}</h1>
+                        <div>${htmlContent}</div>
+                    </div>
+                </body>
+                </html>
+            `);
+            printWindow.document.close();
+            
+            // Wait for content to load, then print
+            setTimeout(() => {
+                printWindow.print();
+            }, 250);
+        } catch (err) {
+            console.error('Failed to export PDF:', err);
+            alert('Failed to export PDF. Please try again.');
+        }
+    }, [selectedNote, notes]);
+
     const handleTitleChange = useCallback((newTitle: string) => {
         const currentNoteId = selectedNote;
         if (!currentNoteId) return;
@@ -667,11 +748,39 @@ export function Notes() {
         }, 200); // Very short debounce - saves almost immediately
     }, [selectedNote]);
 
+    // Keyboard shortcuts - placed after all handlers are defined
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Cmd/Ctrl + N: New note
+            if ((e.metaKey || e.ctrlKey) && e.key === 'n' && !e.shiftKey) {
+                e.preventDefault();
+                if (!loading && !creatingNoteRef.current) {
+                    handleCreateNote();
+                }
+            }
+            // Cmd/Ctrl + E: Export PDF
+            if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
+                e.preventDefault();
+                if (selectedNote && editorRef.current) {
+                    handleExportPDF();
+                }
+            }
+            // Cmd/Ctrl + B: Toggle sidebar
+            if ((e.metaKey || e.ctrlKey) && e.key === 'b' && !e.shiftKey) {
+                e.preventDefault();
+                setShowSidebar(prev => !prev);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [loading, selectedNote, handleCreateNote, handleExportPDF]);
+
     return (
-        <div className="h-full flex flex-col bg-[var(--color-background)]">
-            <div className="flex-1 flex overflow-hidden">
+        <div className="h-full w-full flex flex-col bg-[var(--color-background)] overflow-hidden">
+            <div className="flex-1 flex overflow-hidden h-full">
                 {showSidebar && (
-                    <div className="w-56 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col">
+                    <div className="w-64 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col transition-all duration-300 ease-in-out">
                         <div 
                             className="p-2 flex-1"
                             onDragOver={(e) => {
@@ -688,14 +797,14 @@ export function Notes() {
                                 }
                             }}
                         >
-                            <div className="flex items-center justify-between mb-2">
-                                <h2 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-2">
+                            <div className="flex items-center justify-between mb-3 px-3 pt-3">
+                                <h2 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
                                     Notes
                                 </h2>
                                 <button
                                     onClick={handleCreateNote}
                                     disabled={loading}
-                                    className="px-2.5 py-1 rounded bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                                    className="px-3 py-1.5 rounded-md bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
                                 >
                                     + New
                                 </button>
@@ -749,7 +858,7 @@ export function Notes() {
                                         return (
                                             <div key={folder.id} className="mb-1">
                                                 <div
-                                                    className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer group ${
+                                                    className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer group transition-all duration-200 ${
                                                         isDragOver ? 'bg-[var(--color-primary)]/20' : 'hover:bg-[var(--color-hover)]'
                                                     }`}
                                                     onClick={() => toggleFolder(folder.id)}
@@ -771,7 +880,7 @@ export function Notes() {
                                                             e.stopPropagation();
                                                             handleDeleteFolder(folder.id);
                                                         }}
-                                                        className="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
+                                                        className="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)] hover:text-red-500 transition-all duration-200"
                                                     >
                                                         ×
                                                     </button>
@@ -806,7 +915,7 @@ export function Notes() {
                                 return (
                                     <div key={group.label} className="mb-2">
                                         <div
-                                            className="flex items-center gap-1 px-2 py-1 rounded cursor-pointer hover:bg-[var(--color-hover)]"
+                                            className="flex items-center gap-1 px-2 py-1 rounded cursor-pointer hover:bg-[var(--color-hover)] transition-all duration-200"
                                             onClick={() => toggleGroup(group.label)}
                                         >
                                             <span className="text-xs text-[var(--color-text-tertiary)]">
@@ -842,34 +951,88 @@ export function Notes() {
                     </div>
                 )}
 
-                <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex-1 flex flex-col overflow-hidden h-full w-full">
                     {selectedNote ? (
                         <>
-                            <div className="border-b border-[var(--color-border)] bg-[var(--color-sidebar)] p-4">
-                                <div className="flex items-center gap-2">
+                            <div className="border-b border-[var(--color-border)] bg-[var(--color-background)] px-4 py-2 flex-shrink-0">
+                                <div className="flex items-center gap-3">
                                     <button
                                         onClick={() => setShowSidebar(!showSidebar)}
-                                        className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)]"
+                                        className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                                        title={showSidebar ? "Hide sidebar" : "Show sidebar"}
                                     >
-                                        <Icon name="menu" size={16} />
+                                        <Icon name="menu" size={18} />
                                     </button>
                                     <input
                                         type="text"
                                         value={noteTitle}
                                         onChange={(e) => handleTitleChange(e.target.value)}
                                         placeholder="Untitled Note"
-                                        className="w-full text-sm font-semibold text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)]"
+                                        className="flex-1 text-base font-semibold text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)] focus:outline-none"
                                     />
+                                    <button
+                                        onClick={handleExportPDF}
+                                        className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                                        title="Export to PDF"
+                                    >
+                                        <Icon name="Download" size={18} />
+                                    </button>
                                 </div>
                             </div>
-                            <div className="flex-1 overflow-auto p-4">
-                                <div className="max-w-3xl mx-auto" style={{ minHeight: '500px', padding: '20px' }}>
+                            <div className="flex-1 overflow-y-auto overflow-x-hidden h-full w-full bg-[var(--color-background)]">
+                                <div className="w-full h-full">
                                     {editor ? (
-                                        <div style={{ minHeight: '500px', width: '100%' }} key={`editor-${selectedNote}`}>
+                                        <div className="w-full h-full notes-editor-container px-6 py-4" key={`editor-${selectedNote}`}>
+                                            <style>{`
+                                                .notes-editor-container {
+                                                    --bn-colors-editor-text: var(--color-text-primary);
+                                                    --bn-colors-editor-background: var(--color-background);
+                                                    --bn-colors-menu-text: var(--color-text-primary);
+                                                    --bn-colors-menu-background: var(--color-card);
+                                                    --bn-colors-menu-text-hover: var(--color-text-primary);
+                                                    --bn-colors-menu-background-hover: var(--color-hover);
+                                                    --bn-colors-toolbar-text: var(--color-text-primary);
+                                                    --bn-colors-toolbar-background: var(--color-card);
+                                                    --bn-colors-toolbar-text-hover: var(--color-text-primary);
+                                                    --bn-colors-toolbar-background-hover: var(--color-hover);
+                                                    --bn-colors-suggestion-menu-text: var(--color-text-primary);
+                                                    --bn-colors-suggestion-menu-background: var(--color-card);
+                                                    --bn-colors-suggestion-menu-text-selected: var(--color-text-primary);
+                                                    --bn-colors-suggestion-menu-background-selected: var(--color-hover);
+                                                    --bn-colors-placeholder-text: var(--color-text-tertiary);
+                                                    --bn-colors-selected-text: var(--color-text-primary);
+                                                    --bn-colors-selected-background: var(--color-primary);
+                                                    --bn-border-radius: 6px;
+                                                    --bn-border-color: var(--color-border);
+                                                }
+                                                .notes-editor-container .bn-container {
+                                                    width: 100% !important;
+                                                    height: 100% !important;
+                                                    background: var(--color-background) !important;
+                                                }
+                                                .notes-editor-container .bn-editor {
+                                                    width: 100% !important;
+                                                    min-height: 100% !important;
+                                                    background: var(--color-background) !important;
+                                                }
+                                                .notes-editor-container .bn-menu {
+                                                    background: var(--color-card) !important;
+                                                    border: 1px solid var(--color-border) !important;
+                                                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+                                                }
+                                                .notes-editor-container .bn-toolbar {
+                                                    background: var(--color-card) !important;
+                                                    border: 1px solid var(--color-border) !important;
+                                                }
+                                                .notes-editor-container .bn-suggestion-menu {
+                                                    background: var(--color-card) !important;
+                                                    border: 1px solid var(--color-border) !important;
+                                                }
+                                            `}</style>
                                             <BlockNoteView editor={editor} />
                                         </div>
                                     ) : (
-                                        <div className="text-center text-[var(--color-text-secondary)] p-8">
+                                        <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
                                             <p>Loading editor...</p>
                                         </div>
                                     )}
@@ -877,32 +1040,40 @@ export function Notes() {
                             </div>
                         </>
                     ) : (
-                        <div className="flex-1 flex items-center justify-center bg-[var(--color-sidebar)]">
-                            <div className="text-center">
+                        <div className="flex-1 flex items-center justify-center bg-[var(--color-background)] w-full h-full">
+                            <div className="text-center px-6">
                                 {notes.length === 0 ? (
                                     <>
-                                        <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-2">
+                                        <h2 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-3">
                                             No notes yet
                                         </h2>
-                                        <p className="text-[var(--color-text-secondary)] mb-4">
+                                        <p className="text-[var(--color-text-secondary)] mb-6 text-base">
                                             Create your first note to get started
                                         </p>
                                         <button
                                             onClick={handleCreateNote}
                                             disabled={loading}
-                                            className="px-4 py-2 rounded bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                                            className="px-6 py-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
                                         >
                                             {loading ? 'Creating...' : '+ Create New Note'}
                                         </button>
                                     </>
                                 ) : (
                                     <>
-                                        <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-2">
+                                        <h2 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-3">
                                             Select a note
                                         </h2>
-                                        <p className="text-[var(--color-text-secondary)]">
+                                        <p className="text-[var(--color-text-secondary)] text-base">
                                             Choose a note from the sidebar to start editing
                                         </p>
+                                        {!showSidebar && (
+                                            <button
+                                                onClick={() => setShowSidebar(true)}
+                                                className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-muted)] text-[var(--color-text-primary)] text-sm font-medium hover:bg-[var(--color-hover)] transition-all duration-200"
+                                            >
+                                                Show Sidebar
+                                            </button>
+                                        )}
                                     </>
                                 )}
                             </div>

@@ -2229,6 +2229,78 @@ ipcMain.handle('apiclient:save', async (_event: any, requests: any[]) => {
     }
 });
 
+// API Client History handlers
+ipcMain.handle('apiclient:getHistory', async () => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        const history = await fileStorage.getApiHistory();
+        return { success: true, history };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('apiclient:saveHistory', async (_event: any, history: any[]) => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        return await fileStorage.saveApiHistory(history);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+// API Client Console Logs handlers
+ipcMain.handle('apiclient:getConsoleLogs', async () => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        const logs = await fileStorage.getApiConsoleLogs();
+        return { success: true, logs };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('apiclient:saveConsoleLogs', async (_event: any, logs: any[]) => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        return await fileStorage.saveApiConsoleLogs(logs);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+// API Client Environments handlers
+ipcMain.handle('apiclient:getEnvironments', async () => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        const data = await fileStorage.getApiEnvironments();
+        return { success: true, ...data };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('apiclient:saveEnvironments', async (_event: any, data: { environments: any[]; activeEnvironmentId: string | null }) => {
+    try {
+        if (!fileStorage.isInitialized()) {
+            return { success: false, error: 'File storage not initialized' };
+        }
+        return await fileStorage.saveApiEnvironments(data);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
 // IPC handler for API client requests - uses Node's http/https to bypass CORS
 ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
     return new Promise((resolve, reject) => {

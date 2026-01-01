@@ -385,3 +385,88 @@ body {
 .monaco-editor .inputarea.ime-input {
     background-color: #ffffff !important;
 }
+
+/* BlockNote Editor Theme */
+.bn-container {
+    --bn-colors-editor-text: var(--color-text-primary);
+    --bn-colors-editor-background: var(--color-background);
+    --bn-colors-menu-text: var(--color-text-primary);
+    --bn-colors-menu-background: var(--color-card);
+    --bn-colors-menu-text-hover: var(--color-text-primary);
+    --bn-colors-menu-background-hover: var(--color-muted);
+    --bn-colors-toolbar-text: var(--color-text-primary);
+    --bn-colors-toolbar-background: var(--color-card);
+    --bn-colors-toolbar-text-hover: var(--color-text-primary);
+    --bn-colors-toolbar-background-hover: var(--color-muted);
+    --bn-colors-suggestion-menu-text: var(--color-text-primary);
+    --bn-colors-suggestion-menu-background: var(--color-card);
+    --bn-colors-suggestion-menu-text-selected: var(--color-text-primary);
+    --bn-colors-suggestion-menu-background-selected: var(--color-muted);
+    --bn-colors-placeholder-text: var(--color-text-tertiary);
+    --bn-colors-selected-text: var(--color-text-primary);
+    --bn-colors-selected-background: var(--color-primary);
+    --bn-border-radius: 6px;
+    --bn-border-color: var(--color-border);
+    background: var(--color-background) !important;
+    color: var(--color-text-primary) !important;
+}
+
+.bn-editor {
+    background: var(--color-background) !important;
+    color: var(--color-text-primary) !important;
+}
+
+.bn-block-content,
+.bn-inline-content {
+    color: var(--color-text-primary) !important;
+}
+
+.bn-menu {
+    background: var(--color-card) !important;
+    border: 1px solid var(--color-border) !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+.bn-menu-item {
+    color: var(--color-text-primary) !important;
+}
+
+.bn-menu-item:hover {
+    background: var(--color-muted) !important;
+}
+
+.bn-toolbar {
+    background: var(--color-card) !important;
+    border: 1px solid var(--color-border) !important;
+}
+
+.bn-toolbar-button {
+    color: var(--color-text-primary) !important;
+}
+
+.bn-toolbar-button:hover {
+    background: var(--color-muted) !important;
+}
+
+.bn-suggestion-menu {
+    background: var(--color-card) !important;
+    border: 1px solid var(--color-border) !important;
+}
+
+.bn-suggestion-menu-item {
+    color: var(--color-text-primary) !important;
+}
+
+.bn-suggestion-menu-item:hover,
+.bn-suggestion-menu-item[data-selected="true"] {
+    background: var(--color-muted) !important;
+}
+
+.bn-placeholder {
+    color: var(--color-text-tertiary) !important;
+}
+
+.bn-selected {
+    background: var(--color-primary) !important;
+    opacity: 0.15 !important;
+}

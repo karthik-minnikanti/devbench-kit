@@ -94,14 +94,12 @@ export function Console({ isOpen, onClose, logs, onClear }: ConsoleProps) {
 
         <div className="flex-1 overflow-y-auto p-4 font-mono text-xs">
           {logs.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <Icon name="Terminal" className="w-16 h-16 text-[var(--color-text-tertiary)] mx-auto mb-4 opacity-50" />
-                <p className="text-sm text-[var(--color-text-secondary)]">Console is empty</p>
-                <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                  Script logs and request details will appear here
-                </p>
-              </div>
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <Icon name="Terminal" className="w-16 h-16 text-[var(--color-text-tertiary)] mb-4 opacity-50" />
+              <p className="text-sm text-[var(--color-text-secondary)]">Console is empty</p>
+              <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                Script logs and request details will appear here
+              </p>
             </div>
           ) : (
             <div className="space-y-1">

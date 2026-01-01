@@ -344,24 +344,67 @@ export function ApiClient() {
     loadVariables();
     loadEnvironments();
     loadRequestHistory();
+    loadConsoleLogs();
     loadResizeSettings();
   }, []);
 
-  // Load environments from localStorage
-  const loadEnvironments = () => {
+  // Save console logs on unmount (as backup, but they should already be saved immediately)
+  useEffect(() => {
+    return () => {
+      // Save console logs before unmount as a safety measure
+      if (consoleLogs.length > 0 && (window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+        (window as any).electronAPI.apiClient.saveConsoleLogs(consoleLogs).catch((err: any) => {
+          console.error('Failed to save console logs on unmount:', err);
+        });
+      }
+    };
+  }, [consoleLogs]);
+
+  // Load console logs from file system
+  const loadConsoleLogs = async () => {
     try {
+      if ((window as any).electronAPI?.apiClient?.getConsoleLogs) {
+        const result = await (window as any).electronAPI.apiClient.getConsoleLogs();
+        if (result.success) {
+          setConsoleLogs(result.logs || []);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load console logs:', err);
+    }
+  };
+
+  // Load environments from file system
+  const loadEnvironments = async () => {
+    try {
+      if ((window as any).electronAPI?.apiClient?.getEnvironments) {
+        const result = await (window as any).electronAPI.apiClient.getEnvironments();
+        if (result.success) {
+          setEnvironments(result.environments || []);
+          setActiveEnvironmentId(result.activeEnvironmentId || null);
+          return;
+        }
+      }
+      // Fallback to localStorage for migration
       const stored = localStorage.getItem('devbench-api-environments');
       if (stored) {
         const parsed = JSON.parse(stored);
         setEnvironments(parsed.environments || []);
         setActiveEnvironmentId(parsed.activeEnvironmentId || null);
+        // Migrate to file system
+        if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+          await (window as any).electronAPI.apiClient.saveEnvironments({
+            environments: parsed.environments || [],
+            activeEnvironmentId: parsed.activeEnvironmentId || null,
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to load environments:', err);
     }
   };
 
-  // Save environments to localStorage
+  // Save environments to file system
   const saveEnvironments = async (env: Omit<Environment, 'createdAt' | 'updatedAt'>) => {
     try {
       const existing = environments.find(e => e.id === env.id);
@@ -374,10 +417,13 @@ export function ApiClient() {
         : [...environments, updated];
 
       setEnvironments(updatedEnvs);
-      localStorage.setItem('devbench-api-environments', JSON.stringify({
-        environments: updatedEnvs,
-        activeEnvironmentId,
-      }));
+
+      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+        await (window as any).electronAPI.apiClient.saveEnvironments({
+          environments: updatedEnvs,
+          activeEnvironmentId,
+        });
+      }
     } catch (err) {
       console.error('Failed to save environment:', err);
     }
@@ -387,57 +433,118 @@ export function ApiClient() {
   const deleteEnvironment = async (id: string) => {
     try {
       const updated = environments.filter(e => e.id !== id);
+      const newActiveId = activeEnvironmentId === id ? null : activeEnvironmentId;
       setEnvironments(updated);
-      if (activeEnvironmentId === id) {
-        setActiveEnvironmentId(null);
+      setActiveEnvironmentId(newActiveId);
+
+      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+        await (window as any).electronAPI.apiClient.saveEnvironments({
+          environments: updated,
+          activeEnvironmentId: newActiveId,
+        });
       }
-      localStorage.setItem('devbench-api-environments', JSON.stringify({
-        environments: updated,
-        activeEnvironmentId: activeEnvironmentId === id ? null : activeEnvironmentId,
-      }));
     } catch (err) {
       console.error('Failed to delete environment:', err);
     }
   };
 
-  // Load request history from localStorage
-  const loadRequestHistory = () => {
+  // Load request history from file system
+  const loadRequestHistory = async () => {
     try {
+      if ((window as any).electronAPI?.apiClient?.getHistory) {
+        const result = await (window as any).electronAPI.apiClient.getHistory();
+        if (result.success) {
+          setRequestHistory(result.history || []);
+          return;
+        }
+      }
+      // Fallback to localStorage for migration
       const stored = localStorage.getItem('devbench-api-history');
       if (stored) {
-        setRequestHistory(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setRequestHistory(parsed);
+        // Migrate to file system
+        if ((window as any).electronAPI?.apiClient?.saveHistory) {
+          await (window as any).electronAPI.apiClient.saveHistory(parsed);
+        }
       }
     } catch (err) {
       console.error('Failed to load request history:', err);
     }
   };
 
-  // Add to request history
-  const addToHistory = (entry: HistoryEntry) => {
+  // Add to request history and save to file system
+  const addToHistory = async (entry: HistoryEntry) => {
     const updated = [entry, ...requestHistory].slice(0, 1000); // Keep last 1000 requests
     setRequestHistory(updated);
-    localStorage.setItem('devbench-api-history', JSON.stringify(updated));
+
+    if ((window as any).electronAPI?.apiClient?.saveHistory) {
+      try {
+        await (window as any).electronAPI.apiClient.saveHistory(updated);
+      } catch (err) {
+        console.error('Failed to save history to file system:', err);
+      }
+    }
   };
 
   // Clear request history
-  const clearHistory = () => {
+  const clearHistory = async () => {
     setRequestHistory([]);
-    localStorage.removeItem('devbench-api-history');
+
+    if ((window as any).electronAPI?.apiClient?.saveHistory) {
+      try {
+        await (window as any).electronAPI.apiClient.saveHistory([]);
+      } catch (err) {
+        console.error('Failed to clear history in file system:', err);
+      }
+    }
   };
 
-  // Add console log
-  const addConsoleLog = (log: Omit<ConsoleLog, 'id' | 'timestamp'>) => {
+  // Save console logs to file system (immediate)
+  const saveConsoleLogs = async (logs: ConsoleLog[]) => {
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs(logs);
+      } catch (err) {
+        console.error('Failed to save console logs to file system:', err);
+      }
+    }
+  };
+
+  // Add console log and save to file system immediately
+  const addConsoleLog = async (log: Omit<ConsoleLog, 'id' | 'timestamp'>) => {
     const newLog: ConsoleLog = {
       ...log,
       id: `log-${Date.now()}-${Math.random()}`,
       timestamp: new Date().toISOString(),
     };
-    setConsoleLogs(prev => [...prev, newLog].slice(-500)); // Keep last 500 logs
+
+    // Calculate updated logs before setState (like history and environments do)
+    const updatedLogs = [...consoleLogs, newLog].slice(-500); // Keep last 500 logs
+    setConsoleLogs(updatedLogs);
+
+    // Save immediately to file system (await like history and environments)
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs(updatedLogs);
+      } catch (err: any) {
+        console.error('Failed to save console log:', err);
+      }
+    }
   };
 
-  // Clear console
-  const clearConsole = () => {
+  // Clear console and save to file system
+  const clearConsole = async () => {
     setConsoleLogs([]);
+
+    // Save empty array immediately to file system (await like history)
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs([]);
+      } catch (err: any) {
+        console.error('Failed to clear console logs in file system:', err);
+      }
+    }
   };
 
   // Handle sidebar resize
@@ -2131,7 +2238,20 @@ export function ApiClient() {
           activeEnvironmentId={activeEnvironmentId}
           onSaveEnvironment={saveEnvironments}
           onDeleteEnvironment={deleteEnvironment}
-          onSetActive={setActiveEnvironmentId}
+          onSetActive={async (id: string | null) => {
+            setActiveEnvironmentId(id);
+            // Save active environment ID to file system
+            if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+              try {
+                await (window as any).electronAPI.apiClient.saveEnvironments({
+                  environments,
+                  activeEnvironmentId: id,
+                });
+              } catch (err) {
+                console.error('Failed to save active environment:', err);
+              }
+            }
+          }}
         />
       )}
 
@@ -2742,7 +2862,7 @@ export function ApiClient() {
               </div>
 
               {/* Request Tab Content */}
-              <div className="flex-1 overflow-auto p-3 bg-[var(--color-background)]">
+              <div className={`flex-1 overflow-auto bg-[var(--color-background)] ${activeRequestTab === 'body' ? '' : 'p-3'}`}>
                 {activeRequestTab === 'params' && (
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Query Parameters</div>
@@ -2849,8 +2969,8 @@ export function ApiClient() {
                 )}
 
                 {activeRequestTab === 'body' && (
-                  <div className="space-y-3 flex flex-col h-full">
-                    <div className="flex items-center justify-between flex-shrink-0">
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-between flex-shrink-0 px-3 py-2 border-b border-[var(--color-border)]">
                       <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Body</div>
                       <select
                         value={bodyType}
@@ -2867,19 +2987,19 @@ export function ApiClient() {
                     </div>
 
                     {bodyType === 'none' && (
-                      <div className="h-32 flex items-center justify-center text-gray-500 dark:text-gray-400 text-xs flex-shrink-0">
+                      <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 text-xs">
                         This request does not have a body
                       </div>
                     )}
 
                     {(bodyType === 'json' || bodyType === 'raw') && (
-                      <div className="flex-1 min-h-0 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
+                      <div className="flex-1 min-h-0 overflow-hidden">
                         {renderBodyEditor()}
                       </div>
                     )}
 
                     {(bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') && (
-                      <div className="space-y-2 flex-1 min-h-0 overflow-y-auto">
+                      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
                         {formData.map((field, index) => (
                           <div key={index} className="flex gap-2 items-center">
                             <input

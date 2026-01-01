@@ -191,6 +191,12 @@ try {
             saveRequest: (request: any) => ipcRenderer.invoke('apiclient:saveRequest', request),
             deleteRequest: (id: string) => ipcRenderer.invoke('apiclient:deleteRequest', id),
             save: (requests: any[]) => ipcRenderer.invoke('apiclient:save', requests),
+            getHistory: () => ipcRenderer.invoke('apiclient:getHistory'),
+            saveHistory: (history: any[]) => ipcRenderer.invoke('apiclient:saveHistory', history),
+            getConsoleLogs: () => ipcRenderer.invoke('apiclient:getConsoleLogs'),
+            saveConsoleLogs: (logs: any[]) => ipcRenderer.invoke('apiclient:saveConsoleLogs', logs),
+            getEnvironments: () => ipcRenderer.invoke('apiclient:getEnvironments'),
+            saveEnvironments: (data: { environments: any[]; activeEnvironmentId: string | null }) => ipcRenderer.invoke('apiclient:saveEnvironments', data),
         },
         folders: {
             get: (parentId?: string | null) => ipcRenderer.invoke('folders:get', parentId),
