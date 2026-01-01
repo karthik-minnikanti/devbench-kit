@@ -1,12 +1,13 @@
 {
   "name": "devbench-desktop",
-  "version": "1.0.0",
+  "version": "0.1",
   "description": "DevBench Desktop Application",
   "homepage": "https://github.com/karthikminnikanti/devbench",
   "author": {
     "name": "Karthik Minnikanti",
     "email": "karthik@devbench.app"
   },
+  "license": "MIT",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
