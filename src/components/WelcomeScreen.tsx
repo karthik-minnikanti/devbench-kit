@@ -19,7 +19,7 @@ export function WelcomeScreen({ onDismiss, onOpenTool }: WelcomeScreenProps) {
         },
         {
             icon: 'Globe',
-            title: 'API Client',
+            title: 'API Studio',
             description: 'Test REST APIs with a Postman-like interface',
             action: () => onOpenTool('api'),
         },
@@ -121,7 +121,7 @@ export function WelcomeScreen({ onDismiss, onOpenTool }: WelcomeScreenProps) {
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
-                    {['Schema Generator', 'JSON/XML Converter', 'JSON Diff', 'Encoder/Decoder', 'CSV/YAML Converter', 'API Client', 'Formatter', 'Regex Tester', 'JavaScript Runner', 'Docker', 'Kubernetes', 'Notes', 'Excalidraw', 'UML Editor', 'Profile'].map((tool) => (
+                    {['Schema Generator', 'JSON/XML Converter', 'JSON Diff', 'Encoder/Decoder', 'CSV/YAML Converter', 'API Studio', 'Formatter', 'Regex Tester', 'JavaScript Runner', 'Docker', 'Kubernetes', 'Notes', 'Excalidraw', 'UML Editor', 'Profile'].map((tool) => (
                         <button
                             key={tool}
                             onClick={() => {
@@ -131,7 +131,7 @@ export function WelcomeScreen({ onDismiss, onOpenTool }: WelcomeScreenProps) {
                                     'JSON Diff': 'json-diff',
                                     'Encoder/Decoder': 'encoder',
                                     'CSV/YAML Converter': 'csv-yaml',
-                                    'API Client': 'api',
+                                    'API Studio': 'api',
                                     'Formatter': 'formatter',
                                     'Regex Tester': 'regex',
                                     'JavaScript Runner': 'js-runner',

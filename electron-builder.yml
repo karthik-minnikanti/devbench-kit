@@ -9,6 +9,10 @@ files:
   - dist-electron/**/*
   - package.json
 npmRebuild: false
+publish:
+  provider: github
+  owner: karthik-minnikanti
+  repo: devbench-kit
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns

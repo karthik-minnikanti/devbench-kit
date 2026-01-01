@@ -206,6 +206,30 @@ try {
             status: () => ipcRenderer.invoke('git:status'),
             pull: () => ipcRenderer.invoke('git:pull'),
         },
+        updater: {
+            checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
+            downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
+            quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
+            getAppVersion: () => ipcRenderer.invoke('updater:getAppVersion'),
+            onCheckingForUpdate: (callback: () => void) => {
+                ipcRenderer.on('updater:checking-for-update', () => callback());
+            },
+            onUpdateAvailable: (callback: (info: any) => void) => {
+                ipcRenderer.on('updater:update-available', (_event: any, info: any) => callback(info));
+            },
+            onUpdateNotAvailable: (callback: (info: any) => void) => {
+                ipcRenderer.on('updater:update-not-available', (_event: any, info: any) => callback(info));
+            },
+            onUpdateError: (callback: (error: any) => void) => {
+                ipcRenderer.on('updater:error', (_event: any, error: any) => callback(error));
+            },
+            onDownloadProgress: (callback: (progress: any) => void) => {
+                ipcRenderer.on('updater:download-progress', (_event: any, progress: any) => callback(progress));
+            },
+            onUpdateDownloaded: (callback: (info: any) => void) => {
+                ipcRenderer.on('updater:update-downloaded', (_event: any, info: any) => callback(info));
+            },
+        },
     });
 
     console.log('[Preload] Electron API exposed successfully');
@@ -347,6 +371,18 @@ declare global {
                 sync: (filePaths?: string[], commitMessage?: string) => Promise<any>;
                 status: () => Promise<any>;
                 pull: () => Promise<any>;
+            };
+            updater: {
+                checkForUpdates: () => Promise<any>;
+                downloadUpdate: () => Promise<any>;
+                quitAndInstall: () => Promise<any>;
+                getAppVersion: () => Promise<any>;
+                onCheckingForUpdate: (callback: () => void) => void;
+                onUpdateAvailable: (callback: (info: any) => void) => void;
+                onUpdateNotAvailable: (callback: (info: any) => void) => void;
+                onUpdateError: (callback: (error: any) => void) => void;
+                onDownloadProgress: (callback: (progress: any) => void) => void;
+                onUpdateDownloaded: (callback: (info: any) => void) => void;
             };
             onLicenseValidated: (callback: (data: any) => void) => void;
             onLicenseInvalid: (callback: (data: any) => void) => void;

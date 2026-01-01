@@ -1,8 +1,8 @@
 {
   "name": "devbench-desktop",
-  "version": "0.1",
+  "version": "0.1.0",
   "description": "DevBench Desktop Application",
-  "homepage": "https://github.com/karthikminnikanti/devbench",
+  "homepage": "https://github.com/karthik-minnikanti/devbench-kit",
   "author": {
     "name": "Karthik Minnikanti",
     "email": "karthik@devbench.app"

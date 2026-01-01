@@ -15,7 +15,7 @@ A comprehensive desktop application for developers that combines productivity to
 - Quick navigation to frequently used tools
 - Calendar integration for date selection
 
-### 🌐 API Client
+### 🌐 API Studio
 A powerful Postman-like interface for testing REST APIs with the following features:
 
 - **Request Management**
@@ -192,7 +192,7 @@ All data is stored locally in your Git repository:
 
 - `Cmd/Ctrl + K` - Open global search
 - `Cmd/Ctrl + /` - Show keyboard shortcuts
-- `Cmd/Ctrl + Enter` - Send API request (in API Client)
+- `Cmd/Ctrl + Enter` - Send API request (in API Studio)
 
 ## 🛠️ Technology Stack
 
@@ -223,7 +223,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Version 0.1
 - Initial release
-- API Client
+- API Studio
 - Daily Planner with task management and habit tracking
 - JavaScript Runner
 - Rich text Notes with Git sync

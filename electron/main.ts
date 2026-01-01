@@ -2,8 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, session } from 'electron';
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
-// Temporarily disable autoUpdater to avoid network reachability crash on macOS 26.0
-// import { autoUpdater } from 'electron-updater';
+import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { exec, spawn, ChildProcess } from 'child_process';
@@ -204,8 +203,39 @@ async function createWindow() {
     );
 }
 
+// Configure auto-updater
+if (!isDev) {
+    autoUpdater.setFeedURL({
+        provider: 'github',
+        owner: 'karthik-minnikanti',
+        repo: 'devbench-kit',
+    });
+    
+    autoUpdater.autoDownload = false; // Don't auto-download, let user decide
+    autoUpdater.autoInstallOnAppQuit = true; // Install on app quit if downloaded
+    
+    // Update check interval (check every 4 hours)
+    setInterval(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            autoUpdater.checkForUpdates().catch(err => {
+                console.error('[AutoUpdater] Error checking for updates:', err);
+            });
+        }
+    }, 4 * 60 * 60 * 1000); // 4 hours
+}
+
 app.whenReady().then(async () => {
     await createWindow();
+
+    // Check for updates on startup (only in production)
+    if (!isDev && mainWindow) {
+        // Wait a bit before checking to ensure window is ready
+        setTimeout(() => {
+            autoUpdater.checkForUpdates().catch(err => {
+                console.error('[AutoUpdater] Error checking for updates on startup:', err);
+            });
+        }, 3000);
+    }
 
     app.on('activate', async () => {
         if (BrowserWindow.getAllWindows().length === 0) {
@@ -2500,4 +2530,108 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
         }
     });
 });
+
+// Auto-updater IPC handlers
+ipcMain.handle('updater:checkForUpdates', async () => {
+    if (isDev) {
+        return { error: 'Updates are disabled in development mode' };
+    }
+    try {
+        const result = await autoUpdater.checkForUpdates();
+        return {
+            updateInfo: result?.updateInfo ? {
+                version: result.updateInfo.version,
+                releaseDate: result.updateInfo.releaseDate,
+                releaseNotes: result.updateInfo.releaseNotes,
+            } : null,
+            downloadPromise: result?.downloadPromise ? true : false,
+        };
+    } catch (error: any) {
+        return { error: error.message || 'Failed to check for updates' };
+    }
+});
+
+ipcMain.handle('updater:downloadUpdate', async () => {
+    if (isDev) {
+        return { error: 'Updates are disabled in development mode' };
+    }
+    try {
+        await autoUpdater.downloadUpdate();
+        return { success: true };
+    } catch (error: any) {
+        return { error: error.message || 'Failed to download update' };
+    }
+});
+
+ipcMain.handle('updater:quitAndInstall', () => {
+    if (isDev) {
+        return { error: 'Updates are disabled in development mode' };
+    }
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+});
+
+ipcMain.handle('updater:getAppVersion', () => {
+    return { version: app.getVersion() };
+});
+
+// Auto-updater event listeners
+if (!isDev) {
+    autoUpdater.on('checking-for-update', () => {
+        console.log('[AutoUpdater] Checking for update...');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:checking-for-update');
+        }
+    });
+
+    autoUpdater.on('update-available', (info) => {
+        console.log('[AutoUpdater] Update available:', info.version);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:update-available', {
+                version: info.version,
+                releaseDate: info.releaseDate,
+                releaseNotes: info.releaseNotes,
+            });
+        }
+    });
+
+    autoUpdater.on('update-not-available', (info) => {
+        console.log('[AutoUpdater] Update not available. Current version is latest.');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:update-not-available', {
+                version: info.version,
+            });
+        }
+    });
+
+    autoUpdater.on('error', (err) => {
+        console.error('[AutoUpdater] Error:', err);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:error', {
+                message: err.message || 'An error occurred while checking for updates',
+            });
+        }
+    });
+
+    autoUpdater.on('download-progress', (progressObj) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:download-progress', {
+                percent: progressObj.percent,
+                transferred: progressObj.transferred,
+                total: progressObj.total,
+            });
+        }
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+        console.log('[AutoUpdater] Update downloaded:', info.version);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('updater:update-downloaded', {
+                version: info.version,
+                releaseDate: info.releaseDate,
+                releaseNotes: info.releaseNotes,
+            });
+        }
+    });
+}
 
