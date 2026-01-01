@@ -475,6 +475,84 @@ class FileStorageService {
         }
     }
 
+    // API Client History
+    async getApiHistory(): Promise<any[]> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'history.json');
+            const content = await fs.readFile(filePath, 'utf-8');
+            return JSON.parse(content);
+        } catch (error: any) {
+            if ((error as any).code === 'ENOENT') {
+                return [];
+            }
+            console.error('Failed to get API history:', error);
+            return [];
+        }
+    }
+
+    async saveApiHistory(history: any[]): Promise<{ success: boolean; error?: string }> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'history.json');
+            await fs.writeFile(filePath, JSON.stringify(history, null, 2), 'utf-8');
+            await this.triggerSync(filePath, 'apiclient');
+            return { success: true };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    }
+
+    // API Client Console Logs
+    async getApiConsoleLogs(): Promise<any[]> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'console.json');
+            const content = await fs.readFile(filePath, 'utf-8');
+            return JSON.parse(content);
+        } catch (error: any) {
+            if ((error as any).code === 'ENOENT') {
+                return [];
+            }
+            console.error('Failed to get API console logs:', error);
+            return [];
+        }
+    }
+
+    async saveApiConsoleLogs(logs: any[]): Promise<{ success: boolean; error?: string }> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'console.json');
+            await fs.writeFile(filePath, JSON.stringify(logs, null, 2), 'utf-8');
+            await this.triggerSync(filePath, 'apiclient');
+            return { success: true };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    }
+
+    // API Client Environments
+    async getApiEnvironments(): Promise<{ environments: any[]; activeEnvironmentId: string | null }> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'environments.json');
+            const content = await fs.readFile(filePath, 'utf-8');
+            return JSON.parse(content);
+        } catch (error: any) {
+            if ((error as any).code === 'ENOENT') {
+                return { environments: [], activeEnvironmentId: null };
+            }
+            console.error('Failed to get API environments:', error);
+            return { environments: [], activeEnvironmentId: null };
+        }
+    }
+
+    async saveApiEnvironments(data: { environments: any[]; activeEnvironmentId: string | null }): Promise<{ success: boolean; error?: string }> {
+        try {
+            const filePath = path.join(this.config.repoPath, 'apiclient', 'environments.json');
+            await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+            await this.triggerSync(filePath, 'apiclient');
+            return { success: true };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    }
+
     // Folders
     async getFolders(): Promise<any[]> {
         try {

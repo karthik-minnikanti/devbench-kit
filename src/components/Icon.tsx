@@ -1,4 +1,5 @@
 import { Icons as IconSet } from './Icons';
+import { cloneElement } from 'react';
 
 interface IconProps {
     name: keyof typeof IconSet;
@@ -8,7 +9,9 @@ interface IconProps {
 export function Icon({ name, className = "w-4 h-4" }: IconProps) {
     const IconComponent = IconSet[name];
     if (!IconComponent) return null;
-    return <IconComponent />;
+    const iconElement = <IconComponent />;
+    // Clone the element and apply the className
+    return cloneElement(iconElement, { className });
 }
 
 

@@ -113,7 +113,7 @@ export function Home() {
     const allQuickAccessItems = [
         { id: 'planner', label: 'Daily Planner', icon: 'Calendar', color: 'bg-pink-500' },
         { id: 'excalidraw', label: 'Excalidraw', icon: 'Pen', color: 'bg-purple-500' },
-        { id: 'api', label: 'API Client', icon: 'Globe', color: 'bg-green-500' },
+        { id: 'api', label: 'API Studio', icon: 'Globe', color: 'bg-green-500' },
         { id: 'formatter', label: 'Formatter', icon: 'Code', color: 'bg-indigo-500' },
         { id: 'notes', label: 'Notes', icon: 'FileText', color: 'bg-yellow-500' },
         { id: 'schema', label: 'Schema Generator', icon: 'Schema', color: 'bg-blue-500' },

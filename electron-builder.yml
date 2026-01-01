@@ -9,6 +9,14 @@ files:
   - dist-electron/**/*
   - package.json
 npmRebuild: false
+publish:
+  provider: github
+  owner: karthik-minnikanti
+  repo: devbench-kit
+  # Auto-update will work for all platforms when releases are published to GitHub
+  # Mac: Works with DMG (code signing recommended for best experience)
+  # Windows: Works with NSIS installer and portable
+  # Linux: Works with AppImage (deb/rpm have limited support)
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns

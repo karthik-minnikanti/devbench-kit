@@ -28,7 +28,7 @@ const categories = allCategories
 const tabLabels: Record<TabType, string> = {
   home: 'Home',
   schema: 'Schema Generator',
-  api: 'API Client',
+  api: 'API Studio',
   notes: 'Notes',
   excalidraw: 'Excalidraw',
   uml: 'UML Editor',

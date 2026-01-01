@@ -12,6 +12,11 @@ import { VariablesManager } from './VariablesManager';
 import { ParsedSwaggerRequest } from '../utils/swaggerParser';
 import { ParsedPostmanRequest } from '../utils/postmanParser';
 import { getVariables, replaceVariables, replaceVariablesInObject, areVariablesValid, Variable } from '../utils/variables';
+import { EnvironmentsManager, Environment } from './EnvironmentsManager';
+import { ScriptEditor } from './ScriptEditor';
+import { RequestHistory, HistoryEntry } from './RequestHistory';
+import { Console, ConsoleLog } from './Console';
+import { executeScript, ScriptContext } from '../utils/scriptRunner';
 
 interface QueryParam {
   key: string;
@@ -38,7 +43,7 @@ interface AuthConfig {
   oauth2Token?: string;
 }
 
-type RequestTab = 'params' | 'headers' | 'body' | 'auth' | 'settings';
+type RequestTab = 'params' | 'headers' | 'body' | 'auth' | 'pre-request' | 'tests' | 'settings';
 type ResponseTab = 'preview' | 'raw' | 'headers';
 
 export interface SavedApiRequest {
@@ -55,6 +60,8 @@ export interface SavedApiRequest {
   timeout: number;
   response?: ApiResponse;
   folderId?: string | null;
+  preRequestScript?: string;
+  testScript?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -268,6 +275,9 @@ export function ApiClient() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
   const [requestName, setRequestName] = useState<string>('');
+  // Tab system - track open tabs (like Postman)
+  const [openTabs, setOpenTabs] = useState<string[]>([]); // Array of request IDs
+  const [activeTab, setActiveTab] = useState<string | null>(null); // Currently active tab
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['Today', 'Yesterday', 'This Week']));
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [showSidebar, setShowSidebar] = useState(true);
@@ -279,14 +289,302 @@ export function ApiClient() {
   const [highlightedRequestId, setHighlightedRequestId] = useState<string | null>(null);
   const [variables, setVariables] = useState<Variable[]>([]);
   const [showVariablesManager, setShowVariablesManager] = useState(false);
+  const [focusedHeaderIndex, setFocusedHeaderIndex] = useState<number | null>(null);
+  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
+  const [showEnvironmentsManager, setShowEnvironmentsManager] = useState(false);
+  const [requestHistory, setRequestHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([]);
+  const [showConsole, setShowConsole] = useState(false);
+  const [preRequestScript, setPreRequestScript] = useState<string>('');
+  const [testScript, setTestScript] = useState<string>('');
+  const [showTestExamples, setShowTestExamples] = useState<boolean>(false);
+  const [showPreRequestExamples, setShowPreRequestExamples] = useState<boolean>(false);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(256); // Default 256px (w-64)
+  const [requestWidth, setRequestWidth] = useState<number>(50); // Percentage of available space
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isResizingRequest, setIsResizingRequest] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const binaryFileInputRef = useRef<HTMLInputElement>(null);
+  const sidebarResizeRef = useRef<HTMLDivElement>(null);
+  const requestResizeRef = useRef<HTMLDivElement>(null);
+
+  // Load resize settings from localStorage
+  const loadResizeSettings = () => {
+    try {
+      const stored = localStorage.getItem('devbench-api-resize');
+      if (stored) {
+        const settings = JSON.parse(stored);
+        if (settings.sidebarWidth) setSidebarWidth(settings.sidebarWidth);
+        if (settings.requestWidth) setRequestWidth(settings.requestWidth);
+      }
+    } catch (err) {
+      console.error('Failed to load resize settings:', err);
+    }
+  };
+
+  // Save resize settings to localStorage
+  const saveResizeSettings = (sidebar?: number, request?: number) => {
+    try {
+      const settings: any = {};
+      if (sidebar !== undefined) settings.sidebarWidth = sidebar;
+      if (request !== undefined) settings.requestWidth = request;
+      const existing = localStorage.getItem('devbench-api-resize');
+      const current = existing ? JSON.parse(existing) : {};
+      localStorage.setItem('devbench-api-resize', JSON.stringify({ ...current, ...settings }));
+    } catch (err) {
+      console.error('Failed to save resize settings:', err);
+    }
+  };
 
   useEffect(() => {
     loadRequests();
     loadFolders();
     loadVariables();
+    loadEnvironments();
+    loadRequestHistory();
+    loadConsoleLogs();
+    loadResizeSettings();
   }, []);
+
+  // Save console logs on unmount (as backup, but they should already be saved immediately)
+  useEffect(() => {
+    return () => {
+      // Save console logs before unmount as a safety measure
+      if (consoleLogs.length > 0 && (window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+        (window as any).electronAPI.apiClient.saveConsoleLogs(consoleLogs).catch((err: any) => {
+          console.error('Failed to save console logs on unmount:', err);
+        });
+      }
+    };
+  }, [consoleLogs]);
+
+  // Load console logs from file system
+  const loadConsoleLogs = async () => {
+    try {
+      if ((window as any).electronAPI?.apiClient?.getConsoleLogs) {
+        const result = await (window as any).electronAPI.apiClient.getConsoleLogs();
+        if (result.success) {
+          setConsoleLogs(result.logs || []);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load console logs:', err);
+    }
+  };
+
+  // Load environments from file system
+  const loadEnvironments = async () => {
+    try {
+      if ((window as any).electronAPI?.apiClient?.getEnvironments) {
+        const result = await (window as any).electronAPI.apiClient.getEnvironments();
+        if (result.success) {
+          setEnvironments(result.environments || []);
+          setActiveEnvironmentId(result.activeEnvironmentId || null);
+          return;
+        }
+      }
+      // Fallback to localStorage for migration
+      const stored = localStorage.getItem('devbench-api-environments');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setEnvironments(parsed.environments || []);
+        setActiveEnvironmentId(parsed.activeEnvironmentId || null);
+        // Migrate to file system
+        if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+          await (window as any).electronAPI.apiClient.saveEnvironments({
+            environments: parsed.environments || [],
+            activeEnvironmentId: parsed.activeEnvironmentId || null,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load environments:', err);
+    }
+  };
+
+  // Save environments to file system
+  const saveEnvironments = async (env: Omit<Environment, 'createdAt' | 'updatedAt'>) => {
+    try {
+      const existing = environments.find(e => e.id === env.id);
+      const updated: Environment = existing
+        ? { ...existing, ...env, updatedAt: new Date().toISOString() }
+        : { ...env, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+
+      const updatedEnvs = existing
+        ? environments.map(e => e.id === env.id ? updated : e)
+        : [...environments, updated];
+
+      setEnvironments(updatedEnvs);
+
+      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+        await (window as any).electronAPI.apiClient.saveEnvironments({
+          environments: updatedEnvs,
+          activeEnvironmentId,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to save environment:', err);
+    }
+  };
+
+  // Delete environment
+  const deleteEnvironment = async (id: string) => {
+    try {
+      const updated = environments.filter(e => e.id !== id);
+      const newActiveId = activeEnvironmentId === id ? null : activeEnvironmentId;
+      setEnvironments(updated);
+      setActiveEnvironmentId(newActiveId);
+
+      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+        await (window as any).electronAPI.apiClient.saveEnvironments({
+          environments: updated,
+          activeEnvironmentId: newActiveId,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete environment:', err);
+    }
+  };
+
+  // Load request history from file system
+  const loadRequestHistory = async () => {
+    try {
+      if ((window as any).electronAPI?.apiClient?.getHistory) {
+        const result = await (window as any).electronAPI.apiClient.getHistory();
+        if (result.success) {
+          setRequestHistory(result.history || []);
+          return;
+        }
+      }
+      // Fallback to localStorage for migration
+      const stored = localStorage.getItem('devbench-api-history');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setRequestHistory(parsed);
+        // Migrate to file system
+        if ((window as any).electronAPI?.apiClient?.saveHistory) {
+          await (window as any).electronAPI.apiClient.saveHistory(parsed);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load request history:', err);
+    }
+  };
+
+  // Add to request history and save to file system
+  const addToHistory = async (entry: HistoryEntry) => {
+    const updated = [entry, ...requestHistory].slice(0, 1000); // Keep last 1000 requests
+    setRequestHistory(updated);
+
+    if ((window as any).electronAPI?.apiClient?.saveHistory) {
+      try {
+        await (window as any).electronAPI.apiClient.saveHistory(updated);
+      } catch (err) {
+        console.error('Failed to save history to file system:', err);
+      }
+    }
+  };
+
+  // Clear request history
+  const clearHistory = async () => {
+    setRequestHistory([]);
+
+    if ((window as any).electronAPI?.apiClient?.saveHistory) {
+      try {
+        await (window as any).electronAPI.apiClient.saveHistory([]);
+      } catch (err) {
+        console.error('Failed to clear history in file system:', err);
+      }
+    }
+  };
+
+  // Save console logs to file system (immediate)
+  const saveConsoleLogs = async (logs: ConsoleLog[]) => {
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs(logs);
+      } catch (err) {
+        console.error('Failed to save console logs to file system:', err);
+      }
+    }
+  };
+
+  // Add console log and save to file system immediately
+  const addConsoleLog = async (log: Omit<ConsoleLog, 'id' | 'timestamp'>) => {
+    const newLog: ConsoleLog = {
+      ...log,
+      id: `log-${Date.now()}-${Math.random()}`,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Calculate updated logs before setState (like history and environments do)
+    const updatedLogs = [...consoleLogs, newLog].slice(-500); // Keep last 500 logs
+    setConsoleLogs(updatedLogs);
+
+    // Save immediately to file system (await like history and environments)
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs(updatedLogs);
+      } catch (err: any) {
+        console.error('Failed to save console log:', err);
+      }
+    }
+  };
+
+  // Clear console and save to file system
+  const clearConsole = async () => {
+    setConsoleLogs([]);
+
+    // Save empty array immediately to file system (await like history)
+    if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
+      try {
+        await (window as any).electronAPI.apiClient.saveConsoleLogs([]);
+      } catch (err: any) {
+        console.error('Failed to clear console logs in file system:', err);
+      }
+    }
+  };
+
+  // Handle sidebar resize
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingSidebar) {
+        const newWidth = Math.max(200, Math.min(600, e.clientX));
+        setSidebarWidth(newWidth);
+        saveResizeSettings(newWidth, undefined);
+      }
+      if (isResizingRequest) {
+        const container = requestResizeRef.current?.parentElement?.parentElement;
+        if (container) {
+          const containerWidth = container.clientWidth;
+          const newRequestWidth = Math.max(20, Math.min(80, (e.clientX / containerWidth) * 100));
+          setRequestWidth(newRequestWidth);
+          saveResizeSettings(undefined, newRequestWidth);
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+      setIsResizingRequest(false);
+    };
+
+    if (isResizingSidebar || isResizingRequest) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingSidebar, isResizingRequest]);
 
   // Track last folderId we loaded variables for
   const lastVariablesFolderIdRef = useRef<string | null | undefined>(undefined);
@@ -338,7 +636,7 @@ export function ApiClient() {
           console.warn('Failed to load from file storage, falling back to localStorage:', err);
         }
       }
-      
+
       // Fallback to localStorage
       const stored = localStorage.getItem('devbench-api-requests');
       if (stored) {
@@ -386,10 +684,37 @@ export function ApiClient() {
     ? requests.find(r => r.id === selectedRequest)?.folderId || null
     : null;
 
+  // Helper function to get all variables including environment variables
+  const getAllVariablesForValidation = (): Variable[] => {
+    const currentFolderId = selectedRequest
+      ? requests.find(r => r.id === selectedRequest)?.folderId || null
+      : null;
+
+    const activeEnv = environments.find(e => e.id === activeEnvironmentId);
+    const envVars = activeEnv?.variables || {};
+
+    // Combine variables: environment variables override folder/global variables
+    const allVars = [...variables];
+    Object.entries(envVars).forEach(([key, value]) => {
+      const existing = allVars.find(v => v.key === key && v.folderId === currentFolderId);
+      if (existing) {
+        existing.value = value;
+      } else {
+        allVars.push({ key, value, folderId: currentFolderId || null, id: `env-${key}` });
+      }
+    });
+
+    return allVars;
+  };
+
   // Helper function to get border color class based on variable validity
   const getVariableBorderClass = (text: string): string => {
     if (!text) return '';
-    const isValid = areVariablesValid(text, variables, currentFolderId);
+    const allVars = getAllVariablesForValidation();
+    const currentFolderId = selectedRequest
+      ? requests.find(r => r.id === selectedRequest)?.folderId || null
+      : null;
+    const isValid = areVariablesValid(text, allVars, currentFolderId);
     return isValid
       ? 'border-green-500/50 focus:border-green-500'
       : 'border-red-500/50 focus:border-red-500';
@@ -400,16 +725,16 @@ export function ApiClient() {
       // Save to localStorage first for immediate UI update
       localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
       setRequests(updatedRequests);
-      
+
       // Save each request individually to file storage and trigger Git sync
       if ((window as any).electronAPI?.apiClient?.saveRequest) {
         try {
           // Save all requests in parallel
-          const savePromises = updatedRequests.map(request => 
+          const savePromises = updatedRequests.map(request =>
             (window as any).electronAPI.apiClient.saveRequest(request)
           );
           const results = await Promise.all(savePromises);
-          
+
           // Check for any failures
           const failures = results.filter(r => !r.success);
           if (failures.length > 0) {
@@ -423,7 +748,7 @@ export function ApiClient() {
       console.error('Failed to save API requests:', err);
     }
   };
-  
+
   const saveRequest = async (request: SavedApiRequest) => {
     try {
       // Update local state
@@ -433,7 +758,7 @@ export function ApiClient() {
       }
       localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
       setRequests(updatedRequests);
-      
+
       // Save individual request to file storage
       if ((window as any).electronAPI?.apiClient?.saveRequest) {
         try {
@@ -455,7 +780,7 @@ export function ApiClient() {
       setShowNewFolderInput(true);
       return;
     }
-    
+
     try {
       const newFolder = saveFolder({
         name: newFolderName.trim(),
@@ -605,6 +930,14 @@ export function ApiClient() {
   const handleSelectRequest = (requestId: string) => {
     const request = requests.find(r => r.id === requestId);
     if (request) {
+      // Add to tabs if not already open
+      setOpenTabs(prev => {
+        if (!prev.includes(requestId)) {
+          return [...prev, requestId];
+        }
+        return prev;
+      });
+      setActiveTab(requestId);
       setSelectedRequest(requestId);
       setRequestName(request.name);
       setMethod(request.method);
@@ -667,12 +1000,47 @@ export function ApiClient() {
           console.error('Failed to delete API request from file storage:', err);
         }
       }
-      
+
       // Update local state
       const updatedRequests = requests.filter(r => r.id !== requestId);
       localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
       setRequests(updatedRequests);
-      
+
+      // Close tab if open
+      setOpenTabs(prev => {
+        const newTabs = prev.filter(id => id !== requestId);
+        if (newTabs.length === 0) {
+          setActiveTab(null);
+          setSelectedRequest(null);
+          setRequestName('');
+          setMethod('GET');
+          setUrl('');
+          setBaseUrl('');
+          setUrlInput('');
+          setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
+          setQueryParams([{ key: '', value: '', enabled: true }]);
+          setBodyType('json');
+          setBody('');
+          setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
+          setBinaryData('');
+          setResponse(null);
+          setAuthConfig({ type: 'none' });
+        } else if (activeTab === requestId) {
+          // If closing active tab, switch to the previous one or first one
+          const currentIndex = prev.indexOf(requestId);
+          const newActiveIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+          const newActiveId = newTabs[newActiveIndex];
+          setActiveTab(newActiveId);
+          if (newActiveId && !newActiveId.startsWith('temp-')) {
+            const request = updatedRequests.find(r => r.id === newActiveId);
+            if (request) {
+              handleSelectRequest(newActiveId);
+            }
+          }
+        }
+        return newTabs;
+      });
+
       if (selectedRequest === requestId) {
         setSelectedRequest(null);
         setRequestName('');
@@ -695,6 +1063,10 @@ export function ApiClient() {
   };
 
   const handleCreateRequest = () => {
+    // Create a new temporary request ID for the tab
+    const newRequestId = `temp-${Date.now()}`;
+    setOpenTabs(prev => [...prev, newRequestId]);
+    setActiveTab(newRequestId);
     setSelectedRequest(null);
     setRequestName('');
     setMethod('GET');
@@ -767,8 +1139,24 @@ export function ApiClient() {
         ? requests.find(r => r.id === selectedRequest)?.folderId || null
         : null;
 
-      // Replace variables in URL
-      let resolvedUrl = replaceVariables(url, variables, currentFolderId);
+      // Get active environment variables
+      const activeEnv = environments.find(e => e.id === activeEnvironmentId);
+      let envVars = { ...(activeEnv?.variables || {}) };
+
+      // Combine variables: environment variables override folder/global variables
+      const allVariables = [...variables];
+      Object.entries(envVars).forEach(([key, value]) => {
+        const existing = allVariables.find(v => v.key === key && v.folderId === currentFolderId);
+        if (existing) {
+          existing.value = value;
+        } else {
+          allVariables.push({ key, value, folderId: currentFolderId || null, id: `env-${key}` });
+        }
+      });
+
+      // Replace variables in URL using {{variableName}} syntax
+      // Example: https://{{baseUrl}}/api/users or https://api.example.com/{{version}}/users
+      let resolvedUrl = replaceVariables(url, allVariables, currentFolderId);
 
       // Replace variables in headers
       let parsedHeaders: Record<string, string> = {};
@@ -860,8 +1248,113 @@ export function ApiClient() {
         request.binaryData = replaceVariables(binaryData, variables, currentFolderId);
       }
 
+      // Execute pre-request script if available
+      if (preRequestScript) {
+        clearConsole();
+        addConsoleLog({ type: 'info', message: 'Executing pre-request script...' });
+        const scriptContext: ScriptContext = {
+          request: { url: resolvedUrl, method, headers: { ...parsedHeaders }, body: request.body },
+          environment: envVars,
+          globals: {},
+          console: {
+            log: (...args) => addConsoleLog({ type: 'log', message: args.map(String).join(' ') }),
+            error: (...args) => addConsoleLog({ type: 'error', message: args.map(String).join(' ') }),
+            warn: (...args) => addConsoleLog({ type: 'warn', message: args.map(String).join(' ') }),
+            info: (...args) => addConsoleLog({ type: 'info', message: args.map(String).join(' ') }),
+          },
+        };
+        const scriptResult = executeScript(preRequestScript, scriptContext);
+        scriptResult.logs.forEach(log => {
+          const type = log.startsWith('[ERROR]') ? 'error' : log.startsWith('[WARN]') ? 'warn' : 'log';
+          addConsoleLog({ type, message: log });
+        });
+
+        // Apply changes from pre-request script
+        if (scriptResult.updatedContext) {
+          // Update environment variables
+          if (scriptResult.updatedContext.environment) {
+            envVars = { ...envVars, ...scriptResult.updatedContext.environment };
+            // Add environment variables to the variables list for resolution
+            Object.entries(scriptResult.updatedContext.environment).forEach(([key, value]) => {
+              const existing = allVariables.find(v => v.key === key && v.folderId === currentFolderId);
+              if (existing) {
+                existing.value = String(value);
+              } else {
+                allVariables.push({ key, value: String(value), folderId: currentFolderId || null, id: `script-${key}-${Date.now()}` });
+              }
+            });
+          }
+
+          // Update URL if modified by script
+          if (scriptResult.updatedContext.request?.url) {
+            resolvedUrl = scriptResult.updatedContext.request.url;
+            // Re-resolve variables in the new URL
+            resolvedUrl = replaceVariables(resolvedUrl, allVariables, currentFolderId);
+          }
+
+          // Update headers if modified by script
+          if (scriptResult.updatedContext.request?.headers) {
+            parsedHeaders = { ...parsedHeaders, ...scriptResult.updatedContext.request.headers };
+          }
+
+          // Update body if modified by script
+          if (scriptResult.updatedContext.request?.body !== undefined) {
+            if (bodyType === 'json' || bodyType === 'raw') {
+              resolvedBody = scriptResult.updatedContext.request.body;
+              // Re-resolve variables in the new body
+              if (resolvedBody) {
+                try {
+                  const parsed = JSON.parse(resolvedBody);
+                  resolvedBody = JSON.stringify(replaceVariablesInObject(parsed, allVariables, currentFolderId), null, 2);
+                } catch {
+                  resolvedBody = replaceVariables(resolvedBody, allVariables, currentFolderId);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const startTime = Date.now();
       const result = await apiClient.makeRequest(request);
+      const requestTime = Date.now() - startTime;
       setResponse(result);
+
+      // Add to history
+      addToHistory({
+        id: `hist-${Date.now()}`,
+        method,
+        url: resolvedUrl,
+        status: result.status,
+        statusText: result.statusText,
+        time: requestTime,
+        timestamp: new Date().toISOString(),
+        requestName: requestName || undefined,
+      });
+
+      // Execute test script if available
+      if (testScript) {
+        addConsoleLog({ type: 'info', message: 'Executing test script...' });
+        const scriptContext: ScriptContext = {
+          request: { url: resolvedUrl, method, headers: parsedHeaders, body: request.body },
+          response: { status: result.status, statusText: result.statusText, headers: result.headers, body: result.data, time: requestTime },
+          environment: envVars,
+          globals: {},
+          console: {
+            log: (...args) => addConsoleLog({ type: 'log', message: args.map(String).join(' ') }),
+            error: (...args) => addConsoleLog({ type: 'error', message: args.map(String).join(' ') }),
+            warn: (...args) => addConsoleLog({ type: 'warn', message: args.map(String).join(' ') }),
+            info: (...args) => addConsoleLog({ type: 'info', message: args.map(String).join(' ') }),
+          },
+        };
+        const scriptResult = executeScript(testScript, scriptContext);
+        scriptResult.logs.forEach(log => {
+          const type = log.startsWith('[TEST FAIL]') || log.startsWith('[ERROR]') ? 'error' :
+            log.startsWith('[TEST PASS]') ? 'info' :
+              log.startsWith('[WARN]') ? 'warn' : 'log';
+          addConsoleLog({ type, message: log });
+        });
+      }
 
       let updatedRequests: SavedApiRequest[];
       let requestToUpdate: SavedApiRequest | null = null;
@@ -946,6 +1439,8 @@ export function ApiClient() {
           binaryData: bodyType === 'binary' ? binaryData : undefined,
           timeout,
           response: result,
+          preRequestScript: preRequestScript || undefined,
+          testScript: testScript || undefined,
           updatedAt: new Date().toISOString(),
         };
         updatedRequests = [...requests];
@@ -956,10 +1451,22 @@ export function ApiClient() {
           setSelectedRequest(requestToUpdate.id);
           setRequestName(updatedRequest.name);
         }
+        // Ensure the updated request is in tabs
+        setOpenTabs(prev => {
+          if (!prev.includes(requestToUpdate.id)) {
+            return [...prev, requestToUpdate.id];
+          }
+          return prev;
+        });
+        if (activeTab !== requestToUpdate.id) {
+          setActiveTab(requestToUpdate.id);
+        }
       } else {
         // Create new request only if no existing request found
+        // If we have an active tab with a temp ID, use that, otherwise create new ID
+        const newRequestId = activeTab && activeTab.startsWith('temp-') ? activeTab.replace('temp-', '') : Date.now().toString();
         const savedRequest: SavedApiRequest = {
-          id: Date.now().toString(),
+          id: newRequestId,
           name: requestName || `${method} ${url}` || 'Untitled Request',
           method,
           url,
@@ -970,18 +1477,37 @@ export function ApiClient() {
           binaryData: bodyType === 'binary' ? binaryData : undefined,
           timeout,
           response: result,
+          preRequestScript: preRequestScript || undefined,
+          testScript: testScript || undefined,
           folderId: null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
         updatedRequests = [...requests, savedRequest];
+
+        // Update tabs if we had a temp tab
+        if (activeTab && activeTab.startsWith('temp-')) {
+          setOpenTabs(prev => prev.map(tabId => tabId === activeTab ? newRequestId : tabId));
+          setActiveTab(newRequestId);
+          setSelectedRequest(newRequestId);
+        } else if (!activeTab) {
+          // Add to tabs if not already there
+          setOpenTabs(prev => {
+            if (!prev.includes(newRequestId)) {
+              return [...prev, newRequestId];
+            }
+            return prev;
+          });
+          setActiveTab(newRequestId);
+          setSelectedRequest(newRequestId);
+        }
       }
 
       // Save the updated/created request individually
       const requestToSync = requestToUpdate && requestIndex >= 0
         ? updatedRequests[requestIndex]
         : updatedRequests[updatedRequests.length - 1];
-      
+
       if (requestToSync) {
         await saveRequest(requestToSync);
       } else {
@@ -992,20 +1518,20 @@ export function ApiClient() {
     } catch (err) {
       // Extract detailed error information
       let errorMessage = 'Request failed';
-      
+
       if (err instanceof Error) {
         errorMessage = err.message;
-        
+
         // Check for status code in error
         if ((err as any).status) {
           errorMessage = `${(err as any).status} ${(err as any).statusText || err.message}`;
         }
-        
+
         // Check for error code (like ECONNREFUSED)
         if ((err as any).code) {
           errorMessage = `${err.message} (${(err as any).code})`;
         }
-        
+
         // Check for original error details
         if ((err as any).originalError) {
           const originalErr = (err as any).originalError;
@@ -1018,7 +1544,7 @@ export function ApiClient() {
       } else if (err && typeof err === 'object') {
         // Handle various error object formats
         errorMessage = (err as any).error || (err as any).message || String(err);
-        
+
         // If still showing [object Object], try to extract more details
         if (errorMessage === '[object Object]' || errorMessage.includes('[object Object]')) {
           try {
@@ -1033,13 +1559,13 @@ export function ApiClient() {
             errorMessage = 'Request failed - Unable to parse error details';
           }
         }
-        
+
         // Add error code if available
         if ((err as any).code) {
           errorMessage = `${errorMessage} (${(err as any).code})`;
         }
       }
-      
+
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -1528,10 +2054,11 @@ export function ApiClient() {
         theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
         options={{
           minimap: { enabled: false },
-          fontSize: 14,
+          fontSize: 12,
           wordWrap: 'on',
-          padding: { top: 16, bottom: 16 },
+          padding: { top: 0, bottom: 0 },
           automaticLayout: true,
+          scrollBeyondLastLine: false,
         }}
       />
     );
@@ -1547,11 +2074,11 @@ export function ApiClient() {
     return requests.filter(req => {
       // Search in name, URL, method
       if (req.name?.toLowerCase().includes(query) ||
-          req.url?.toLowerCase().includes(query) ||
-          req.method?.toLowerCase().includes(query)) {
+        req.url?.toLowerCase().includes(query) ||
+        req.method?.toLowerCase().includes(query)) {
         return true;
       }
-      
+
       // Search in headers
       if (req.headers) {
         try {
@@ -1567,22 +2094,22 @@ export function ApiClient() {
           }
         }
       }
-      
+
       // Search in body
       if (req.body && String(req.body).toLowerCase().includes(query)) {
         return true;
       }
-      
+
       // Search in response data
       if (req.response?.data) {
-        const responseData = typeof req.response.data === 'string' 
-          ? req.response.data 
+        const responseData = typeof req.response.data === 'string'
+          ? req.response.data
           : JSON.stringify(req.response.data);
         if (responseData.toLowerCase().includes(query)) {
           return true;
         }
       }
-      
+
       // Search in response headers
       if (req.response?.headers) {
         const responseHeadersStr = JSON.stringify(req.response.headers).toLowerCase();
@@ -1590,7 +2117,7 @@ export function ApiClient() {
           return true;
         }
       }
-      
+
       return false;
     });
   };
@@ -1600,19 +2127,19 @@ export function ApiClient() {
     if (!searchQuery.trim()) return true;
     const folderRequests = getRequestsInFolder(String(folder.id || ''));
     return folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           filterRequests(folderRequests).length > 0;
+      filterRequests(folderRequests).length > 0;
   });
 
   // Filter root requests
   const filteredRootRequestsGrouped = rootRequestsGrouped.map(group => ({
     ...group,
-    items: filterRequests(group.items)
+    items: filterRequests(group.items as SavedApiRequest[])
   })).filter(group => group.items.length > 0);
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-4 py-2 border-b border-gray-100/50 dark:border-gray-800/50 bg-gradient-to-r from-gray-50/30 to-transparent dark:from-gray-800/30 backdrop-blur-sm flex-shrink-0">
-        <div className="flex items-center justify-between mb-2">
+      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-gradient-to-r from-gray-50/30 to-transparent dark:from-gray-800/30 backdrop-blur-sm flex-shrink-0">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowSidebar(!showSidebar)}
@@ -1622,7 +2149,7 @@ export function ApiClient() {
               <Icon name={showSidebar ? "ChevronLeft" : "ChevronRight"} className="w-4 h-4 transition-transform duration-200" />
             </button>
             <div className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wider">
-              API Client
+              API Studio
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1644,12 +2171,41 @@ export function ApiClient() {
               Import
             </button>
             <button
+              onClick={() => setShowEnvironmentsManager(true)}
+              className="btn-secondary text-xs flex items-center gap-1"
+              title="Manage Environments"
+            >
+              <Icon name="Folder" />
+              {activeEnvironmentId ? environments.find(e => e.id === activeEnvironmentId)?.name || 'Environment' : 'Environment'}
+            </button>
+            <button
               onClick={() => setShowVariablesManager(true)}
               className="btn-secondary text-xs flex items-center gap-1"
               title="Manage Variables"
             >
               <Icon name="Key" />
               Variables
+            </button>
+            <button
+              onClick={() => setShowHistory(true)}
+              className="btn-secondary text-xs flex items-center gap-1"
+              title="Request History"
+            >
+              <Icon name="Clock" />
+              History
+            </button>
+            <button
+              onClick={() => setShowConsole(true)}
+              className="btn-secondary text-xs flex items-center gap-1"
+              title="Console"
+            >
+              <Icon name="Terminal" />
+              Console
+              {consoleLogs.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 rounded bg-[var(--color-primary)] text-white text-[10px]">
+                  {consoleLogs.length}
+                </span>
+              )}
             </button>
             <button
               onClick={handleCopyAsCurl}
@@ -1674,6 +2230,31 @@ export function ApiClient() {
         folders={folders}
       />
 
+      {showEnvironmentsManager && (
+        <EnvironmentsManager
+          isOpen={showEnvironmentsManager}
+          onClose={() => setShowEnvironmentsManager(false)}
+          environments={environments}
+          activeEnvironmentId={activeEnvironmentId}
+          onSaveEnvironment={saveEnvironments}
+          onDeleteEnvironment={deleteEnvironment}
+          onSetActive={async (id: string | null) => {
+            setActiveEnvironmentId(id);
+            // Save active environment ID to file system
+            if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+              try {
+                await (window as any).electronAPI.apiClient.saveEnvironments({
+                  environments,
+                  activeEnvironmentId: id,
+                });
+              } catch (err) {
+                console.error('Failed to save active environment:', err);
+              }
+            }
+          }}
+        />
+      )}
+
       {showVariablesManager && (
         <VariablesManager
           isOpen={showVariablesManager}
@@ -1685,358 +2266,536 @@ export function ApiClient() {
           }}
         />
       )}
-      <div className="flex-1 flex overflow-hidden gap-2 p-2">
+
+      {showHistory && (
+        <RequestHistory
+          isOpen={showHistory}
+          onClose={() => setShowHistory(false)}
+          history={requestHistory}
+          onSelectRequest={(entry) => {
+            // Load the request from history
+            const matchingRequest = requests.find(r =>
+              r.method === entry.method && r.url === entry.url
+            );
+            if (matchingRequest) {
+              handleSelectRequest(matchingRequest.id);
+            } else {
+              // Create a new request from history entry
+              setMethod(entry.method as any);
+              setUrl(entry.url);
+              setRequestName(entry.requestName || '');
+            }
+          }}
+          onClearHistory={clearHistory}
+        />
+      )}
+
+      {showConsole && (
+        <Console
+          isOpen={showConsole}
+          onClose={() => setShowConsole(false)}
+          logs={consoleLogs}
+          onClear={clearConsole}
+        />
+      )}
+      <div className="flex-1 flex overflow-hidden">
         {showSidebar && (
-          <div className="w-64 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-hidden flex flex-col transition-all duration-200 ease-in-out">
-            {/* Sidebar Header */}
-            <div className="px-3 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-background)] flex-shrink-0">
-              <div className="flex items-center gap-2 mb-2">
-                <h3 className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider flex-1">
-                  Folders
-                </h3>
-                <button
-                  onClick={() => {
-                    if (showNewFolderInput && newFolderName.trim()) {
-                      handleCreateFolder();
-                    } else {
-                      setShowNewFolderInput(true);
-                    }
-                  }}
-                  className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${
-                    showNewFolderInput ? 'bg-[var(--color-primary)]/20 text-[var(--color-primary)]' : 'hover:bg-[var(--color-muted)]'
-                  }`}
-                  title="New Folder"
-                >
-                  <Icon name="FolderPlus" className="w-3.5 h-3.5 transition-transform duration-200" />
-                </button>
-                <button
-                  onClick={handleCreateRequest}
-                  className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95"
-                  title="New Request"
-                >
-                  <Icon name="Plus" className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              {/* New Folder Input */}
-              {showNewFolderInput && (
-                <div className="mb-2 transition-all duration-200 ease-in-out">
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleCreateFolder();
-                        } else if (e.key === 'Escape') {
+          <>
+            <div
+              style={{ width: `${sidebarWidth}px` }}
+              className="flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-hidden flex flex-col transition-all duration-200 ease-in-out"
+            >
+              {/* Sidebar Header */}
+              <div className="px-3 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-background)] flex-shrink-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider flex-1">
+                    Folders
+                  </h3>
+                  <button
+                    onClick={() => {
+                      if (showNewFolderInput && newFolderName.trim()) {
+                        handleCreateFolder();
+                      } else {
+                        setShowNewFolderInput(true);
+                      }
+                    }}
+                    className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${showNewFolderInput ? 'bg-[var(--color-primary)]/20 text-[var(--color-primary)]' : 'hover:bg-[var(--color-muted)]'
+                      }`}
+                    title="New Folder"
+                  >
+                    <Icon name="FolderPlus" className="w-3.5 h-3.5 transition-transform duration-200" />
+                  </button>
+                  <button
+                    onClick={handleCreateRequest}
+                    className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95"
+                    title="New Request"
+                  >
+                    <Icon name="Plus" className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {/* New Folder Input */}
+                {showNewFolderInput && (
+                  <div className="mb-2 transition-all duration-200 ease-in-out">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleCreateFolder();
+                          } else if (e.key === 'Escape') {
+                            setShowNewFolderInput(false);
+                            setNewFolderName('');
+                          }
+                        }}
+                        placeholder="Folder name..."
+                        autoFocus
+                        className="flex-1 px-2 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] transition-all"
+                      />
+                      <button
+                        onClick={handleCreateFolder}
+                        disabled={!newFolderName.trim()}
+                        className="px-2 py-1.5 text-xs rounded bg-[var(--color-primary)] text-white hover:opacity-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+                      >
+                        <Icon name="Check" className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => {
                           setShowNewFolderInput(false);
                           setNewFolderName('');
-                        }
-                      }}
-                      placeholder="Folder name..."
-                      autoFocus
-                      className="flex-1 px-2 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] transition-all"
-                    />
+                        }}
+                        className="px-2 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] transition-all duration-200 active:scale-95"
+                      >
+                        <Icon name="X" className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {/* Search Bar */}
+                <div className="relative">
+                  <div className="absolute left-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
+                    <Icon name="Search" className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search requests..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-8 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] transition-all duration-200"
+                  />
+                  {searchQuery && (
                     <button
-                      onClick={handleCreateFolder}
-                      disabled={!newFolderName.trim()}
-                      className="px-2 py-1.5 text-xs rounded bg-[var(--color-primary)] text-white hover:opacity-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 transform -translate-y-1/2 p-0.5 hover:bg-[var(--color-muted)] rounded transition-all duration-200 active:scale-95"
+                      title="Clear search"
                     >
-                      <Icon name="Check" className="w-3 h-3" />
+                      <Icon name="X" className="w-3 h-3 text-[var(--color-text-tertiary)]" />
                     </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Sidebar Content */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2"
+                onDragOver={(e) => {
+                  if (draggedRequestId) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverFolderId(null);
+                  }
+                }}
+                onDrop={(e) => {
+                  if (draggedRequestId) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDrop(e, null);
+                  }
+                }}
+              >
+                {folders.length === 0 && rootRequests.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Icon name="FileText" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
+                    <p className="text-sm text-[var(--color-text-secondary)]">No requests yet</p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Create your first request</p>
+                  </div>
+                ) : (filteredFolders.length === 0 && filteredRootRequestsGrouped.length === 0 && searchQuery) ? (
+                  <div className="text-center py-12">
+                    <Icon name="Search" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
+                    <p className="text-sm text-[var(--color-text-secondary)]">No results found</p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Try a different search term</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {/* Folders */}
+                    {filteredFolders.length > 0 && (
+                      <div className="space-y-1">
+                        {filteredFolders.map((folder) => {
+                          const folderId = String(folder.id || '');
+                          if (!folderId) return null;
+                          const folderRequests = getRequestsInFolder(folderId);
+                          const filteredFolderRequests = filterRequests(folderRequests);
+                          const isExpanded = expandedFolders.has(folderId);
+                          return (
+                            <div key={folderId} className="space-y-1">
+                              <div
+                                onDragOver={(e) => handleDragOver(e, folderId)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, folderId)}
+                                className={`flex items-center gap-1 group rounded transition-all duration-200 ${dragOverFolderId === folderId && draggedRequestId
+                                  ? 'bg-[var(--color-primary)]/20 border-2 border-[var(--color-primary)]'
+                                  : ''
+                                  }`}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleFolder(folderId);
+                                  }}
+                                  className="flex-1 flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-left active:scale-[0.98]"
+                                >
+                                  <Icon name={isExpanded ? "FolderOpen" : "Folder"} className={`w-4 h-4 text-[var(--color-text-secondary)] flex-shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-0' : ''}`} />
+                                  <span className="text-xs font-medium text-[var(--color-text-primary)] truncate flex-1">{folder.name}</span>
+                                  <span className="text-[10px] text-[var(--color-text-tertiary)] bg-[var(--color-muted)] px-1 py-0.5 rounded">
+                                    {filteredFolderRequests.length}
+                                  </span>
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteFolder(folderId);
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 text-xs text-[var(--color-text-tertiary)] hover:text-red-500 active:scale-95"
+                                  title="Delete folder"
+                                >
+                                  <Icon name="X" className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                              {isExpanded && (
+                                <div className="ml-4 space-y-0.5 border-l border-[var(--color-border)] pl-1.5 transition-all duration-200 ease-in-out">
+                                  {filteredFolderRequests.length === 0 ? (
+                                    <div className="px-2 py-1 text-[10px] text-[var(--color-text-tertiary)] italic">
+                                      {searchQuery ? 'No matching requests' : 'Empty folder'}
+                                    </div>
+                                  ) : (
+                                    filteredFolderRequests.map((request) => (
+                                      <div
+                                        key={request.id}
+                                        draggable
+                                        onDragStart={(e) => {
+                                          e.stopPropagation();
+                                          handleDragStart(e, request.id);
+                                        }}
+                                        onDragEnd={() => {
+                                          setDraggedRequestId(null);
+                                          setDragOverFolderId(null);
+                                        }}
+                                        className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group relative ${selectedRequest === request.id
+                                          ? 'border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50'
+                                          : 'border-l-[3px] border-transparent hover:bg-[var(--color-muted)]'
+                                          } ${draggedRequestId === request.id ? 'opacity-50' : ''} active:scale-[0.98]`}
+                                        onClick={() => handleSelectRequest(request.id)}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
+                                              request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
+                                                request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
+                                                  request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
+                                                    request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
+                                                      'bg-gray-500/20 text-gray-600 dark:text-gray-400'
+                                              }`}>
+                                              {request.method}
+                                            </span>
+                                            <span className={`truncate text-[10px] ${selectedRequest === request.id ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
+                                              {request.url}
+                                            </span>
+                                          </div>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteRequest(request.id);
+                                            }}
+                                            className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
+                                              ? 'text-[var(--color-text-tertiary)] hover:text-red-500'
+                                              : 'text-[var(--color-text-tertiary)] hover:text-red-500'
+                                              }`}
+                                            title="Delete request"
+                                          >
+                                            <Icon name="X" className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Root Requests - grouped by date */}
+                    {filteredRootRequestsGrouped.length > 0 && (
+                      <div className="space-y-2 mt-3">
+                        <div className="px-2 py-1 text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                          Recent Requests
+                        </div>
+                        {filteredRootRequestsGrouped.map((group) => (
+                          <div key={group.label} className="space-y-1">
+                            <button
+                              onClick={() => toggleGroup(group.label)}
+                              className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] rounded transition-colors"
+                            >
+                              <span>{group.label}</span>
+                              <span className="text-[var(--color-text-tertiary)] text-[9px] bg-[var(--color-muted)] px-1.5 py-0.5 rounded">
+                                {group.items.length}
+                              </span>
+                            </button>
+                            {expandedGroups.has(group.label) && (
+                              <div className="space-y-0.5 ml-0.5">
+                                {group.items.map((request) => (
+                                  <div
+                                    key={request.id}
+                                    draggable
+                                    onDragStart={(e) => {
+                                      e.stopPropagation();
+                                      handleDragStart(e, request.id);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedRequestId(null);
+                                      setDragOverFolderId(null);
+                                    }}
+                                    className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group active:scale-[0.98] relative ${selectedRequest === request.id
+                                      ? 'border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50'
+                                      : 'border-l-[3px] border-transparent hover:bg-[var(--color-muted)]'
+                                      } ${draggedRequestId === request.id ? 'opacity-50' : ''}`}
+                                    onClick={() => handleSelectRequest(request.id)}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
+                                          request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
+                                            request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
+                                              request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
+                                                request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
+                                                  'bg-gray-500/20 text-gray-600 dark:text-gray-400'
+                                          }`}>
+                                          {request.method}
+                                        </span>
+                                        <span className={`truncate text-[10px] ${selectedRequest === request.id ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
+                                          {request.url}
+                                        </span>
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteRequest(request.id);
+                                        }}
+                                        className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
+                                          ? 'text-[var(--color-text-tertiary)] hover:text-red-500'
+                                          : 'text-[var(--color-text-tertiary)] hover:text-red-500'
+                                          }`}
+                                        title="Delete request"
+                                      >
+                                        <Icon name="X" className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                  </div>
+                )}
+              </div>
+            </div>
+            {/* Sidebar Resize Handle */}
+            <div
+              ref={sidebarResizeRef}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingSidebar(true);
+              }}
+              className="w-1 flex-shrink-0 bg-[var(--color-border)] hover:bg-[var(--color-primary)] cursor-col-resize transition-colors group"
+              style={{ cursor: 'col-resize' }}
+            >
+              <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="w-0.5 h-8 bg-[var(--color-primary)] rounded" />
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Tab Bar - Postman Style */}
+          <div className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-x-auto min-h-[36px]">
+            {openTabs.length === 0 ? (
+              <button
+                onClick={handleCreateRequest}
+                className="px-3 py-2 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-muted)] transition-all duration-200 flex items-center gap-1.5 text-xs"
+                title="New Request"
+              >
+                <Icon name="Plus" className="w-3.5 h-3.5" />
+                <span>New Request</span>
+              </button>
+            ) : (
+              openTabs.map((tabId) => {
+                const request = requests.find(r => r.id === tabId);
+                const isActive = activeTab === tabId;
+                const tabName = request?.name || 'New Request';
+                const tabMethod = request?.method || method;
+
+                return (
+                  <div
+                    key={tabId}
+                    className={`group flex items-center gap-1.5 px-3 py-2 border-r border-[var(--color-border)] border-b-2 cursor-pointer transition-all duration-200 min-w-0 relative ${isActive
+                      ? 'bg-[var(--color-background)] text-[var(--color-text-primary)] border-b-[var(--color-primary)] font-medium'
+                      : 'bg-[var(--color-sidebar)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] border-b-transparent'
+                      }`}
+                    onClick={() => {
+                      setActiveTab(tabId);
+                      if (request) {
+                        setSelectedRequest(tabId);
+                        setRequestName(request.name);
+                        setMethod(request.method);
+                        const { base, params } = parseUrl(request.url);
+                        setBaseUrl(base);
+                        setUrl(request.url);
+                        setUrlInput(request.url);
+                        if (request.queryParams && request.queryParams.length > 0) {
+                          setQueryParams(request.queryParams);
+                        } else if (params.length > 0) {
+                          setQueryParams([...params, { key: '', value: '', enabled: true }]);
+                        } else {
+                          setQueryParams([{ key: '', value: '', enabled: true }]);
+                        }
+                        try {
+                          const parsedHeaders = typeof request.headers === 'string'
+                            ? JSON.parse(request.headers)
+                            : request.headers;
+                          const headersArray: Header[] = Object.entries(parsedHeaders || {}).map(([key, value]) => ({
+                            key,
+                            value: String(value),
+                            enabled: true
+                          }));
+                          if (headersArray.length > 0) {
+                            setHeadersList([...headersArray, { key: '', value: '', enabled: true }]);
+                          } else {
+                            setHeadersList([{ key: '', value: '', enabled: true }]);
+                          }
+                        } catch (e) {
+                          setHeadersList([{ key: '', value: '', enabled: true }]);
+                        }
+                        setBodyType(request.bodyType);
+                        setBody(request.body || '');
+                        setFormData(request.formData || [{ key: '', value: '', type: 'text', enabled: true }]);
+                        setBinaryData(request.binaryData || '');
+                        setRequestTimeout(request.timeout);
+                        setResponse(request.response || null);
+                      } else {
+                        // New request tab
+                        setSelectedRequest(null);
+                        setRequestName('');
+                        setMethod('GET');
+                        setUrl('');
+                        setBaseUrl('');
+                        setUrlInput('');
+                        setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
+                        setQueryParams([{ key: '', value: '', enabled: true }]);
+                        setBodyType('json');
+                        setBody('');
+                        setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
+                        setBinaryData('');
+                        setResponse(null);
+                      }
+                    }}
+                  >
+                    <span className={`text-[10px] font-semibold flex-shrink-0 ${tabMethod === 'GET' ? 'text-green-600' :
+                      tabMethod === 'POST' ? 'text-blue-600' :
+                        tabMethod === 'PUT' ? 'text-yellow-600' :
+                          tabMethod === 'DELETE' ? 'text-red-600' :
+                            tabMethod === 'PATCH' ? 'text-purple-600' :
+                              'text-gray-600'
+                      }`}>
+                      {tabMethod}
+                    </span>
+                    <span className="text-xs truncate flex-1 min-w-0">{tabName}</span>
                     <button
-                      onClick={() => {
-                        setShowNewFolderInput(false);
-                        setNewFolderName('');
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenTabs(prev => {
+                          const newTabs = prev.filter(id => id !== tabId);
+                          if (newTabs.length === 0) {
+                            setActiveTab(null);
+                            setSelectedRequest(null);
+                            setRequestName('');
+                            setMethod('GET');
+                            setUrl('');
+                            setBaseUrl('');
+                            setUrlInput('');
+                          } else if (isActive) {
+                            // If closing active tab, switch to the previous one or first one
+                            const currentIndex = prev.indexOf(tabId);
+                            const newActiveIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+                            const newActiveId = newTabs[newActiveIndex];
+                            setActiveTab(newActiveId);
+                            if (newActiveId && !newActiveId.startsWith('temp-')) {
+                              handleSelectRequest(newActiveId);
+                            }
+                          }
+                          return newTabs;
+                        });
                       }}
-                      className="px-2 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] transition-all duration-200 active:scale-95"
+                      className="opacity-60 hover:opacity-100 hover:bg-[var(--color-muted)] rounded p-0.5 transition-all duration-200 flex-shrink-0"
+                      title="Close tab"
                     >
                       <Icon name="X" className="w-3 h-3" />
                     </button>
                   </div>
-                </div>
-              )}
-              {/* Search Bar */}
-              <div className="relative">
-                <div className="absolute left-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                  <Icon name="Search" className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search requests..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-8 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] transition-all duration-200"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 p-0.5 hover:bg-[var(--color-muted)] rounded transition-all duration-200 active:scale-95"
-                    title="Clear search"
-                  >
-                    <Icon name="X" className="w-3 h-3 text-[var(--color-text-tertiary)]" />
-                  </button>
-                )}
-              </div>
-            </div>
-            
-            {/* Sidebar Content */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-2"
-              onDragOver={(e) => {
-                if (draggedRequestId) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = 'move';
-                  setDragOverFolderId(null);
-                }
-              }}
-              onDrop={(e) => {
-                if (draggedRequestId) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleDrop(e, null);
-                }
-              }}
-            >
-              {folders.length === 0 && rootRequests.length === 0 ? (
-                <div className="text-center py-12">
-                  <Icon name="FileText" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
-                  <p className="text-sm text-[var(--color-text-secondary)]">No requests yet</p>
-                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Create your first request</p>
-                </div>
-              ) : (filteredFolders.length === 0 && filteredRootRequestsGrouped.length === 0 && searchQuery) ? (
-                <div className="text-center py-12">
-                  <Icon name="Search" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
-                  <p className="text-sm text-[var(--color-text-secondary)]">No results found</p>
-                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Try a different search term</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* Folders */}
-                  {filteredFolders.length > 0 && (
-                    <div className="space-y-1">
-                      {filteredFolders.map((folder) => {
-                        const folderId = String(folder.id || '');
-                        if (!folderId) return null;
-                        const folderRequests = getRequestsInFolder(folderId);
-                        const filteredFolderRequests = filterRequests(folderRequests);
-                        const isExpanded = expandedFolders.has(folderId);
-                        return (
-                          <div key={folderId} className="space-y-1">
-                            <div
-                              onDragOver={(e) => handleDragOver(e, folderId)}
-                              onDragLeave={handleDragLeave}
-                              onDrop={(e) => handleDrop(e, folderId)}
-                              className={`flex items-center gap-1 group rounded transition-all duration-200 ${dragOverFolderId === folderId && draggedRequestId
-                                ? 'bg-[var(--color-primary)]/20 border-2 border-[var(--color-primary)]'
-                                : ''
-                                }`}
-                            >
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleFolder(folderId);
-                                }}
-                                className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-left active:scale-[0.98]"
-                              >
-                                <Icon name={isExpanded ? "FolderOpen" : "Folder"} className={`w-4 h-4 text-[var(--color-text-secondary)] flex-shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-0' : ''}`} />
-                                <span className="text-xs font-medium text-[var(--color-text-primary)] truncate flex-1">{folder.name}</span>
-                                <span className="text-[10px] text-[var(--color-text-tertiary)] bg-[var(--color-muted)] px-1.5 py-0.5 rounded">
-                                  {filteredFolderRequests.length}
-                                </span>
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteFolder(folderId);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 text-xs text-[var(--color-text-tertiary)] hover:text-red-500 active:scale-95"
-                                title="Delete folder"
-                              >
-                                <Icon name="X" className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            {isExpanded && (
-                              <div className="ml-5 space-y-0.5 border-l border-[var(--color-border)] pl-2 transition-all duration-200 ease-in-out">
-                                {filteredFolderRequests.length === 0 ? (
-                                  <div className="px-2 py-1 text-[10px] text-[var(--color-text-tertiary)] italic">
-                                    {searchQuery ? 'No matching requests' : 'Empty folder'}
-                                  </div>
-                                ) : (
-                                  filteredFolderRequests.map((request) => (
-                                    <div
-                                      key={request.id}
-                                      draggable
-                                      onDragStart={(e) => {
-                                        e.stopPropagation();
-                                        handleDragStart(e, request.id);
-                                      }}
-                                      onDragEnd={() => {
-                                        setDraggedRequestId(null);
-                                        setDragOverFolderId(null);
-                                      }}
-                                      className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-200 group ${selectedRequest === request.id
-                                        ? 'bg-[var(--color-primary)] text-white shadow-sm'
-                                        : 'bg-[var(--color-background)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]'
-                                        } ${draggedRequestId === request.id ? 'opacity-50' : ''} active:scale-[0.98]`}
-                                      onClick={() => handleSelectRequest(request.id)}
-                                    >
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="flex-1 min-w-0">
-                                          <div className={`text-xs font-medium truncate ${selectedRequest === request.id ? 'text-white' : 'text-[var(--color-text-primary)]'
-                                            }`}>
-                                            {request.name}
-                                          </div>
-                                          <div className={`text-[10px] mt-1 flex items-center gap-1.5 ${selectedRequest === request.id ? 'text-white/90' : 'text-[var(--color-text-secondary)]'
-                                            }`}>
-                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${
-                                              request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
-                                              request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
-                                              request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
-                                              request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
-                                              request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
-                                              'bg-gray-500/20 text-gray-600 dark:text-gray-400'
-                                            }`}>
-                                              {request.method}
-                                            </span>
-                                            <span className="truncate text-[10px]">{request.url}</span>
-                                          </div>
-                                        </div>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteRequest(request.id);
-                                          }}
-                                          className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
-                                            ? 'text-white/80 hover:text-red-200'
-                                            : 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                            }`}
-                                          title="Delete request"
-                                        >
-                                          <Icon name="X" className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Root Requests - grouped by date */}
-                  {filteredRootRequestsGrouped.length > 0 && (
-                    <div className="space-y-2 mt-3">
-                      <div className="px-2 py-1 text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
-                        Recent Requests
-                      </div>
-                      {filteredRootRequestsGrouped.map((group) => (
-                        <div key={group.label} className="space-y-1">
-                          <button
-                            onClick={() => toggleGroup(group.label)}
-                            className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] rounded transition-colors"
-                          >
-                            <span>{group.label}</span>
-                            <span className="text-[var(--color-text-tertiary)] text-[9px] bg-[var(--color-muted)] px-1.5 py-0.5 rounded">
-                              {group.items.length}
-                            </span>
-                          </button>
-                          {expandedGroups.has(group.label) && (
-                            <div className="space-y-0.5 ml-1">
-                              {group.items.map((request) => (
-                                <div
-                                  key={request.id}
-                                  draggable
-                                  onDragStart={(e) => {
-                                    e.stopPropagation();
-                                    handleDragStart(e, request.id);
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggedRequestId(null);
-                                    setDragOverFolderId(null);
-                                  }}
-                                  className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-200 group active:scale-[0.98] ${selectedRequest === request.id
-                                    ? 'bg-[var(--color-primary)] text-white shadow-sm'
-                                    : 'bg-[var(--color-background)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]'
-                                    } ${draggedRequestId === request.id ? 'opacity-50' : ''}`}
-                                  onClick={() => handleSelectRequest(request.id)}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="flex-1 min-w-0">
-                                      <div className={`text-xs font-medium truncate ${selectedRequest === request.id ? 'text-white' : 'text-[var(--color-text-primary)]'
-                                        }`}>
-                                        {request.name}
-                                      </div>
-                                      <div className={`text-[10px] mt-1 flex items-center gap-1.5 ${selectedRequest === request.id ? 'text-white/90' : 'text-[var(--color-text-secondary)]'
-                                        }`}>
-                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${
-                                          request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
-                                          request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
-                                          request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
-                                          request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
-                                          request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
-                                          'bg-gray-500/20 text-gray-600 dark:text-gray-400'
-                                        }`}>
-                                          {request.method}
-                                        </span>
-                                        <span className="truncate text-[10px]">{request.url}</span>
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteRequest(request.id);
-                                      }}
-                                      className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
-                                        ? 'text-white/80 hover:text-red-200'
-                                        : 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                        }`}
-                                      title="Delete request"
-                                    >
-                                      <Icon name="X" className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                </div>
-              )}
-            </div>
+                );
+              })
+            )}
+            {/* New Request Button (+ Tab) - Always show when tabs exist */}
+            {openTabs.length > 0 && (
+              <button
+                onClick={handleCreateRequest}
+                className="px-3 py-2 bg-[var(--color-sidebar)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] hover:text-[var(--color-primary)] transition-all duration-200 flex-shrink-0"
+                title="New Request"
+              >
+                <Icon name="Plus" className="w-4 h-4" />
+              </button>
+            )}
           </div>
-        )}
 
-        <div className="flex-1 flex flex-col overflow-hidden">
           {/* Request Name and URL Bar - Postman Style */}
-          <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-background)]">
+          <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-background)]">
             <div className="flex flex-col gap-2">
               <input
                 type="text"
                 value={requestName}
                 onChange={(e) => setRequestName(e.target.value)}
                 placeholder="Request name (optional)..."
-                className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-sm"
+                className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs"
               />
               <div className="flex gap-2 items-center">
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className="w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-sm font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer"
+                  className="w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer"
                   style={{
-                    color: method === 'GET' ? '#10b981' : 
-                           method === 'POST' ? '#3b82f6' : 
-                           method === 'PUT' ? '#f59e0b' : 
-                           method === 'DELETE' ? '#ef4444' : 
-                           method === 'PATCH' ? '#8b5cf6' : 
-                           '#6b7280'
+                    color: method === 'GET' ? '#10b981' :
+                      method === 'POST' ? '#3b82f6' :
+                        method === 'PUT' ? '#f59e0b' :
+                          method === 'DELETE' ? '#ef4444' :
+                            method === 'PATCH' ? '#8b5cf6' :
+                              '#6b7280'
                   }}
                 >
                   <option value="GET">GET</option>
@@ -2052,7 +2811,7 @@ export function ApiClient() {
                   value={displayUrl}
                   onChange={(e) => handleUrlChange(e.target.value)}
                   placeholder="https://api.example.com/endpoint"
-                  className={`flex-1 px-3 py-2 rounded-l border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent ${getVariableBorderClass(displayUrl)}`}
+                  className={`flex-1 px-3 py-2 rounded-l border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent ${getVariableBorderClass(displayUrl)}`}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                       handleRequest();
@@ -2062,7 +2821,7 @@ export function ApiClient() {
                 <button
                   onClick={handleRequest}
                   disabled={loading || !url}
-                  className={`px-6 py-2 rounded-r border border-l-0 border-[var(--color-border)] bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${loading ? 'cursor-wait' : ''}`}
+                  className={`px-6 py-2 rounded-r border border-l-0 border-[var(--color-border)] bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${loading ? 'cursor-wait' : ''}`}
                 >
                   {loading ? (
                     <>
@@ -2080,20 +2839,22 @@ export function ApiClient() {
             </div>
           </div>
 
-          <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex overflow-hidden" ref={requestResizeRef}>
             {/* Request Section - Postman Style */}
-            <div className="flex-1 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-background)]">
+            <div
+              style={{ width: `${requestWidth}%` }}
+              className="flex-shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-background)]"
+            >
               {/* Request Tabs */}
               <div className="flex border-b border-[var(--color-border)] bg-[var(--color-sidebar)]">
-                {(['params', 'headers', 'body', 'auth', 'settings'] as RequestTab[]).map((tab) => (
+                {(['params', 'headers', 'body', 'auth', 'pre-request', 'tests', 'settings'] as RequestTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveRequestTab(tab)}
-                    className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                      activeRequestTab === tab
-                        ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)]'
-                        : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)]'
-                    }`}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${activeRequestTab === tab
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold'
+                      : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]'
+                      }`}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
@@ -2101,7 +2862,7 @@ export function ApiClient() {
               </div>
 
               {/* Request Tab Content */}
-              <div className="flex-1 overflow-auto p-4 bg-[var(--color-background)]">
+              <div className={`flex-1 overflow-auto bg-[var(--color-background)] ${activeRequestTab === 'body' ? '' : 'p-3'}`}>
                 {activeRequestTab === 'params' && (
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Query Parameters</div>
@@ -2119,14 +2880,14 @@ export function ApiClient() {
                             value={param.key}
                             onChange={(e) => updateQueryParam(index, { key: e.target.value })}
                             placeholder="Key"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(param.key)}`}
+                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(param.key)}`}
                           />
                           <input
                             type="text"
                             value={param.value}
                             onChange={(e) => updateQueryParam(index, { value: e.target.value })}
                             placeholder="Value"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(param.value)}`}
+                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(param.value)}`}
                           />
                           <button
                             onClick={() => removeQueryParam(index)}
@@ -2152,30 +2913,45 @@ export function ApiClient() {
                     <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Headers</div>
                     <div className="space-y-2">
                       {headersList.map((header, index) => (
-                        <div key={index} className="flex gap-2 items-center">
+                        <div key={index} className="flex gap-2 items-start">
                           <input
                             type="checkbox"
                             checked={header.enabled}
                             onChange={(e) => updateHeader(index, { enabled: e.target.checked })}
-                            className="w-4 h-4"
+                            className="w-4 h-4 mt-1.5 flex-shrink-0"
                           />
                           <input
                             type="text"
                             value={header.key}
                             onChange={(e) => updateHeader(index, { key: e.target.value })}
                             placeholder="Key"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(header.key)}`}
+                            className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(header.key)}`}
                           />
-                          <input
-                            type="text"
-                            value={header.value}
-                            onChange={(e) => updateHeader(index, { value: e.target.value })}
-                            placeholder="Value"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(header.value)}`}
-                          />
+                          {focusedHeaderIndex === index ? (
+                            <textarea
+                              value={header.value}
+                              onChange={(e) => updateHeader(index, { value: e.target.value })}
+                              onBlur={() => setFocusedHeaderIndex(null)}
+                              placeholder="Value"
+                              rows={Math.min(Math.max(Math.ceil(header.value.length / 50), 1), 4)}
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs resize-none overflow-y-auto ${getVariableBorderClass(header.value)}`}
+                              style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                              autoFocus
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              value={header.value}
+                              onChange={(e) => updateHeader(index, { value: e.target.value })}
+                              onFocus={() => setFocusedHeaderIndex(index)}
+                              placeholder="Value"
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(header.value)}`}
+                            />
+                          )}
                           <button
                             onClick={() => removeHeader(index)}
-                            className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                            className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 flex-shrink-0 mt-0.5"
+                            title="Remove header"
                           >
                             <Icon name="X" className="w-4 h-4" />
                           </button>
@@ -2193,13 +2969,13 @@ export function ApiClient() {
                 )}
 
                 {activeRequestTab === 'body' && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-between flex-shrink-0 px-3 py-2 border-b border-[var(--color-border)]">
                       <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Body</div>
                       <select
                         value={bodyType}
                         onChange={(e) => setBodyType(e.target.value as BodyType)}
-                        className="w-[200px] px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                        className="w-[200px] px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs"
                       >
                         <option value="none">None</option>
                         <option value="json">JSON</option>
@@ -2211,78 +2987,87 @@ export function ApiClient() {
                     </div>
 
                     {bodyType === 'none' && (
-                      <div className="h-32 flex items-center justify-center text-gray-500 dark:text-gray-400 text-sm">
+                      <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 text-xs">
                         This request does not have a body
                       </div>
                     )}
 
                     {(bodyType === 'json' || bodyType === 'raw') && (
-                      <div className="h-[400px] rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
-                        <Editor
-                          height="400px"
-                          defaultLanguage={bodyType === 'json' ? 'json' : 'plaintext'}
-                          value={body}
-                          onChange={(value) => setBody(value || '')}
-                          theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
-                          options={{
-                            minimap: { enabled: false },
-                            fontSize: 14,
-                            wordWrap: 'on',
-                            padding: { top: 16, bottom: 16 },
-                            automaticLayout: true,
-                          }}
-                        />
+                      <div className="flex-1 min-h-0 overflow-hidden">
+                        {renderBodyEditor()}
                       </div>
                     )}
 
                     {(bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') && (
-                      <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
                         {formData.map((field, index) => (
                           <div key={index} className="flex gap-2 items-center">
                             <input
                               type="checkbox"
                               checked={field.enabled}
                               onChange={(e) => updateFormDataField(index, { enabled: e.target.checked })}
-                              className="w-4 h-4"
+                              className="w-4 h-4 flex-shrink-0"
                             />
                             <input
                               type="text"
                               value={field.key}
                               onChange={(e) => updateFormDataField(index, { key: e.target.value })}
                               placeholder="Key"
-                              className={`flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(field.key)}`}
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(field.key)}`}
                             />
+                            {bodyType === 'form-data' && (
+                              <select
+                                value={field.type}
+                                onChange={(e) => {
+                                  const newType = e.target.value as 'text' | 'file';
+                                  updateFormDataField(index, { type: newType, value: newType === 'file' ? '' : field.value });
+                                }}
+                                className="w-[100px] px-2 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs flex-shrink-0"
+                              >
+                                <option value="text">Text</option>
+                                <option value="file">File</option>
+                              </select>
+                            )}
                             {field.type === 'file' ? (
-                              <>
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <input
                                   type="file"
-                                  ref={fileInputRef}
                                   onChange={(e) => {
                                     const file = e.target.files?.[0];
-                                    if (file) handleFileSelect(index, file);
+                                    if (file) {
+                                      handleFileSelect(index, file);
+                                      // Reset the input so the same file can be selected again
+                                      e.target.value = '';
+                                    }
                                   }}
                                   className="hidden"
                                   id={`file-${index}`}
                                 />
                                 <label
                                   htmlFor={`file-${index}`}
-                                  className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700 text-xs cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white"
+                                  className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700 text-xs cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white flex-shrink-0 whitespace-nowrap"
                                 >
-                                  Choose File
+                                  {field.value ? 'Change File' : 'Choose File'}
                                 </label>
-                              </>
+                                {field.value && (
+                                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1 min-w-0" title={field.value.includes('data:') ? 'File loaded' : 'File selected'}>
+                                    {field.value.includes('data:') ? 'File loaded' : 'File selected'}
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <input
                                 type="text"
                                 value={field.value}
                                 onChange={(e) => updateFormDataField(index, { value: e.target.value })}
                                 placeholder="Value"
-                                className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(field.value)}`}
+                                className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(field.value)}`}
                               />
                             )}
                             <button
                               onClick={() => removeFormDataField(index)}
-                              className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                              className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 flex-shrink-0"
+                              title="Remove field"
                             >
                               <Icon name="X" className="w-4 h-4" />
                             </button>
@@ -2352,7 +3137,7 @@ export function ApiClient() {
                           value={authConfig.bearerToken || ''}
                           onChange={(e) => setAuthConfig({ ...authConfig, bearerToken: e.target.value })}
                           placeholder="Enter bearer token"
-                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(authConfig.bearerToken || '')}`}
+                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(authConfig.bearerToken || '')}`}
                         />
                       </div>
                     )}
@@ -2366,7 +3151,7 @@ export function ApiClient() {
                             value={authConfig.basicUsername || ''}
                             onChange={(e) => setAuthConfig({ ...authConfig, basicUsername: e.target.value })}
                             placeholder="Username"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1 ${getVariableBorderClass(authConfig.basicUsername || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.basicUsername || '')}`}
                           />
                         </div>
                         <div>
@@ -2376,7 +3161,7 @@ export function ApiClient() {
                             value={authConfig.basicPassword || ''}
                             onChange={(e) => setAuthConfig({ ...authConfig, basicPassword: e.target.value })}
                             placeholder="Password"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1 ${getVariableBorderClass(authConfig.basicPassword || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.basicPassword || '')}`}
                           />
                         </div>
                       </div>
@@ -2391,7 +3176,7 @@ export function ApiClient() {
                             value={authConfig.apiKeyKey || ''}
                             onChange={(e) => setAuthConfig({ ...authConfig, apiKeyKey: e.target.value })}
                             placeholder="API Key name"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1 ${getVariableBorderClass(authConfig.apiKeyKey || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyKey || '')}`}
                           />
                         </div>
                         <div>
@@ -2401,7 +3186,7 @@ export function ApiClient() {
                             value={authConfig.apiKeyValue || ''}
                             onChange={(e) => setAuthConfig({ ...authConfig, apiKeyValue: e.target.value })}
                             placeholder="API Key value"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1 ${getVariableBorderClass(authConfig.apiKeyValue || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyValue || '')}`}
                           />
                         </div>
                         <div>
@@ -2409,7 +3194,7 @@ export function ApiClient() {
                           <select
                             value={authConfig.apiKeyLocation || 'header'}
                             onChange={(e) => setAuthConfig({ ...authConfig, apiKeyLocation: e.target.value as 'header' | 'query' })}
-                            className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1"
+                            className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1"
                           >
                             <option value="header">Header</option>
                             <option value="query">Query Params</option>
@@ -2426,10 +3211,94 @@ export function ApiClient() {
                           value={authConfig.oauth2Token || ''}
                           onChange={(e) => setAuthConfig({ ...authConfig, oauth2Token: e.target.value })}
                           placeholder="Enter OAuth 2.0 access token"
-                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm ${getVariableBorderClass(authConfig.oauth2Token || '')}`}
+                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(authConfig.oauth2Token || '')}`}
                         />
                       </div>
                     )}
+                  </div>
+                )}
+
+                {activeRequestTab === 'pre-request' && (
+                  <div className="space-y-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Pre-request Script</div>
+                      <button
+                        onClick={() => setShowPreRequestExamples(!showPreRequestExamples)}
+                        className="px-2 py-1 text-[10px] rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors flex items-center gap-1"
+                      >
+                        <Icon name={showPreRequestExamples ? "ChevronDown" : "ChevronRight"} className="w-3 h-3" />
+                        {showPreRequestExamples ? 'Hide' : 'Show'} Examples
+                      </button>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Write JavaScript code that runs before the request is sent. Use <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">pm</code> object to access request data and set variables.
+                    </p>
+                    {showPreRequestExamples && (
+                      <div className="p-2 bg-[var(--color-muted)] rounded text-[10px] font-mono">
+                        <div className="mb-1 font-semibold">Examples:</div>
+                        <div className="space-y-1 opacity-90">
+                          <div>// Set environment variable</div>
+                          <div>pm.environment.set('token', 'abc123');</div>
+                          <div className="mt-2">// Use in URL: https://api.example.com/&#123;&#123;baseUrl&#125;&#125;/users</div>
+                          <div className="mt-2">// Modify URL dynamically</div>
+                          <div>pm.request.url.update('https://api.example.com/v2/users');</div>
+                          <div className="mt-2">// Set header</div>
+                          <div>pm.request.headers.set('Authorization', 'Bearer ' + pm.environment.get('token'));</div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 min-h-0">
+                      <ScriptEditor
+                        value={preRequestScript}
+                        onChange={setPreRequestScript}
+                        placeholder="// Example: pm.environment.set('token', 'abc123');"
+                        height="100%"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {activeRequestTab === 'tests' && (
+                  <div className="space-y-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Test Script</div>
+                      <button
+                        onClick={() => setShowTestExamples(!showTestExamples)}
+                        className="px-2 py-1 text-[10px] rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors flex items-center gap-1"
+                      >
+                        <Icon name={showTestExamples ? "ChevronDown" : "ChevronRight"} className="w-3 h-3" />
+                        {showTestExamples ? 'Hide' : 'Show'} Examples
+                      </button>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Write JavaScript code that runs after the response is received. Use the <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">pm</code> object to access response data and write tests.
+                    </p>
+                    {showTestExamples && (
+                      <div className="p-2 bg-[var(--color-muted)] rounded text-[10px] font-mono">
+                        <div className="mb-1 font-semibold">Examples:</div>
+                        <div className="space-y-1 opacity-90">
+                          <div>// Test status code</div>
+                          <div>pm.test('Status is 200', () =&gt; {'{'}</div>
+                          <div className="ml-2">pm.expect(pm.response.code).to.equal(200);</div>
+                          <div>{'}'});</div>
+                          <div className="mt-2">// Save token from response</div>
+                          <div>const jsonData = pm.response.json();</div>
+                          <div>pm.environment.set('token', jsonData.token);</div>
+                          <div className="mt-2">// Test response body</div>
+                          <div>pm.test('Has user data', () =&gt; {'{'}</div>
+                          <div className="ml-2">pm.expect(pm.response.json()).to.have.property('user');</div>
+                          <div>{'}'});</div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex-1 min-h-0">
+                      <ScriptEditor
+                        value={testScript}
+                        onChange={setTestScript}
+                        placeholder="// Example: pm.test('Status is 200', () => { pm.expect(pm.response.code).to.equal(200); });"
+                        height="100%"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -2443,7 +3312,7 @@ export function ApiClient() {
                           type="number"
                           value={timeout}
                           onChange={(e) => setRequestTimeout(Number(e.target.value) || 30000)}
-                          className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm mt-1"
+                          className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1"
                         />
                       </div>
                       <div className="flex items-center gap-2">
@@ -2470,19 +3339,34 @@ export function ApiClient() {
               </div>
             </div>
 
+            {/* Request/Response Resize Handle */}
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingRequest(true);
+              }}
+              className="w-1 flex-shrink-0 bg-[var(--color-border)] hover:bg-[var(--color-primary)] cursor-col-resize transition-colors group"
+              style={{ cursor: 'col-resize' }}
+            >
+              <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="w-0.5 h-8 bg-[var(--color-primary)] rounded" />
+              </div>
+            </div>
             {/* Response Section - Postman Style */}
-            <div className="flex-1 flex flex-col bg-[var(--color-background)]">
+            <div
+              style={{ width: `${100 - requestWidth}%` }}
+              className="flex-shrink-0 flex flex-col bg-[var(--color-background)]"
+            >
               {/* Response Tabs */}
               <div className="flex border-b border-[var(--color-border)] bg-[var(--color-sidebar)]">
                 {(['preview', 'raw', 'headers'] as ResponseTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveResponseTab(tab)}
-                    className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-all duration-200 ${
-                      activeResponseTab === tab
-                        ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)]'
-                        : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)]'
-                    }`}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${activeResponseTab === tab
+                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold'
+                      : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]'
+                      }`}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
@@ -2502,30 +3386,29 @@ export function ApiClient() {
                 ) : response ? (
                   <div className="h-full flex flex-col">
                     {/* Status Bar - Postman Style */}
-                    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] flex items-center justify-between">
+                    <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-[var(--color-text-secondary)]">Status:</span>
-                          <span className={`px-2 py-0.5 rounded text-sm font-semibold ${
-                            response.status >= 200 && response.status < 300 
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
-                              : response.status >= 400 
-                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' 
+                          <span className="text-xs font-medium text-[var(--color-text-secondary)]">Status:</span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${response.status >= 200 && response.status < 300
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : response.status >= 400
+                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                               : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                          }`}>
+                            }`}>
                             {response.status} {response.statusText}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                          <Icon name="Clock" className="w-4 h-4" />
+                        <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                          <Icon name="Clock" className="w-3.5 h-3.5" />
                           <span>{response.time}ms</span>
                         </div>
                         {response.data && (
-                          <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                            <Icon name="FileText" className="w-4 h-4" />
+                          <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                            <Icon name="FileText" className="w-3.5 h-3.5" />
                             <span>
-                              {typeof response.data === 'string' 
-                                ? `${response.data.length} bytes` 
+                              {typeof response.data === 'string'
+                                ? `${response.data.length} bytes`
                                 : `${JSON.stringify(response.data).length} bytes`}
                             </span>
                           </div>
@@ -2533,8 +3416,8 @@ export function ApiClient() {
                       </div>
                       <button
                         onClick={async () => {
-                          const text = typeof response.data === 'string' 
-                            ? response.data 
+                          const text = typeof response.data === 'string'
+                            ? response.data
                             : JSON.stringify(response.data, null, 2);
                           try {
                             await navigator.clipboard.writeText(text);
@@ -2553,11 +3436,11 @@ export function ApiClient() {
                       </button>
                     </div>
                     {activeResponseTab === 'preview' && (
-                      <div className="flex-1 overflow-auto">
+                      <div className="flex-1 overflow-hidden">
                         {(() => {
                           const data = typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2);
                           const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
-                          
+
                           // Check if it's JSON
                           if (data.trim().startsWith('{') || data.trim().startsWith('[')) {
                             try {
@@ -2571,9 +3454,9 @@ export function ApiClient() {
                                   options={{
                                     readOnly: true,
                                     minimap: { enabled: false },
-                                    fontSize: 14,
+                                    fontSize: 12,
                                     wordWrap: 'on',
-                                    padding: { top: 16, bottom: 16 },
+                                    padding: { top: 0, bottom: 0 },
                                     automaticLayout: true,
                                     lineNumbers: 'on',
                                     scrollBeyondLastLine: false,
@@ -2584,20 +3467,20 @@ export function ApiClient() {
                               // Not valid JSON, fall through to plain text
                             }
                           }
-                          
+
                           // Check if it's HTML
                           if (contentType.includes('text/html') || (data.trim().startsWith('<') && data.includes('</'))) {
                             return (
-                              <div className="h-full p-4">
+                              <div className="h-full">
                                 <iframe
                                   srcDoc={data}
-                                  className="w-full h-full border border-[var(--color-border)] rounded"
+                                  className="w-full h-full border-0"
                                   title="HTML Preview"
                                 />
                               </div>
                             );
                           }
-                          
+
                           // Default: formatted text/plain
                           return (
                             <Editor
@@ -2608,9 +3491,9 @@ export function ApiClient() {
                               options={{
                                 readOnly: true,
                                 minimap: { enabled: false },
-                                fontSize: 14,
+                                fontSize: 12,
                                 wordWrap: 'on',
-                                padding: { top: 16, bottom: 16 },
+                                padding: { top: 0, bottom: 0 },
                                 automaticLayout: true,
                                 lineNumbers: 'on',
                                 scrollBeyondLastLine: false,
@@ -2621,7 +3504,7 @@ export function ApiClient() {
                       </div>
                     )}
                     {activeResponseTab === 'raw' && (
-                      <div className="flex-1 overflow-auto">
+                      <div className="flex-1 overflow-hidden">
                         <Editor
                           height="100%"
                           defaultLanguage="plaintext"
@@ -2630,9 +3513,9 @@ export function ApiClient() {
                           options={{
                             readOnly: true,
                             minimap: { enabled: false },
-                            fontSize: 14,
+                            fontSize: 12,
                             wordWrap: 'on',
-                            padding: { top: 16, bottom: 16 },
+                            padding: { top: 0, bottom: 0 },
                             automaticLayout: true,
                             lineNumbers: 'on',
                             scrollBeyondLastLine: false,
@@ -2644,9 +3527,9 @@ export function ApiClient() {
                       <div className="flex-1 overflow-auto p-4">
                         <div className="space-y-1">
                           {Object.entries(response.headers || {}).map(([key, value]) => (
-                            <div key={key} className="flex gap-4 py-2 border-b border-[var(--color-border)] last:border-0 text-sm">
-                              <div className="font-semibold text-[var(--color-text-primary)] min-w-[220px]">{key}</div>
-                              <div className="text-[var(--color-text-secondary)] flex-1 break-all">{String(value)}</div>
+                            <div key={key} className="flex gap-4 py-2 border-b border-[var(--color-border)] last:border-0 text-xs">
+                              <div className="font-semibold text-[var(--color-text-primary)] min-w-[200px] break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{key}</div>
+                              <div className="text-[var(--color-text-secondary)] flex-1 break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{String(value)}</div>
                             </div>
                           ))}
                         </div>
@@ -2667,8 +3550,8 @@ export function ApiClient() {
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center p-8">
-                    <div className="text-center">
-                      <Icon name="Send" className="w-12 h-12 text-[var(--color-text-tertiary)] mx-auto mb-3 opacity-50" />
+                    <div className="flex flex-col items-center text-center">
+                      <Icon name="Send" className="w-12 h-12 text-[var(--color-text-tertiary)] mb-3 opacity-50" />
                       <p className="text-sm text-[var(--color-text-secondary)]">Response will appear here</p>
                       <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Click Send to make a request</p>
                     </div>

@@ -31,6 +31,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
+import { UpdateNotification } from './components/UpdateNotification';
 
 function App() {
     const loadConfig = useStore((state) => state.loadConfig);
@@ -121,7 +122,7 @@ function App() {
         { id: 'json-diff' as TabType, label: 'JSON Diff', icon: 'Diff', description: 'Compare two JSON objects' },
         { id: 'encoder' as TabType, label: 'Encoder/Decoder', icon: 'Lock', description: 'Encode and decode data' },
         { id: 'csv-yaml' as TabType, label: 'CSV/YAML Converter', icon: 'File', description: 'Convert CSV to YAML and vice versa' },
-        { id: 'api' as TabType, label: 'API Client', icon: 'Globe', description: 'Test REST APIs' },
+        { id: 'api' as TabType, label: 'API Studio', icon: 'Globe', description: 'Test REST APIs' },
         { id: 'formatter' as TabType, label: 'Formatter', icon: 'Code', description: 'Format code and data' },
         { id: 'regex' as TabType, label: 'Regex Tester', icon: 'Search', description: 'Test regular expressions' },
         { id: 'js-runner' as TabType, label: 'JavaScript Runner', icon: 'Zap', description: 'Run JavaScript code' },
@@ -322,6 +323,9 @@ function App() {
                 onClose={() => setShowGitSetup(false)}
                 onComplete={handleGitSetupComplete}
             />
+
+            {/* Update Notification */}
+            <UpdateNotification />
         </div>
     );
 }
