@@ -63,6 +63,36 @@ export default defineConfig({
         main: path.resolve(__dirname, 'index.html'),
         planner: path.resolve(__dirname, 'planner.html'),
       },
+      output: {
+        manualChunks: (id) => {
+          // Split vendor chunks
+          if (id.includes('node_modules')) {
+            // Large libraries get their own chunks
+            if (id.includes('@monaco-editor')) return 'monaco';
+            if (id.includes('@excalidraw')) return 'excalidraw';
+            if (id.includes('@blocknote')) return 'blocknote';
+            if (id.includes('mermaid')) return 'mermaid';
+            if (id.includes('@kubernetes/client-node')) return 'k8s-client';
+            if (id.includes('dockerode')) return 'docker';
+            // React and core libraries
+            if (id.includes('react') || id.includes('react-dom')) return 'react-vendor';
+            // Other node_modules
+            return 'vendor';
+          }
+        },
+      },
+    },
+    // Optimize chunk size
+    chunkSizeWarningLimit: 1000,
+    // Enable source maps for debugging (disable in production for smaller builds)
+    sourcemap: false,
+    // Minify
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: false, // Keep console for debugging
+        drop_debugger: true,
+      },
     },
   },
 });

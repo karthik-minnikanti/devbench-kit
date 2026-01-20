@@ -2,20 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Icon } from './Icon';
 import { getPlannerEntry, getPlannerEntries, savePlannerEntry, PlannerEntry, PlannerTask, TimeBlock, PlannerReflection, Habit, getAllHabits, saveHabit, deleteHabit, getHabitCompletions, getAllHabitCompletions, setHabitCompletion } from '../services/sync';
 import { formatDateLocal } from '../utils/dateUtils';
+import { appEvents, EVENTS } from '../utils/appEvents';
+import { getElectronAPI } from '../utils/electronAPI';
 
 type TaskFilter = 'all' | 'active' | 'completed' | 'blocked';
 type ViewMode = 'day' | 'week' | 'analytics';
 
 export function DailyPlanner() {
-    const [selectedDate, setSelectedDate] = useState<string>(() => {
-        // Check if there's a pending date from Home page
-        const pendingDate = (window as any).__pendingPlannerDate;
-        if (pendingDate) {
-            delete (window as any).__pendingPlannerDate;
-            return pendingDate;
-        }
-        return formatDateLocal();
-    });
+    const [selectedDate, setSelectedDate] = useState<string>(formatDateLocal());
     // Daily Overview
     const [energyLevel, setEnergyLevel] = useState<'low' | 'medium' | 'high' | undefined>(undefined);
     const [workMode, setWorkMode] = useState<'deep-work' | 'meetings' | 'mixed' | undefined>(undefined);
@@ -266,20 +260,22 @@ export function DailyPlanner() {
 
     // Listen for planner updates from other windows
     useEffect(() => {
-        if (typeof window !== 'undefined' && (window as any).electronAPI?.planner?.onUpdate) {
+        const electronAPI = getElectronAPI();
+        if (electronAPI?.planner?.onUpdate) {
             const handleUpdate = (date: string) => {
                 // If the update is for the current date, reload the entry
                 if (date === selectedDate) {
                     loadEntry(false); // Don't show loading for updates
                 }
             };
-            (window as any).electronAPI.planner.onUpdate(handleUpdate);
+            electronAPI.planner.onUpdate(handleUpdate);
         }
     }, [selectedDate, loadEntry]);
 
     const handleOpenInNewWindow = useCallback(() => {
-        if (typeof window !== 'undefined' && (window as any).electronAPI?.window?.openPlanner) {
-            (window as any).electronAPI.window.openPlanner();
+        const electronAPI = getElectronAPI();
+        if (electronAPI?.window?.openPlanner) {
+            electronAPI.window.openPlanner();
         }
     }, []);
 
@@ -318,8 +314,9 @@ export function DailyPlanner() {
                 (window as any).showToast('Task saved successfully', 'success');
             }
             // Broadcast update to other windows
-            if (typeof window !== 'undefined' && (window as any).electronAPI?.planner?.broadcastUpdate) {
-                (window as any).electronAPI.planner.broadcastUpdate(selectedDate);
+            const electronAPI = getElectronAPI();
+            if (electronAPI?.planner?.broadcastUpdate) {
+                electronAPI.planner.broadcastUpdate(selectedDate);
             }
         } catch (error: any) {
             console.error('Failed to save task:', error);
@@ -405,8 +402,9 @@ export function DailyPlanner() {
             };
             await savePlannerEntry(entry);
             // Broadcast update to other windows
-            if (typeof window !== 'undefined' && (window as any).electronAPI?.planner?.broadcastUpdate) {
-                (window as any).electronAPI.planner.broadcastUpdate(selectedDate);
+            const electronAPI = getElectronAPI();
+            if (electronAPI?.planner?.broadcastUpdate) {
+                electronAPI.planner.broadcastUpdate(selectedDate);
             }
         } catch (error: any) {
             console.error('Failed to save task completion:', error);
@@ -566,8 +564,9 @@ export function DailyPlanner() {
             };
             await savePlannerEntry(entry);
             // Broadcast update to other windows
-            if (typeof window !== 'undefined' && (window as any).electronAPI?.planner?.broadcastUpdate) {
-                (window as any).electronAPI.planner.broadcastUpdate(selectedDate);
+            const electronAPI = getElectronAPI();
+            if (electronAPI?.planner?.broadcastUpdate) {
+                electronAPI.planner.broadcastUpdate(selectedDate);
             }
         } catch (err) {
             console.error('Failed to save planner entry:', err);
@@ -604,44 +603,35 @@ export function DailyPlanner() {
         }
     }, [selectedDate]);
 
-    // Check for pending date from Home page when component becomes visible
-    // This must be after handleDateChange is defined
+    // Listen for pending date and add task events
     useEffect(() => {
-        const checkPendingDate = () => {
-            const pendingDate = (window as any).__pendingPlannerDate;
-            const shouldAddTask = (window as any).__pendingAddTask;
-            
-            if (pendingDate && pendingDate !== selectedDate) {
-                // Clear the pending date
-                delete (window as any).__pendingPlannerDate;
-                // Update to the pending date
-                handleDateChange(pendingDate);
-                
-                // If addTask flag is set, wait for data to load then add task
-                if (shouldAddTask) {
-                    delete (window as any).__pendingAddTask;
-                    // Wait for data to load, then add task
-                    setTimeout(async () => {
-                        await loadEntry(false);
-                        // Small delay to ensure state is updated
-                        setTimeout(() => {
-                            handleAddTask();
-                        }, 300);
-                    }, 500);
-                }
-            } else if (shouldAddTask && !pendingDate) {
-                // If just addTask flag without date change, add task immediately
-                delete (window as any).__pendingAddTask;
-                handleAddTask();
+        let pendingDate: string | null = null;
+        let shouldAddTask = false;
+
+        const unsubscribeDate = appEvents.on(EVENTS.PENDING_PLANNER_DATE, (date: string) => {
+            pendingDate = date;
+            if (date && date !== selectedDate) {
+                handleDateChange(date);
             }
+        });
+
+        const unsubscribeAddTask = appEvents.on(EVENTS.PENDING_ADD_TASK, (value: boolean) => {
+            shouldAddTask = value;
+            if (value) {
+                // Wait for data to load, then add task
+                setTimeout(async () => {
+                    await loadEntry(false);
+                    setTimeout(() => {
+                        handleAddTask();
+                    }, 300);
+                }, 500);
+            }
+        });
+
+        return () => {
+            unsubscribeDate();
+            unsubscribeAddTask();
         };
-        
-        // Check immediately
-        checkPendingDate();
-        
-        // Also check after a short delay to catch cases where the date is set just before component renders
-        const timeout = setTimeout(checkPendingDate, 200);
-        return () => clearTimeout(timeout);
     }, [selectedDate, handleDateChange, loadEntry, handleAddTask]);
 
     const navigateDate = useCallback((direction: 'prev' | 'next') => {
@@ -801,7 +791,7 @@ export function DailyPlanner() {
                             <span className="font-medium">{stats.completionRate}% Done</span>
                         </div>
                     )}
-                    {typeof window !== 'undefined' && (window as any).electronAPI?.window?.openPlanner && !isPlannerWindow && (
+                    {getElectronAPI()?.window?.openPlanner && !isPlannerWindow && (
                         <button
                             onClick={handleOpenInNewWindow}
                             className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-colors"

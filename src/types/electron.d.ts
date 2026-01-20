@@ -102,6 +102,64 @@ declare global {
                 minimize: () => Promise<void>;
                 maximize: () => Promise<void>;
                 close: () => Promise<void>;
+                openPlanner: () => Promise<void>;
+            };
+            planner: {
+                get: (date: string) => Promise<any>;
+                getEntries: (startDate?: string, endDate?: string) => Promise<any>;
+                save: (entry: any) => Promise<any>;
+                delete: (date: string) => Promise<any>;
+                broadcastUpdate: (date: string) => Promise<void>;
+                onUpdate: (callback: (date: string) => void) => void;
+            };
+            habits: {
+                getAll: () => Promise<any>;
+                get: (habitId: string) => Promise<any>;
+                save: (habit: any) => Promise<any>;
+                delete: (habitId: string) => Promise<any>;
+                getCompletions: (habitId: string, startDate?: string, endDate?: string) => Promise<any>;
+                getAllCompletions: (startDate?: string, endDate?: string) => Promise<any>;
+                setCompletion: (habitId: string, date: string, completed: boolean) => Promise<any>;
+            };
+            apiClient: {
+                request: (requestData: any) => Promise<any>;
+                get: () => Promise<any>;
+                getRequest: (id: string) => Promise<any>;
+                saveRequest: (request: any) => Promise<any>;
+                deleteRequest: (id: string) => Promise<any>;
+                save: (requests: any[]) => Promise<any>;
+                getHistory: () => Promise<any>;
+                saveHistory: (history: any[]) => Promise<any>;
+                getConsoleLogs: () => Promise<any>;
+                saveConsoleLogs: (logs: any[]) => Promise<any>;
+                getEnvironments: () => Promise<any>;
+                saveEnvironments: (data: { environments: any[]; activeEnvironmentId: string | null }) => Promise<any>;
+            };
+            folders: {
+                get: (parentId?: string | null) => Promise<any>;
+                save: (folder: any) => Promise<any>;
+                delete: (folderId: string) => Promise<any>;
+            };
+            git: {
+                getRepoPath: () => Promise<{ success: boolean; repoPath?: string; error?: string }>;
+                setRepoPath: (repoPath: string) => Promise<any>;
+                initRepo: (repoPath: string) => Promise<any>;
+                checkIfRepo: (repoPath: string) => Promise<any>;
+                sync: (filePaths?: string[], commitMessage?: string) => Promise<any>;
+                status: () => Promise<any>;
+                pull: () => Promise<any>;
+            };
+            updater: {
+                checkForUpdates: () => Promise<any>;
+                downloadUpdate: () => Promise<any>;
+                quitAndInstall: () => Promise<any>;
+                getAppVersion: () => Promise<any>;
+                onCheckingForUpdate: (callback: () => void) => void;
+                onUpdateAvailable: (callback: (info: any) => void) => void;
+                onUpdateNotAvailable: (callback: (info: any) => void) => void;
+                onUpdateError: (callback: (error: any) => void) => void;
+                onDownloadProgress: (callback: (progress: any) => void) => void;
+                onUpdateDownloaded: (callback: (info: any) => void) => void;
             };
             auth: {
                 openOAuth: (url: string) => Promise<string>;

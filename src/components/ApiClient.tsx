@@ -66,6 +66,54 @@ export interface SavedApiRequest {
   updatedAt: string;
 }
 
+// Sanitize HTML to prevent external resource loading and XSS
+function sanitizeHtmlForPreview(html: string): string {
+  // Create a temporary DOM element to parse HTML
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  // Remove all script tags
+  const scripts = doc.querySelectorAll('script');
+  scripts.forEach(script => script.remove());
+  
+  // Remove all external links and resources
+  // Remove external stylesheets
+  const links = doc.querySelectorAll('link[rel="stylesheet"]');
+  links.forEach(link => {
+    const href = link.getAttribute('href');
+    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+      link.remove();
+    }
+  });
+  
+  // Remove iframes
+  const iframes = doc.querySelectorAll('iframe');
+  iframes.forEach(iframe => iframe.remove());
+  
+  // Remove external styles in style tags that might contain @import
+  const styleTags = doc.querySelectorAll('style');
+  styleTags.forEach(style => {
+    let content = style.textContent || '';
+    // Remove @import statements
+    content = content.replace(/@import\s+url\([^)]+\)/gi, '');
+    content = content.replace(/@import\s+['"][^'"]+['"]/gi, '');
+    style.textContent = content;
+  });
+  
+  // Remove inline event handlers (onclick, onload, etc.)
+  const allElements = doc.querySelectorAll('*');
+  allElements.forEach(el => {
+    Array.from(el.attributes).forEach(attr => {
+      if (attr.name.startsWith('on')) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  
+  // Return sanitized HTML
+  return doc.documentElement.outerHTML;
+}
+
 export function ApiClient() {
   const [method, setMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD'>('GET');
   const [url, setUrl] = useState('');
@@ -3470,12 +3518,20 @@ export function ApiClient() {
 
                           // Check if it's HTML
                           if (contentType.includes('text/html') || (data.trim().startsWith('<') && data.includes('</'))) {
+                            // Sanitize HTML to prevent external resource loading
+                            const sanitizedHtml = sanitizeHtmlForPreview(data);
+                            
                             return (
-                              <div className="h-full">
+                              <div className="h-full flex flex-col">
+                                <div className="px-3 py-2 text-xs text-[var(--color-text-tertiary)] bg-[var(--color-muted)] border-b border-[var(--color-border)]">
+                                  <span className="text-yellow-500">⚠️</span> HTML preview (external resources blocked for security)
+                                </div>
                                 <iframe
-                                  srcDoc={data}
-                                  className="w-full h-full border-0"
+                                  srcDoc={sanitizedHtml}
+                                  className="w-full flex-1 border-0"
                                   title="HTML Preview"
+                                  sandbox="allow-same-origin"
+                                  referrerPolicy="no-referrer"
                                 />
                               </div>
                             );

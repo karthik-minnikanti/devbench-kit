@@ -37,21 +37,21 @@ export const NoteItem = memo<NoteItemProps>(({
                 onDragStart(e, note.id);
             }}
             onDragEnd={onDragEnd}
-            className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${isSelected
+            className={`px-2.5 py-1.5 rounded-md cursor-pointer transition-colors duration-150 group ${isSelected
                     ? 'bg-[var(--color-primary)] text-white'
-                    : 'bg-[var(--color-card)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]'
+                    : 'hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]'
                 } ${isDragged ? 'opacity-50' : ''}`}
             onClick={() => onSelect(note.id)}
         >
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-1.5">
                 <div className="flex-1 min-w-0">
-                    <div className={`text-xs font-medium truncate ${isSelected ? 'text-white' : 'text-[var(--color-text-primary)]'
+                    <div className={`text-sm font-medium truncate leading-snug ${isSelected ? 'text-white' : 'text-[var(--color-text-primary)]'
                         }`}>
-                        {note.title || 'Untitled Note'}
+                        {note.title || 'Untitled'}
                     </div>
-                    <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-white/80' : 'text-[var(--color-text-tertiary)]'
+                    <div className={`text-xs mt-0.5 ${isSelected ? 'text-white/70' : 'text-[var(--color-text-tertiary)]'
                         }`}>
-                        {note.updatedAt ? new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        {note.updatedAt ? new Date(note.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}
                     </div>
                 </div>
                 <button
@@ -59,12 +59,12 @@ export const NoteItem = memo<NoteItemProps>(({
                         e.stopPropagation();
                         onDelete(note.id);
                     }}
-                    className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${isSelected
+                    className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-black/10 ${isSelected
                             ? 'text-white hover:text-red-200'
                             : 'text-[var(--color-text-tertiary)] hover:text-red-500'
                         }`}
                 >
-                    <Icon name="Trash2" className="w-3 h-3" />
+                    <Icon name="Trash2" className="w-3.5 h-3.5" />
                 </button>
             </div>
         </div>

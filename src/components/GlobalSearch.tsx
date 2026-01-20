@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { getHistory } from '../services/history';
+import { useDebounce } from '../utils/debounce';
+import { getElectronAPI } from '../utils/electronAPI';
 
 interface SearchResult {
     id: string;
@@ -25,17 +27,18 @@ export function GlobalSearch() {
     }, []);
 
     const loadData = async () => {
-        if (!window.electronAPI) return;
+        const electronAPI = getElectronAPI();
+        if (!electronAPI) return;
 
         try {
             // Load notes
-            const notesResult = await window.electronAPI.notes.list();
+            const notesResult = await electronAPI.notes.list();
             if (notesResult.success) {
                 setNotes(notesResult.notes || []);
             }
 
             // Load drawings
-            const drawingsResult = await window.electronAPI.drawings.list();
+            const drawingsResult = await electronAPI.drawings.list();
             if (drawingsResult.success) {
                 setDrawings(drawingsResult.drawings || []);
             }
@@ -45,7 +48,7 @@ export function GlobalSearch() {
             setHistory(historyData);
 
             // Load snippets
-            const snippetsResult = await window.electronAPI.snippets.get();
+            const snippetsResult = await electronAPI.snippets.get();
             if (snippetsResult.snippets) {
                 setSnippets(snippetsResult.snippets || []);
             }
@@ -89,14 +92,17 @@ export function GlobalSearch() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isOpen, results, selectedIndex]);
 
-    useEffect(() => {
-        if (!query.trim()) {
-            setResults([]);
-            return;
+    // Debounce search query to avoid expensive operations on every keystroke
+    const debouncedQuery = useDebounce(query, 200);
+
+    // Memoize search results computation
+    const searchResults = useMemo(() => {
+        if (!debouncedQuery.trim()) {
+            return [];
         }
 
-        const searchResults: SearchResult[] = [];
-        const lowerQuery = query.toLowerCase();
+        const results: SearchResult[] = [];
+        const lowerQuery = debouncedQuery.toLowerCase();
 
         // Search notes
         notes.forEach((note) => {
@@ -190,9 +196,14 @@ export function GlobalSearch() {
             }
         });
 
-        setResults(searchResults.slice(0, 10)); // Limit to 10 results
+        return results.slice(0, 10); // Limit to 10 results
+    }, [debouncedQuery, notes, drawings, history, snippets]);
+
+    // Update results when search results change
+    useEffect(() => {
+        setResults(searchResults);
         setSelectedIndex(0);
-    }, [query, notes, drawings, history, snippets]);
+    }, [searchResults]);
 
     const executeResult = (result: SearchResult) => {
         if (result.action) {

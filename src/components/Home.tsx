@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { getHistory } from '../services/history';
 import { getNotes } from '../services/sync';
@@ -6,6 +6,7 @@ import { getDrawings } from '../services/sync';
 import { getPlannerEntry } from '../services/sync';
 import { BrandLogo } from './BrandLogo';
 import { formatDateLocal } from '../utils/dateUtils';
+import { appEvents, EVENTS } from '../utils/appEvents';
 
 interface RecentActivity {
     id: string;
@@ -27,71 +28,83 @@ export function Home() {
         totalTasks: 0,
     });
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
-        setLoading(true);
+    const loadData = useCallback(async () => {
         try {
-            // Load history (limit to 10 most recent from backend)
-            const history = await getHistory(10);
-            const historyItems: RecentActivity[] = history.map((entry: any) => ({
+            setLoading(true);
+            
+            const { getElectronAPI } = await import('../utils/electronAPI');
+            const electronAPI = getElectronAPI();
+            if (!electronAPI) {
+                setLoading(false);
+                return;
+            }
+
+            // Load all data in parallel
+            const [allHistory, allNotes, allDrawings] = await Promise.all([
+                getHistory().catch(() => []),
+                getNotes().catch(() => []),
+                getDrawings().catch(() => []),
+            ]);
+
+            // Convert to activity items
+            const historyItems: RecentActivity[] = allHistory.map((entry: any) => ({
                 id: entry.id || entry._id,
                 type: 'history' as const,
                 title: `${entry.type} - ${entry.output?.substring(0, 50) || 'No output'}...`,
                 timestamp: new Date(entry.createdAt || entry.updatedAt || entry.timestamp),
             }));
 
-            // Load notes (limit to 10 most recent from backend)
-            const notes = await getNotes(10);
-            const noteItems: RecentActivity[] = notes.map((note: any) => ({
+            const noteItems: RecentActivity[] = allNotes.map((note: any) => ({
                 id: note.id || note._id,
                 type: 'note' as const,
                 title: note.title || 'Untitled Note',
                 timestamp: new Date(note.updatedAt || note.createdAt),
             }));
 
-            // Load drawings (limit to 10 most recent from backend)
-            const drawings = await getDrawings(10);
-            const drawingItems: RecentActivity[] = drawings.map((drawing: any) => ({
+            const drawingItems: RecentActivity[] = allDrawings.map((drawing: any) => ({
                 id: drawing.id || drawing._id,
                 type: 'drawing' as const,
                 title: drawing.title || 'Untitled Drawing',
                 timestamp: new Date(drawing.updatedAt || drawing.createdAt),
             }));
 
-            // Load planner for today's date (using local timezone)
-            const today = formatDateLocal();
-            const plannerEntry = await getPlannerEntry(today);
-            if (plannerEntry) {
-                setTodayTasks(plannerEntry.tasks || []);
-            } else {
-                setTodayTasks([]);
-            }
-
-            // Combine and sort by timestamp (load all, filter by today in render, then limit to 10)
+            // Combine, sort by timestamp (newest first), and limit to 10 total
             const allActivities = [...historyItems, ...noteItems, ...drawingItems]
-                .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+                .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+                .slice(0, 10);
+
+            // Load planner for today
+            const today = formatDateLocal();
+            const plannerEntry = await getPlannerEntry(today).catch(() => null);
 
             setRecentActivities(allActivities);
-
-            // Calculate stats (use today's planner for stats)
-            const todayPlanner = plannerEntry;
-            
+            setTodayTasks(plannerEntry?.tasks || []);
             setStats({
-                totalHistory: history.length,
-                totalNotes: notes.length,
-                totalDrawings: drawings.length,
-                completedTasks: todayPlanner?.tasks?.filter((t: any) => t.completed).length || 0,
-                totalTasks: todayPlanner?.tasks?.length || 0,
+                totalHistory: allHistory.length,
+                totalNotes: allNotes.length,
+                totalDrawings: allDrawings.length,
+                completedTasks: plannerEntry?.tasks?.filter((t: any) => t.completed).length || 0,
+                totalTasks: plannerEntry?.tasks?.length || 0,
             });
         } catch (error) {
-            console.error('Failed to load home data:', error);
+            console.error('[Home] Failed to load data:', error);
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    // Load data on mount
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
+
+    // Listen for data change events to refresh
+    useEffect(() => {
+        const unsubscribe = appEvents.on(EVENTS.OPEN_TOOL, () => {
+            setTimeout(() => loadData(), 500);
+        });
+        return unsubscribe;
+    }, [loadData]);
 
     const formatTimeAgo = (date: Date) => {
         const now = new Date();
@@ -146,7 +159,18 @@ export function Home() {
                             {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                         </p>
                     </div>
-                    <BrandLogo size="md" showText={true} />
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => loadData()}
+                            disabled={loading}
+                            className="px-3 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-card)] hover:bg-[var(--color-muted)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                            title="Refresh dashboard data"
+                        >
+                            <Icon name="RefreshCw" className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                            Refresh
+                        </button>
+                        <BrandLogo size="md" showText={true} />
+                    </div>
                 </div>
 
                 {/* Stats Cards */}
@@ -323,9 +347,7 @@ export function Home() {
                         </div>
                     ) : (
                         <div className="space-y-2">
-                            {recentActivities
-                                .slice(0, 10) // Limit to 10 items
-                                .map((activity) => {
+                            {recentActivities.map((activity) => {
                                     // Map activity type to tab type
                                     const getTabType = (type: string): string => {
                                         switch (type) {
@@ -394,4 +416,3 @@ export function Home() {
         </div>
     );
 }
-

@@ -9,6 +9,9 @@ import { getNotes, saveNote, deleteNote, Note as NoteType, getFolders, saveFolde
 import { Icon } from './Icon';
 import { hasNoteChanged } from '../utils/sync';
 import { NoteItem } from './memoized-list-items';
+import { appEvents, EVENTS } from '../utils/appEvents';
+import { noteTemplates, getTemplatesByCategory, NoteTemplate } from '../utils/noteTemplates';
+import { getThemeForTemplate } from '../utils/blockNoteThemes';
 
 interface Note {
     id: string;
@@ -33,6 +36,8 @@ export function Notes() {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
     const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
     const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+    const [showTemplateModal, setShowTemplateModal] = useState(false);
+    const [currentTemplateId, setCurrentTemplateId] = useState<string>('blank');
     
     const editorRef = useRef<BlockNoteEditor | null>(null);
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -48,17 +53,18 @@ export function Notes() {
     }, []);
 
     useEffect(() => {
-        const pendingItem = (window as any).__pendingItemId;
-        if (pendingItem && pendingItem.toolType === 'notes' && pendingItem.itemId) {
-            setTimeout(() => {
-                const noteId = pendingItem.itemId;
-                const note = notes.find(n => String(n.id) === String(noteId));
-                if (note) {
-                    handleSelectNote(note.id);
-                }
-                delete (window as any).__pendingItemId;
-            }, 500);
-        }
+        const unsubscribe = appEvents.on(EVENTS.PENDING_ITEM_ID, (data: { toolType: string; itemId: string }) => {
+            if (data && data.toolType === 'notes' && data.itemId) {
+                setTimeout(() => {
+                    const noteId = data.itemId;
+                    const note = notes.find(n => String(n.id) === String(noteId));
+                    if (note) {
+                        handleSelectNote(note.id);
+                    }
+                }, 500);
+            }
+        });
+        return unsubscribe;
     }, [notes]);
 
     const normalizeNoteId = (note: any): string => {
@@ -75,17 +81,39 @@ export function Notes() {
                     folderId: note.folderId ?? null,
                     createdAt: note.createdAt || new Date().toISOString(),
                     updatedAt: note.updatedAt || new Date().toISOString(),
+                    // Preserve title - never overwrite with empty or undefined
+                    title: note.title || 'Untitled Note',
                 }))
                 .filter(note => note.id);
             
-            setNotes(transformedNotes);
+            // Merge with existing notes to preserve titles that might be in the process of being edited
+            setNotes(prev => {
+                const merged = transformedNotes.map(loadedNote => {
+                    // Find existing note with same ID
+                    const existingNote = prev.find(n => n.id === loadedNote.id);
+                    // If note exists and has a title, preserve it (user might be editing)
+                    // Only use loaded title if existing note doesn't have a title or is empty
+                    if (existingNote && existingNote.title && existingNote.title.trim() !== '' && existingNote.title !== 'Untitled Note') {
+                        return { ...loadedNote, title: existingNote.title };
+                    }
+                    return loadedNote;
+                });
+                
+                // Add any new notes that don't exist in previous state
+                const newNotes = transformedNotes.filter(loadedNote => 
+                    !prev.find(n => n.id === loadedNote.id)
+                );
+                
+                return [...merged, ...newNotes];
+            });
+            
             setDateGroups(groupByDate(transformedNotes));
             
             // Update last synced state
             transformedNotes.forEach(note => {
                 if (note.content) {
                     lastSyncedStateRef.current.set(note.id, {
-                        title: note.title,
+                        title: note.title || 'Untitled Note',
                         content: note.content,
                         folderId: note.folderId ?? null
                     });
@@ -253,8 +281,11 @@ export function Notes() {
         return [{ type: 'paragraph', content: 'Start typing...' }];
     }, []); // No dependencies - always same initial content
 
+    const currentTheme = useMemo(() => getThemeForTemplate(currentTemplateId), [currentTemplateId]);
+
     const editor = useCreateBlockNote({
         initialContent: getInitialContent,
+        theme: currentTheme,
     });
 
     editorRef.current = editor;
@@ -272,6 +303,19 @@ export function Notes() {
                     const noteId = String(n.id || (n as any)._id || '');
                     return noteId === selectedNote;
                 });
+                
+                // Determine template ID from note title or content
+                if (note) {
+                    const templateMatch = noteTemplates.find(t => 
+                        note.title === t.name || 
+                        (note.title && note.title.includes(t.name))
+                    );
+                    if (templateMatch) {
+                        setCurrentTemplateId(templateMatch.id);
+                    } else {
+                        setCurrentTemplateId('blank');
+                    }
+                }
 
                 if (!note) {
                     // Note not found, clear editor
@@ -316,9 +360,10 @@ export function Notes() {
                         if (n.id === selectedNote) {
                             const currentTitle = noteTitle || n.title;
                             // Use the title from file, but if user is typing something different, preserve it
-                            const titleToUse = (currentTitle !== n.title && currentTitle !== note.title) 
+                            // Also preserve if existing title is not empty and not "Untitled Note"
+                            const titleToUse = (currentTitle && currentTitle.trim() !== '' && currentTitle !== 'Untitled Note' && currentTitle !== note.title)
                                 ? currentTitle 
-                                : note.title;
+                                : (note.title && note.title.trim() !== '' ? note.title : n.title);
                             
                             return { 
                                 ...n, 
@@ -328,6 +373,7 @@ export function Notes() {
                                 updatedAt: note.updatedAt || n.updatedAt
                             };
                         }
+                        // For other notes, never change their title
                         return n;
                     }));
                     
@@ -365,9 +411,13 @@ export function Notes() {
                     setNotes(prev => prev.map(n => {
                         if (n.id === selectedNote) {
                             // Only update title if it matches what we're loading (don't overwrite user's typing)
-                            const titleToUse = (noteTitle && noteTitle !== note.title) ? noteTitle : note.title;
+                            // Preserve existing title if it's not empty and not "Untitled Note"
+                            const titleToUse = (noteTitle && noteTitle.trim() !== '' && noteTitle !== 'Untitled Note' && noteTitle !== note.title) 
+                                ? noteTitle 
+                                : (note.title && note.title.trim() !== '' ? note.title : n.title);
                             return { ...n, title: titleToUse };
                         }
+                        // For other notes, never change their title
                         return n;
                     }));
                 }
@@ -501,20 +551,26 @@ export function Notes() {
         });
     }, []);
 
-    const handleCreateNote = useCallback(async () => {
+    const handleCreateNote = useCallback(async (templateId?: string) => {
         if (loading || creatingNoteRef.current) return; // Prevent duplicate creation
         
         creatingNoteRef.current = true;
         setLoading(true);
+        setShowTemplateModal(false);
         
         try {
             const uniqueId = generateUUID();
-            const timestamp = new Date().toLocaleString();
+            const templateIdToUse = templateId || 'blank';
+            const template = noteTemplates.find(t => t.id === templateIdToUse);
+            const templateContent = template ? JSON.parse(JSON.stringify(template.content)) : [{ type: 'paragraph', content: '' }];
+            const templateTitle = template && template.id !== 'blank' ? template.name : 'Untitled';
+            
+            setCurrentTemplateId(templateIdToUse);
             
             const newNote = await saveNote({
                 id: uniqueId,
-                title: `Untitled Note ${timestamp}`,
-                content: [{ type: 'paragraph', content: 'Start typing...' }],
+                title: templateTitle,
+                content: templateContent,
                 folderId: null,
             } as NoteType);
 
@@ -530,7 +586,7 @@ export function Notes() {
                     return [...prev, {
                         id: noteId,
                         title: newNote.title,
-                        content: newNote.content || [{ type: 'paragraph', content: 'Start typing...' }],
+                        content: newNote.content || templateContent,
                         folderId: null,
                         createdAt: newNote.createdAt || new Date().toISOString(),
                         updatedAt: newNote.updatedAt || new Date().toISOString(),
@@ -542,7 +598,7 @@ export function Notes() {
                 
                 lastSyncedStateRef.current.set(noteId, {
                     title: newNote.title,
-                    content: newNote.content || [{ type: 'paragraph', content: 'Start typing...' }],
+                    content: newNote.content || templateContent,
                     folderId: null
                 });
 
@@ -780,9 +836,9 @@ export function Notes() {
         <div className="h-full w-full flex flex-col bg-[var(--color-background)] overflow-hidden">
             <div className="flex-1 flex overflow-hidden h-full">
                 {showSidebar && (
-                    <div className="w-64 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col transition-all duration-300 ease-in-out">
+                    <div className="w-64 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col">
                         <div 
-                            className="p-2 flex-1"
+                            className="flex-1"
                             onDragOver={(e) => {
                                 if (draggedNoteId) {
                                     e.preventDefault();
@@ -797,34 +853,36 @@ export function Notes() {
                                 }
                             }}
                         >
-                            <div className="flex items-center justify-between mb-3 px-3 pt-3">
-                                <h2 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
-                                    Notes
-                                </h2>
-                                <button
-                                    onClick={handleCreateNote}
-                                    disabled={loading}
-                                    className="px-3 py-1.5 rounded-md bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
-                                >
-                                    + New
-                                </button>
+                            <div className="px-4 pt-4 pb-3 border-b border-[var(--color-border)]">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h2 className="text-xs font-medium text-[var(--color-text-primary)] tracking-wide">
+                                        Notes
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowTemplateModal(true)}
+                                        disabled={loading}
+                                        className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 hover:bg-[var(--color-muted)] rounded transition-colors duration-150 disabled:opacity-50"
+                                    >
+                                        New
+                                    </button>
+                                </div>
                             </div>
 
                             {folders.length > 0 && (
-                                <div className="mb-4">
-                                    <div className="flex items-center justify-between px-2 mb-1">
-                                        <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
+                                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-medium text-[var(--color-text-secondary)]">
                                             Folders
                                         </span>
                                         <button
                                             onClick={() => setShowNewFolderInput(!showNewFolderInput)}
-                                            className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] text-xs"
+                                            className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] text-sm w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--color-muted)] transition-colors duration-150"
                                         >
                                             +
                                         </button>
                                     </div>
                                     {showNewFolderInput && (
-                                        <div className="px-2 mb-2 flex gap-1">
+                                        <div className="mb-2">
                                             <input
                                                 type="text"
                                                 value={newFolderName}
@@ -838,7 +896,7 @@ export function Notes() {
                                                     }
                                                 }}
                                                 placeholder="Folder name"
-                                                className="flex-1 text-xs px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                                                className="w-full text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)] transition-colors duration-150"
                                                 autoFocus
                                             />
                                             <button
@@ -856,23 +914,23 @@ export function Notes() {
                                         const isDragOver = dragOverFolderId === folder.id;
                                         
                                         return (
-                                            <div key={folder.id} className="mb-1">
+                                            <div key={folder.id} className="mb-0.5">
                                                 <div
-                                                    className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer group transition-all duration-200 ${
-                                                        isDragOver ? 'bg-[var(--color-primary)]/20' : 'hover:bg-[var(--color-hover)]'
+                                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md cursor-pointer group transition-colors duration-150 ${
+                                                        isDragOver ? 'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30' : 'hover:bg-[var(--color-muted)]'
                                                     }`}
                                                     onClick={() => toggleFolder(folder.id)}
                                                     onDragOver={(e) => handleDragOver(e, folder.id)}
                                                     onDragLeave={handleDragLeave}
                                                     onDrop={(e) => handleDrop(e, folder.id)}
                                                 >
-                                                    <span className="text-xs text-[var(--color-text-tertiary)]">
+                                                    <span className="text-xs text-[var(--color-text-tertiary)] flex-shrink-0">
                                                         {isExpanded ? '▼' : '▶'}
                                                     </span>
-                                                    <span className="flex-1 text-xs text-[var(--color-text-primary)] truncate">
+                                                    <span className="flex-1 text-sm text-[var(--color-text-primary)] truncate font-medium">
                                                         {folder.name}
                                                     </span>
-                                                    <span className="text-xs text-[var(--color-text-tertiary)]">
+                                                    <span className="text-xs text-[var(--color-text-tertiary)] px-1.5 py-0.5 rounded bg-[var(--color-muted)] min-w-[20px] text-center">
                                                         {folderNotes.length}
                                                     </span>
                                                     <button
@@ -880,13 +938,13 @@ export function Notes() {
                                                             e.stopPropagation();
                                                             handleDeleteFolder(folder.id);
                                                         }}
-                                                        className="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)] hover:text-red-500 transition-all duration-200"
+                                                        className="opacity-0 group-hover:opacity-100 text-sm text-[var(--color-text-tertiary)] hover:text-red-500 transition-all duration-150 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--color-muted)]"
                                                     >
                                                         ×
                                                     </button>
                                                 </div>
                                                 {isExpanded && folderNotes.length > 0 && (
-                                                    <div className="ml-4 mt-1">
+                                                    <div className="ml-3 mt-0.5">
                                                         {folderNotes.map((note) => (
                                                             <NoteItem
                                                                 key={note.id}
@@ -907,46 +965,48 @@ export function Notes() {
                                 </div>
                             )}
 
-                            {dateGroups.map((group) => {
-                                const rootNotes = group.items.filter(note => !note.folderId);
-                                if (rootNotes.length === 0) return null;
-                                
-                                const isExpanded = expandedGroups.has(group.label);
-                                return (
-                                    <div key={group.label} className="mb-2">
+                            <div className="px-4 py-3">
+                                {dateGroups.map((group) => {
+                                    const rootNotes = group.items.filter(note => !note.folderId);
+                                    if (rootNotes.length === 0) return null;
+                                    
+                                    const isExpanded = expandedGroups.has(group.label);
+                                    return (
+                                        <div key={group.label} className="mb-0.5">
                                         <div
-                                            className="flex items-center gap-1 px-2 py-1 rounded cursor-pointer hover:bg-[var(--color-hover)] transition-all duration-200"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md cursor-pointer hover:bg-[var(--color-muted)] transition-colors duration-150"
                                             onClick={() => toggleGroup(group.label)}
                                         >
-                                            <span className="text-xs text-[var(--color-text-tertiary)]">
-                                                {isExpanded ? '▼' : '▶'}
-                                            </span>
-                                            <span className="flex-1 text-xs font-semibold text-[var(--color-text-secondary)]">
-                                                {group.label}
-                                            </span>
-                                            <span className="text-xs text-[var(--color-text-tertiary)]">
-                                                {rootNotes.length}
-                                            </span>
-                                        </div>
-                                        {isExpanded && (
-                                            <div className="ml-4 mt-1">
-                                                {rootNotes.map((note) => (
-                                                    <NoteItem
-                                                        key={note.id}
-                                                        note={note}
-                                                        isSelected={String(selectedNote || '') === String(note.id || '')}
-                                                        isDragged={draggedNoteId === note.id}
-                                                        onSelect={() => handleSelectNote(note.id)}
-                                                        onDelete={() => handleDeleteNote(note.id)}
-                                                        onDragStart={(e) => handleDragStart(e, note.id)}
-                                                        onDragEnd={() => setDraggedNoteId(null)}
-                                                    />
-                                                ))}
+                                                <span className="text-xs text-[var(--color-text-tertiary)] flex-shrink-0">
+                                                    {isExpanded ? '▼' : '▶'}
+                                                </span>
+                                                <span className="flex-1 text-sm font-medium text-[var(--color-text-secondary)]">
+                                                    {group.label}
+                                                </span>
+                                                <span className="text-xs text-[var(--color-text-tertiary)] px-1.5 py-0.5 rounded bg-[var(--color-muted)] min-w-[20px] text-center">
+                                                    {rootNotes.length}
+                                                </span>
                                             </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                        {isExpanded && (
+                                            <div className="mt-0">
+                                                    {rootNotes.map((note) => (
+                                                        <NoteItem
+                                                            key={note.id}
+                                                            note={note}
+                                                            isSelected={String(selectedNote || '') === String(note.id || '')}
+                                                            isDragged={draggedNoteId === note.id}
+                                                            onSelect={() => handleSelectNote(note.id)}
+                                                            onDelete={() => handleDeleteNote(note.id)}
+                                                            onDragStart={(e) => handleDragStart(e, note.id)}
+                                                            onDragEnd={() => setDraggedNoteId(null)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 )}
@@ -954,11 +1014,11 @@ export function Notes() {
                 <div className="flex-1 flex flex-col overflow-hidden h-full w-full">
                     {selectedNote ? (
                         <>
-                            <div className="border-b border-[var(--color-border)] bg-[var(--color-background)] px-4 py-2 flex-shrink-0">
-                                <div className="flex items-center gap-3">
+                            <div className="border-b border-[var(--color-border)] bg-[var(--color-background)] px-6 py-3 flex-shrink-0">
+                                <div className="flex items-center gap-2 max-w-4xl mx-auto">
                                     <button
                                         onClick={() => setShowSidebar(!showSidebar)}
-                                        className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                                        className="p-2 -ml-2 rounded-md hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] transition-colors duration-150"
                                         title={showSidebar ? "Hide sidebar" : "Show sidebar"}
                                     >
                                         <Icon name="menu" size={18} />
@@ -967,12 +1027,12 @@ export function Notes() {
                                         type="text"
                                         value={noteTitle}
                                         onChange={(e) => handleTitleChange(e.target.value)}
-                                        placeholder="Untitled Note"
-                                        className="flex-1 text-base font-semibold text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)] focus:outline-none"
+                                        placeholder="Untitled"
+                                        className="flex-1 text-xl font-medium text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)] focus:outline-none"
                                     />
                                     <button
                                         onClick={handleExportPDF}
-                                        className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                                        className="p-2 rounded-md hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] transition-colors duration-150"
                                         title="Export to PDF"
                                     >
                                         <Icon name="Download" size={18} />
@@ -982,7 +1042,7 @@ export function Notes() {
                             <div className="flex-1 overflow-y-auto overflow-x-hidden h-full w-full bg-[var(--color-background)]">
                                 <div className="w-full h-full">
                                     {editor ? (
-                                        <div className="w-full h-full notes-editor-container px-6 py-4" key={`editor-${selectedNote}`}>
+                                        <div className="w-full h-full notes-editor-container px-6 py-8" key={`editor-${selectedNote}-${currentTemplateId}`}>
                                             <style>{`
                                                 .notes-editor-container {
                                                     --bn-colors-editor-text: var(--color-text-primary);
@@ -990,15 +1050,15 @@ export function Notes() {
                                                     --bn-colors-menu-text: var(--color-text-primary);
                                                     --bn-colors-menu-background: var(--color-card);
                                                     --bn-colors-menu-text-hover: var(--color-text-primary);
-                                                    --bn-colors-menu-background-hover: var(--color-hover);
+                                                    --bn-colors-menu-background-hover: var(--color-muted);
                                                     --bn-colors-toolbar-text: var(--color-text-primary);
                                                     --bn-colors-toolbar-background: var(--color-card);
                                                     --bn-colors-toolbar-text-hover: var(--color-text-primary);
-                                                    --bn-colors-toolbar-background-hover: var(--color-hover);
+                                                    --bn-colors-toolbar-background-hover: var(--color-muted);
                                                     --bn-colors-suggestion-menu-text: var(--color-text-primary);
                                                     --bn-colors-suggestion-menu-background: var(--color-card);
                                                     --bn-colors-suggestion-menu-text-selected: var(--color-text-primary);
-                                                    --bn-colors-suggestion-menu-background-selected: var(--color-hover);
+                                                    --bn-colors-suggestion-menu-background-selected: var(--color-muted);
                                                     --bn-colors-placeholder-text: var(--color-text-tertiary);
                                                     --bn-colors-selected-text: var(--color-text-primary);
                                                     --bn-colors-selected-background: var(--color-primary);
@@ -1009,27 +1069,115 @@ export function Notes() {
                                                     width: 100% !important;
                                                     height: 100% !important;
                                                     background: var(--color-background) !important;
+                                                    max-width: 680px !important;
+                                                    margin: 0 auto !important;
                                                 }
                                                 .notes-editor-container .bn-editor {
                                                     width: 100% !important;
                                                     min-height: 100% !important;
                                                     background: var(--color-background) !important;
+                                                    font-size: 15px !important;
+                                                    line-height: 1.6 !important;
+                                                    color: var(--color-text-primary) !important;
+                                                    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', 'Roboto', sans-serif !important;
+                                                }
+                                                .notes-editor-container .bn-block-content {
+                                                    padding: 1px 0 !important;
+                                                    margin: 0 !important;
+                                                }
+                                                .notes-editor-container .bn-block-content:hover {
+                                                    background: transparent !important;
+                                                }
+                                                .notes-editor-container .bn-inline-content {
+                                                    font-size: 15px !important;
+                                                    line-height: 1.6 !important;
                                                 }
                                                 .notes-editor-container .bn-menu {
                                                     background: var(--color-card) !important;
                                                     border: 1px solid var(--color-border) !important;
-                                                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+                                                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+                                                    border-radius: 6px !important;
+                                                    padding: 3px !important;
                                                 }
                                                 .notes-editor-container .bn-toolbar {
                                                     background: var(--color-card) !important;
                                                     border: 1px solid var(--color-border) !important;
+                                                    border-radius: 6px !important;
+                                                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
                                                 }
                                                 .notes-editor-container .bn-suggestion-menu {
                                                     background: var(--color-card) !important;
                                                     border: 1px solid var(--color-border) !important;
+                                                    border-radius: 6px !important;
+                                                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+                                                    padding: 3px !important;
+                                                }
+                                                .notes-editor-container .bn-suggestion-menu-item {
+                                                    border-radius: 4px !important;
+                                                    padding: 6px 10px !important;
+                                                    margin: 1px 0 !important;
+                                                }
+                                                .notes-editor-container h1 {
+                                                    font-size: 2rem !important;
+                                                    font-weight: 600 !important;
+                                                    margin-top: 1.5rem !important;
+                                                    margin-bottom: 0.75rem !important;
+                                                    line-height: 1.2 !important;
+                                                    letter-spacing: -0.02em !important;
+                                                }
+                                                .notes-editor-container h2 {
+                                                    font-size: 1.375rem !important;
+                                                    font-weight: 600 !important;
+                                                    margin-top: 1.25rem !important;
+                                                    margin-bottom: 0.5rem !important;
+                                                    line-height: 1.3 !important;
+                                                    letter-spacing: -0.01em !important;
+                                                }
+                                                .notes-editor-container h3 {
+                                                    font-size: 1.125rem !important;
+                                                    font-weight: 600 !important;
+                                                    margin-top: 1rem !important;
+                                                    margin-bottom: 0.375rem !important;
+                                                    line-height: 1.4 !important;
+                                                }
+                                                .notes-editor-container p {
+                                                    margin: 0.375rem 0 !important;
+                                                    padding: 0 !important;
+                                                }
+                                                .notes-editor-container ul, .notes-editor-container ol {
+                                                    margin: 0.5rem 0 !important;
+                                                    padding-left: 1.25rem !important;
+                                                }
+                                                .notes-editor-container li {
+                                                    margin: 0.125rem 0 !important;
+                                                    padding: 0 !important;
+                                                }
+                                                .notes-editor-container blockquote {
+                                                    border-left: 2px solid var(--color-border) !important;
+                                                    padding-left: 0.75rem !important;
+                                                    margin: 0.75rem 0 !important;
+                                                    color: var(--color-text-secondary) !important;
+                                                }
+                                                .notes-editor-container code {
+                                                    background: var(--color-muted) !important;
+                                                    padding: 2px 5px !important;
+                                                    border-radius: 3px !important;
+                                                    font-size: 0.875em !important;
+                                                    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace !important;
+                                                }
+                                                .notes-editor-container pre {
+                                                    background: var(--color-muted) !important;
+                                                    padding: 0.75rem !important;
+                                                    border-radius: 6px !important;
+                                                    margin: 0.75rem 0 !important;
+                                                    overflow-x: auto !important;
+                                                }
+                                                .notes-editor-container pre code {
+                                                    background: transparent !important;
+                                                    padding: 0 !important;
                                                 }
                                             `}</style>
-                                            <BlockNoteView editor={editor} />
+                                            <BlockNoteView editor={editor} theme={currentTheme} />
                                         </div>
                                     ) : (
                                         <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
@@ -1041,35 +1189,45 @@ export function Notes() {
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center bg-[var(--color-background)] w-full h-full">
-                            <div className="text-center px-6">
+                            <div className="text-center px-5 max-w-md">
                                 {notes.length === 0 ? (
                                     <>
-                                        <h2 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-3">
+                                        <div className="mb-4">
+                                            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--color-muted)] flex items-center justify-center">
+                                                <Icon name="FileText" size={24} className="text-[var(--color-text-tertiary)]" />
+                                            </div>
+                                        </div>
+                                        <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-1.5">
                                             No notes yet
                                         </h2>
-                                        <p className="text-[var(--color-text-secondary)] mb-6 text-base">
-                                            Create your first note to get started
+                                        <p className="text-[var(--color-text-secondary)] mb-6 text-sm leading-relaxed">
+                                            Get started by creating your first note. You can organize them with folders and find them easily later.
                                         </p>
                                         <button
-                                            onClick={handleCreateNote}
+                                            onClick={() => setShowTemplateModal(true)}
                                             disabled={loading}
-                                            className="px-6 py-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
+                                            className="px-5 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
                                         >
                                             {loading ? 'Creating...' : '+ Create New Note'}
                                         </button>
                                     </>
                                 ) : (
                                     <>
-                                        <h2 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-3">
+                                        <div className="mb-4">
+                                            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--color-muted)] flex items-center justify-center">
+                                                <Icon name="FileText" size={24} className="text-[var(--color-text-tertiary)]" />
+                                            </div>
+                                        </div>
+                                        <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-1.5">
                                             Select a note
                                         </h2>
-                                        <p className="text-[var(--color-text-secondary)] text-base">
-                                            Choose a note from the sidebar to start editing
+                                        <p className="text-[var(--color-text-secondary)] text-sm leading-relaxed mb-5">
+                                            Choose a note from the sidebar to start editing, or create a new one.
                                         </p>
                                         {!showSidebar && (
                                             <button
                                                 onClick={() => setShowSidebar(true)}
-                                                className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-muted)] text-[var(--color-text-primary)] text-sm font-medium hover:bg-[var(--color-hover)] transition-all duration-200"
+                                                className="px-5 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary)]/90 transition-all duration-200 shadow-sm"
                                             >
                                                 Show Sidebar
                                             </button>
@@ -1081,6 +1239,75 @@ export function Notes() {
                     )}
                 </div>
             </div>
+
+            {/* Template Modal */}
+            {showTemplateModal && (
+                <div 
+                    className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+                    onClick={() => setShowTemplateModal(false)}
+                >
+                    <div 
+                        className="bg-[var(--color-card)] rounded-lg shadow-lg max-w-5xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-[var(--color-border)]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-[var(--color-border)]">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h2 className="text-lg font-medium text-[var(--color-text-primary)] mb-0.5">Templates</h2>
+                                    <p className="text-xs text-[var(--color-text-secondary)]">Choose a template to get started</p>
+                                </div>
+                                <button
+                                    onClick={() => setShowTemplateModal(false)}
+                                    className="p-1.5 rounded-md hover:bg-[var(--color-muted)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors duration-150"
+                                >
+                                    <Icon name="X" size={16} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                            {Object.entries(getTemplatesByCategory()).map(([category, templates]) => (
+                                <div key={category} className="mb-6 last:mb-0">
+                                    <h3 className="text-xs font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wide">
+                                        {category}
+                                    </h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                                        {templates.map((template) => (
+                                            <button
+                                                key={template.id}
+                                                onClick={() => handleCreateNote(template.id)}
+                                                disabled={loading}
+                                                className="group p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-card)] transition-all duration-150 text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <div className="flex items-start gap-2.5">
+                                                    <div className="w-9 h-9 rounded-lg bg-[var(--color-muted)] flex items-center justify-center flex-shrink-0 group-hover:bg-[var(--color-primary)]/10 transition-colors duration-150">
+                                                        <Icon name={template.icon as any} size={18} className="text-[var(--color-primary)]" />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-medium text-sm text-[var(--color-text-primary)] mb-0.5 leading-tight">
+                                                            {template.name}
+                                                        </div>
+                                                        <div className="text-xs text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
+                                                            {template.description}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end">
+                            <button
+                                onClick={() => setShowTemplateModal(false)}
+                                className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors duration-150"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
