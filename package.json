@@ -8,6 +8,10 @@
     "email": "karthik@devbench.app"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karthik-minnikanti/devbench-kit.git"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -25,6 +29,7 @@
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
     "notarize": "electron-builder --mac notarize",
+    "icons:generate": "rsvg-convert -w 1024 -h 1024 --background-color=#f7f7f4 public/app-icon.svg -o public/icon.png",
     "preview": "vite preview"
   },
   "dependencies": {

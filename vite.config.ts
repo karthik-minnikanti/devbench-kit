@@ -57,6 +57,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   build: {
     rollupOptions: {
       input: {
@@ -65,19 +68,17 @@ export default defineConfig({
       },
       output: {
         manualChunks: (id) => {
-          // Split vendor chunks
           if (id.includes('node_modules')) {
-            // Large libraries get their own chunks
-            if (id.includes('@monaco-editor')) return 'monaco';
-            if (id.includes('@excalidraw')) return 'excalidraw';
-            if (id.includes('@blocknote')) return 'blocknote';
-            if (id.includes('mermaid')) return 'mermaid';
+            // Do NOT split react/react-dom into a separate chunk from the rest of
+            // node_modules — shared deps (scheduler, use-sync-external-store, etc.)
+            // end up in one chunk while react is in another, creating circular imports
+            // and "Cannot read properties of undefined (reading 'useState')" at startup.
+            // Do NOT manually chunk lazy-loaded heavy libs (@excalidraw, @blocknote,
+            // @monaco-editor, mermaid). Vite hoists shared preload helpers into those
+            // chunks and the main entry imports them at startup, causing TDZ crashes
+            // like "Cannot access 'qe' before initialization" in production builds.
             if (id.includes('@kubernetes/client-node')) return 'k8s-client';
             if (id.includes('dockerode')) return 'docker';
-            // React and core libraries
-            if (id.includes('react') || id.includes('react-dom')) return 'react-vendor';
-            // Other node_modules
-            return 'vendor';
           }
         },
       },

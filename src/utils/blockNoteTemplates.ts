@@ -7,7 +7,7 @@ export const TemplateBlockMap: Record<string, PartialBlock[]> = {
         {
             id: "blank-1",
             type: "paragraph",
-            content: "Start writing here...",
+            content: [{ type: "text", text: "Start writing here...", styles: {} }],
             props: {}
         }
     ],

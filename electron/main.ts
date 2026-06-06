@@ -5,7 +5,7 @@ import { URL } from 'url';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, spawn, ChildProcess, execSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -25,6 +25,57 @@ const __dirname = dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+function isMacAppSigned(): boolean {
+    if (process.platform !== 'darwin') {
+        return true;
+    }
+    try {
+        const output = execSync(`codesign -dv --verbose=4 "${process.execPath}" 2>&1`, {
+            encoding: 'utf8',
+        });
+        if (output.includes('Signature=adhoc')) {
+            return false;
+        }
+        return output.includes('Authority=Developer ID Application');
+    } catch {
+        return false;
+    }
+}
+
+function isAutoUpdateEnabled(): boolean {
+    if (isDev) {
+        return false;
+    }
+    // macOS auto-update requires a Developer ID signed build and latest-mac.yml on GitHub.
+    if (process.platform === 'darwin' && !isMacAppSigned()) {
+        console.log('[AutoUpdater] Skipping checks on unsigned macOS build');
+        return false;
+    }
+    return true;
+}
+
+function isBenignUpdateError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+        message.includes('latest-mac.yml') ||
+        message.includes('latest.yml') ||
+        message.includes('latest-linux.yml') ||
+        message.includes('Cannot find latest') ||
+        message.includes('404') ||
+        message.includes('HttpError')
+    );
+}
+
+function checkForUpdatesSafely(context: string): void {
+    autoUpdater.checkForUpdates().catch((err) => {
+        if (isBenignUpdateError(err)) {
+            console.warn(`[AutoUpdater] Update metadata unavailable (${context}):`, err.message);
+            return;
+        }
+        console.error(`[AutoUpdater] Error checking for updates (${context}):`, err);
+    });
+}
 
 if (!isDev && process.platform === 'darwin') {
     app.setAsDefaultProtocolClient('devbench');
@@ -211,7 +262,7 @@ async function createWindow() {
 }
 
 // Configure auto-updater
-if (!isDev) {
+if (isAutoUpdateEnabled()) {
     autoUpdater.setFeedURL({
         provider: 'github',
         owner: 'karthik-minnikanti',
@@ -237,9 +288,7 @@ if (!isDev) {
     // Update check interval (check every 4 hours)
     setInterval(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-            autoUpdater.checkForUpdates().catch(err => {
-                console.error('[AutoUpdater] Error checking for updates:', err);
-            });
+            checkForUpdatesSafely('interval');
         }
     }, 4 * 60 * 60 * 1000); // 4 hours
 }
@@ -248,12 +297,10 @@ app.whenReady().then(async () => {
     await createWindow();
 
     // Check for updates on startup (only in production)
-    if (!isDev && mainWindow) {
+    if (isAutoUpdateEnabled() && mainWindow) {
         // Wait a bit before checking to ensure window is ready
         setTimeout(() => {
-            autoUpdater.checkForUpdates().catch(err => {
-                console.error('[AutoUpdater] Error checking for updates on startup:', err);
-            });
+            checkForUpdatesSafely('startup');
         }, 3000);
     }
 
@@ -2859,6 +2906,14 @@ ipcMain.handle('updater:checkForUpdates', async () => {
     if (isDev) {
         return { error: 'Updates are disabled in development mode' };
     }
+    if (!isAutoUpdateEnabled()) {
+        return {
+            error:
+                process.platform === 'darwin'
+                    ? 'Auto-update requires a signed macOS build with published update metadata'
+                    : 'Auto-update is not configured for this build',
+        };
+    }
     try {
         const result = await autoUpdater.checkForUpdates();
         return {
@@ -2870,6 +2925,9 @@ ipcMain.handle('updater:checkForUpdates', async () => {
             downloadPromise: result?.downloadPromise ? true : false,
         };
     } catch (error: any) {
+        if (isBenignUpdateError(error)) {
+            return { error: 'No update metadata is published for this release yet' };
+        }
         return { error: error.message || 'Failed to check for updates' };
     }
 });
@@ -2877,6 +2935,9 @@ ipcMain.handle('updater:checkForUpdates', async () => {
 ipcMain.handle('updater:downloadUpdate', async () => {
     if (isDev) {
         return { error: 'Updates are disabled in development mode' };
+    }
+    if (!isAutoUpdateEnabled()) {
+        return { error: 'Auto-update is not available for this build' };
     }
     try {
         await autoUpdater.downloadUpdate();
@@ -2890,6 +2951,9 @@ ipcMain.handle('updater:quitAndInstall', () => {
     if (isDev) {
         return { error: 'Updates are disabled in development mode' };
     }
+    if (!isAutoUpdateEnabled()) {
+        return { error: 'Auto-update is not available for this build' };
+    }
     autoUpdater.quitAndInstall(false, true);
     return { success: true };
 });
@@ -2899,7 +2963,7 @@ ipcMain.handle('updater:getAppVersion', () => {
 });
 
 // Auto-updater event listeners
-if (!isDev) {
+if (isAutoUpdateEnabled()) {
     autoUpdater.on('checking-for-update', () => {
         console.log('[AutoUpdater] Checking for update...');
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2928,6 +2992,10 @@ if (!isDev) {
     });
 
     autoUpdater.on('error', (err) => {
+        if (isBenignUpdateError(err)) {
+            console.warn('[AutoUpdater] Update metadata unavailable:', err.message);
+            return;
+        }
         console.error('[AutoUpdater] Error:', err);
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('updater:error', {

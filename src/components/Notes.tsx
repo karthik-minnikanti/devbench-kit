@@ -327,14 +327,14 @@ export function Notes() {
     return [{ type: "paragraph", content: "Start typing..." }];
   }, []); // No dependencies - always same initial content
 
-  const currentTheme = useMemo(
+  const editorTheme = useMemo(
     () => getThemeForTemplate(currentTemplateId),
     [currentTemplateId],
   );
 
   const editor = useCreateBlockNote({
     initialContent: getInitialContent,
-    theme: currentTheme,
+    theme: editorTheme,
   });
 
   editorRef.current = editor;
@@ -1315,11 +1315,20 @@ export function Notes() {
  background: transparent !important;
  padding: 0 !important;
  }
+ .notes-editor-container .bn-block-content[data-content-type="codeBlock"] {
+ background: var(--color-muted) !important;
+ color: var(--color-text-primary) !important;
+ border: 1px solid var(--color-border) !important;
+ border-radius: 6px !important;
+ }
+ .notes-editor-container .bn-block-content[data-content-type="codeBlock"] > div > select {
+ color: var(--color-text-secondary) !important;
+ }
  `}</style>
                       <BlockNoteContext.Provider
                         value={{ colorSchemePreference: appTheme }}
                       >
-                        <BlockNoteView editor={editor} theme={currentTheme} />
+                        <BlockNoteView editor={editor} theme={appTheme} />
                       </BlockNoteContext.Provider>
                     </div>
                   ) : (

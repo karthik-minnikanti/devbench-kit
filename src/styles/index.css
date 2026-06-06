@@ -633,6 +633,34 @@ input[type="radio"]:disabled {
     opacity: 0.15 !important;
 }
 
+.bn-block-content[data-content-type="codeBlock"] {
+    background-color: var(--color-muted) !important;
+    color: var(--color-text-primary) !important;
+    border: 1px solid var(--color-border) !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > div > select {
+    color: var(--color-text-secondary) !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > div > select > option {
+    color: var(--color-text-primary) !important;
+    background: var(--color-card) !important;
+}
+
+[data-content-type="quote"] blockquote {
+    border-left-color: var(--color-border-strong) !important;
+    color: var(--color-text-secondary) !important;
+}
+
+[data-content-type="divider"] hr {
+    border-top-color: var(--color-border) !important;
+}
+
+[data-content-type="pageBreak"] > div {
+    border-top-color: var(--color-border) !important;
+}
+
 /* BlockNote follows OS dark preference unless overridden — sync with app theme */
 :root:not(.dark) .bn-container[data-color-scheme="dark"],
 :root:not(.dark) .bn-mantine[data-mantine-color-scheme="dark"] {

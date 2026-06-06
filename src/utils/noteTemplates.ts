@@ -1,4 +1,4 @@
-import { PartialBlock } from '@blocknote/core';
+import type { PartialBlock } from '@blocknote/core';
 import { getTemplateBlocks, blocksToPartialBlocks } from './blockNoteTemplates';
 
 export interface NoteTemplate {
