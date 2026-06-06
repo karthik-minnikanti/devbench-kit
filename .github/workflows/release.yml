@@ -9,7 +9,23 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release for tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" --title "DevBench ${TAG#v}" --generate-notes
+          fi
+
   release:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +49,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Sync package.json version with tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
         run: npm ci
