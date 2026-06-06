@@ -1,7 +1,36 @@
 import * as k8s from '@kubernetes/client-node';
 import * as path from 'path';
 import * as os from 'os';
-import * as fs from 'fs/promises';
+
+/** Extract list items from client-node v1.x responses (direct or legacy .body wrapper). */
+function getListItems<T>(response: { items?: T[]; body?: { items?: T[] } }): T[] {
+    if (Array.isArray(response.items)) {
+        return response.items;
+    }
+    if (response.body?.items) {
+        return response.body.items;
+    }
+    return [];
+}
+
+/** Extract a single resource from client-node v1.x responses. */
+function getResource<T>(response: T | { body?: T }): T {
+    if (response && typeof response === 'object' && 'body' in response && (response as { body?: T }).body) {
+        return (response as { body: T }).body;
+    }
+    return response as T;
+}
+
+/** Extract log text from readNamespacedPodLog responses. */
+function getLogText(response: string | { body?: string }): string {
+    if (typeof response === 'string') {
+        return response;
+    }
+    if (response?.body) {
+        return response.body;
+    }
+    return '';
+}
 
 /**
  * Production-grade Kubernetes service layer for DevBench
@@ -92,33 +121,66 @@ export class K8sService {
         this.watch = new k8s.Watch(this.kc);
     }
 
+    private reinitializeClients(): void {
+        this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
+        this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
+        this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
+        this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
+        this.customObjectsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+    }
+
     /**
      * Initialize Kubernetes client with kubeconfig or in-cluster config
      */
-    async initialize(kubeconfigPath?: string): Promise<void> {
+    async initialize(kubeconfigPath?: string, contextName?: string): Promise<void> {
         try {
             if (kubeconfigPath) {
                 this.kc.loadFromFile(kubeconfigPath);
             } else {
-                // Try in-cluster first, fallback to default kubeconfig
                 try {
-                    this.kc.loadFromCluster();
+                    this.kc.loadFromDefault();
                 } catch {
-                    const defaultPath = path.join(os.homedir(), '.kube', 'config');
-                    this.kc.loadFromFile(defaultPath);
+                    try {
+                        this.kc.loadFromCluster();
+                    } catch {
+                        const defaultPath = path.join(os.homedir(), '.kube', 'config');
+                        this.kc.loadFromFile(defaultPath);
+                    }
                 }
             }
 
-            this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
-            this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
-            this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
-            this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
-            this.customObjectsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+            if (contextName) {
+                this.kc.setCurrentContext(contextName);
+            }
 
+            this.reinitializeClients();
             this.initialized = true;
         } catch (error: any) {
             throw new Error(`Failed to initialize Kubernetes client: ${error.message}`);
         }
+    }
+
+    /**
+     * List contexts available in a kubeconfig file (without switching active cluster)
+     */
+    getContextsFromFile(configPath: string): string[] {
+        const kc = new k8s.KubeConfig();
+        kc.loadFromFile(configPath);
+        return kc.getContexts().map(ctx => ctx.name);
+    }
+
+    getDefaultContextFromFile(configPath: string): string {
+        const kc = new k8s.KubeConfig();
+        kc.loadFromFile(configPath);
+        return kc.getCurrentContext();
+    }
+
+    getContextDetails(): Array<{ name: string; cluster: string; user: string }> {
+        return this.kc.getContexts().map(ctx => ({
+            name: ctx.name,
+            cluster: ctx.cluster,
+            user: ctx.user,
+        }));
     }
 
     /**
@@ -140,40 +202,16 @@ export class K8sService {
      */
     setContext(contextName: string): void {
         this.kc.setCurrentContext(contextName);
-        // Reinitialize APIs with new context
-        this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
-        this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
-        this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
-        this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
+        this.reinitializeClients();
     }
 
     /**
-     * Load kubeconfig from file and merge with existing
+     * Load kubeconfig from file (uses selected file directly; does not corrupt ~/.kube/config)
      */
     async importKubeconfig(configPath: string): Promise<void> {
-        const configContent = await fs.readFile(configPath, 'utf-8');
-        const defaultPath = path.join(os.homedir(), '.kube', 'config');
-        
-        // Ensure .kube directory exists
-        await fs.mkdir(path.dirname(defaultPath), { recursive: true });
-        
-        // Merge configs
-        let existingContent = '';
-        try {
-            existingContent = await fs.readFile(defaultPath, 'utf-8');
-        } catch {
-            // Config doesn't exist, create new one
-        }
-        
-        const merged = existingContent ? `${existingContent}\n---\n${configContent}` : configContent;
-        await fs.writeFile(defaultPath, merged, 'utf-8');
-        
-        // Reload config
-        this.kc.loadFromFile(defaultPath);
-        this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
-        this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
-        this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
-        this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
+        this.kc.loadFromFile(configPath);
+        this.reinitializeClients();
+        this.initialized = true;
     }
 
     /**
@@ -181,8 +219,8 @@ export class K8sService {
      */
     async getNamespaces(): Promise<k8s.V1Namespace[]> {
         this.ensureInitialized();
-        const response = await this.k8sApi.listNamespace();
-        return response.body.items;
+        const response = await this.k8sApi.listNamespace({});
+        return getListItems(response);
     }
 
     /**
@@ -190,8 +228,8 @@ export class K8sService {
      */
     async getNodes(): Promise<k8s.V1Node[]> {
         this.ensureInitialized();
-        const response = await this.k8sApi.listNode();
-        return response.body.items;
+        const response = await this.k8sApi.listNode({});
+        return getListItems(response);
     }
 
     /**
@@ -200,9 +238,9 @@ export class K8sService {
     async getPods(namespace?: string): Promise<k8s.V1Pod[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.k8sApi.listNamespacedPod(namespace)
-            : await this.k8sApi.listPodForAllNamespaces();
-        return response.body.items;
+            ? await this.k8sApi.listNamespacedPod({ namespace })
+            : await this.k8sApi.listPodForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -211,9 +249,9 @@ export class K8sService {
     async getDeployments(namespace?: string): Promise<k8s.V1Deployment[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.appsV1Api.listNamespacedDeployment(namespace)
-            : await this.appsV1Api.listDeploymentForAllNamespaces();
-        return response.body.items;
+            ? await this.appsV1Api.listNamespacedDeployment({ namespace })
+            : await this.appsV1Api.listDeploymentForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -222,9 +260,9 @@ export class K8sService {
     async getStatefulSets(namespace?: string): Promise<k8s.V1StatefulSet[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.appsV1Api.listNamespacedStatefulSet(namespace)
-            : await this.appsV1Api.listStatefulSetForAllNamespaces();
-        return response.body.items;
+            ? await this.appsV1Api.listNamespacedStatefulSet({ namespace })
+            : await this.appsV1Api.listStatefulSetForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -233,9 +271,9 @@ export class K8sService {
     async getJobs(namespace?: string): Promise<k8s.V1Job[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.batchV1Api.listNamespacedJob(namespace)
-            : await this.batchV1Api.listJobForAllNamespaces();
-        return response.body.items;
+            ? await this.batchV1Api.listNamespacedJob({ namespace })
+            : await this.batchV1Api.listJobForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -244,9 +282,9 @@ export class K8sService {
     async getCronJobs(namespace?: string): Promise<k8s.V1CronJob[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.batchV1Api.listNamespacedCronJob(namespace)
-            : await this.batchV1Api.listCronJobForAllNamespaces();
-        return response.body.items;
+            ? await this.batchV1Api.listNamespacedCronJob({ namespace })
+            : await this.batchV1Api.listCronJobForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -255,9 +293,9 @@ export class K8sService {
     async getServices(namespace?: string): Promise<k8s.V1Service[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.k8sApi.listNamespacedService(namespace)
-            : await this.k8sApi.listServiceForAllNamespaces();
-        return response.body.items;
+            ? await this.k8sApi.listNamespacedService({ namespace })
+            : await this.k8sApi.listServiceForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -266,9 +304,9 @@ export class K8sService {
     async getIngresses(namespace?: string): Promise<k8s.V1Ingress[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.networkingV1Api.listNamespacedIngress(namespace)
-            : await this.networkingV1Api.listIngressForAllNamespaces();
-        return response.body.items;
+            ? await this.networkingV1Api.listNamespacedIngress({ namespace })
+            : await this.networkingV1Api.listIngressForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -277,9 +315,9 @@ export class K8sService {
     async getConfigMaps(namespace?: string): Promise<k8s.V1ConfigMap[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.k8sApi.listNamespacedConfigMap(namespace)
-            : await this.k8sApi.listConfigMapForAllNamespaces();
-        return response.body.items;
+            ? await this.k8sApi.listNamespacedConfigMap({ namespace })
+            : await this.k8sApi.listConfigMapForAllNamespaces({});
+        return getListItems(response);
     }
 
     /**
@@ -288,11 +326,11 @@ export class K8sService {
     async getSecrets(namespace?: string): Promise<any[]> {
         this.ensureInitialized();
         const response = namespace
-            ? await this.k8sApi.listNamespacedSecret(namespace)
-            : await this.k8sApi.listSecretForAllNamespaces();
+            ? await this.k8sApi.listNamespacedSecret({ namespace })
+            : await this.k8sApi.listSecretForAllNamespaces({});
         
         // Mask secret values for security
-        return response.body.items.map(secret => ({
+        return getListItems(response).map(secret => ({
             ...secret,
             data: secret.data ? Object.keys(secret.data).reduce((acc, key) => {
                 acc[key] = '***MASKED***';
@@ -308,32 +346,15 @@ export class K8sService {
         this.ensureInitialized();
         try {
             const response = namespace
-                ? await this.k8sApi.listNamespacedEvent(
+                ? await this.k8sApi.listNamespacedEvent({
                     namespace,
-                    undefined, // pretty
-                    undefined, // allowWatchBookmarks
-                    undefined, // continue
-                    fieldSelector, // fieldSelector
-                    undefined, // labelSelector
-                    undefined, // limit
-                    undefined, // resourceVersion
-                    undefined, // resourceVersionMatch
-                    undefined, // timeoutSeconds
-                    undefined  // watch
-                )
-                : await this.k8sApi.listEventForAllNamespaces(
-                    undefined, // allowWatchBookmarks
-                    undefined, // continue
-                    fieldSelector, // fieldSelector
-                    undefined, // labelSelector
-                    undefined, // limit
-                    undefined, // resourceVersion
-                    undefined, // resourceVersionMatch
-                    undefined, // timeoutSeconds
-                    undefined  // watch
-                );
+                    fieldSelector,
+                })
+                : await this.k8sApi.listEventForAllNamespaces({
+                    fieldSelector,
+                });
             
-            return response.body.items.map(event => ({
+            return getListItems(response).map(event => ({
                 type: event.type || 'Normal',
                 reason: event.reason || '',
                 message: event.message || '',
@@ -355,17 +376,15 @@ export class K8sService {
      */
     async getPodLogs(podName: string, namespace: string, container?: string, tailLines: number = 100): Promise<string> {
         this.ensureInitialized();
-        const response = await this.k8sApi.readNamespacedPodLog(
-            podName,
+        const response = await this.k8sApi.readNamespacedPodLog({
+            name: podName,
             namespace,
             container,
-            false, // follow
-            undefined, // limitBytes
-            undefined, // pretty
-            undefined, // previous (for previous container instance)
-            tailLines
-        );
-        return response.body;
+            follow: false,
+            previous: false,
+            tailLines,
+        });
+        return getLogText(response);
     }
 
     /**
@@ -373,17 +392,15 @@ export class K8sService {
      */
     async getPreviousPodLogs(podName: string, namespace: string, container?: string, tailLines: number = 100): Promise<string> {
         this.ensureInitialized();
-        const response = await this.k8sApi.readNamespacedPodLog(
-            podName,
+        const response = await this.k8sApi.readNamespacedPodLog({
+            name: podName,
             namespace,
             container,
-            false,
-            undefined,
-            undefined,
-            true, // previous = true
-            tailLines
-        );
-        return response.body;
+            follow: false,
+            previous: true,
+            tailLines,
+        });
+        return getLogText(response);
     }
 
     /**
@@ -392,8 +409,8 @@ export class K8sService {
     async diagnosePod(podName: string, namespace: string): Promise<PodDiagnostic> {
         this.ensureInitialized();
         
-        const pod = await this.k8sApi.readNamespacedPod(podName, namespace);
-        const podData = pod.body;
+        const pod = getResource(await this.k8sApi.readNamespacedPod({ name: podName, namespace }));
+        const podData = pod;
         
         const events = await this.getEvents(namespace, `involvedObject.name=${podName}`);
         const diagnostic: PodDiagnostic = {
@@ -604,12 +621,14 @@ export class K8sService {
 
         // Add service nodes
         for (const service of services) {
-            const endpoints = await this.k8sApi.readNamespacedEndpoints(
-                service.metadata?.name || '',
-                namespace
-            ).catch(() => null);
+            const serviceName = service.metadata?.name || '';
+            const endpoints = await this.k8sApi.readNamespacedEndpoints({
+                name: serviceName,
+                namespace,
+            }).catch(() => null);
             
-            const hasEndpoints = endpoints?.body.subsets && endpoints.body.subsets.length > 0;
+            const endpointsData = endpoints ? getResource(endpoints) : null;
+            const hasEndpoints = endpointsData?.subsets && endpointsData.subsets.length > 0;
             
             nodes.push({
                 id: `service-${service.metadata?.name}`,
@@ -817,15 +836,11 @@ export class K8sService {
         }
         
         await this.appsV1Api.patchNamespacedDeployment(
-            name,
-            namespace,
             {
-                spec: { replicas },
+                name,
+                namespace,
+                body: { spec: { replicas } },
             },
-            undefined,
-            undefined,
-            undefined,
-            undefined,
             {
                 headers: { 'Content-Type': 'application/merge-patch+json' },
             }
@@ -842,7 +857,7 @@ export class K8sService {
             throw new Error('Cannot restart pod in production without explicit confirmation');
         }
         
-        await this.k8sApi.deleteNamespacedPod(name, namespace);
+        await this.k8sApi.deleteNamespacedPod({ name, namespace });
     }
 
     /**
@@ -856,20 +871,16 @@ export class K8sService {
         }
         
         // Add annotation to trigger rollout restart
-        const deployment = await this.appsV1Api.readNamespacedDeployment(name, namespace);
-        const annotations = deployment.body.metadata?.annotations || {};
+        const deployment = getResource(await this.appsV1Api.readNamespacedDeployment({ name, namespace }));
+        const annotations = deployment.metadata?.annotations || {};
         annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
         
         await this.appsV1Api.patchNamespacedDeployment(
-            name,
-            namespace,
             {
-                metadata: { annotations },
+                name,
+                namespace,
+                body: { metadata: { annotations } },
             },
-            undefined,
-            undefined,
-            undefined,
-            undefined,
             {
                 headers: { 'Content-Type': 'application/merge-patch+json' },
             }

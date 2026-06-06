@@ -1,9 +1,7 @@
 import axios from 'axios';
 import { getStoredToken } from './auth';
 import { getSubscription } from './subscription';
-
-// Ensure API URL is always localhost:3001 for desktop app
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { API_URL } from '../config/api';
 
 export interface LicenseStatus {
   status: 'free' | 'pro';

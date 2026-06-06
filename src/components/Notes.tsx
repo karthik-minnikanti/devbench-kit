@@ -321,7 +321,7 @@ export function Notes() {
                     // Note not found, clear editor
                     try {
                         isSavingRef.current = true;
-                        editor.replaceBlocks(editor.document, [{ type: 'paragraph', content: 'Start typing...' }]);
+                        editor.replaceBlocks(editor.document, [{ type: 'paragraph', content: [{ type: 'text', text: 'Start typing...', styles: {} }] }]);
                         lastLoadedNoteIdRef.current = selectedNote;
                         setTimeout(() => { isSavingRef.current = false; }, 100);
                     } catch (error) {
@@ -334,7 +334,7 @@ export function Notes() {
                 const noteContent = note.content || [];
                 const contentToLoad = noteContent.length > 0 
                     ? JSON.parse(JSON.stringify(noteContent)) as PartialBlock[]
-                    : [{ type: 'paragraph', content: 'Start typing...' }];
+                    : [{ type: 'paragraph', content: [{ type: 'text', text: 'Start typing...', styles: {} }] }];
                 
                 // Compare with current editor content to avoid unnecessary updates
                 const currentContent = editor.document;
@@ -345,7 +345,7 @@ export function Notes() {
                 if (currentStr !== newStr) {
                     // Mark as saving to prevent onChange from firing during load
                     isSavingRef.current = true;
-                    editor.replaceBlocks(editor.document, contentToLoad);
+                    editor.replaceBlocks(editor.document, contentToLoad as PartialBlock[]);
                     
                     // Update last synced state with fresh content
                     lastSyncedStateRef.current.set(selectedNote, {
@@ -909,20 +909,22 @@ export function Notes() {
                                         </div>
                                     )}
                                     {folders.map((folder) => {
-                                        const folderNotes = getNotesInFolder(folder.id);
-                                        const isExpanded = expandedFolders.has(folder.id);
-                                        const isDragOver = dragOverFolderId === folder.id;
+                                        if (!folder.id) return null;
+                                        const folderId = folder.id;
+                                        const folderNotes = getNotesInFolder(folderId);
+                                        const isExpanded = expandedFolders.has(folderId);
+                                        const isDragOver = dragOverFolderId === folderId;
                                         
                                         return (
-                                            <div key={folder.id} className="mb-0.5">
+                                            <div key={folderId} className="mb-0.5">
                                                 <div
                                                     className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md cursor-pointer group transition-colors duration-150 ${
                                                         isDragOver ? 'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30' : 'hover:bg-[var(--color-muted)]'
                                                     }`}
-                                                    onClick={() => toggleFolder(folder.id)}
-                                                    onDragOver={(e) => handleDragOver(e, folder.id)}
+                                                    onClick={() => toggleFolder(folderId)}
+                                                    onDragOver={(e) => handleDragOver(e, folderId)}
                                                     onDragLeave={handleDragLeave}
-                                                    onDrop={(e) => handleDrop(e, folder.id)}
+                                                    onDrop={(e) => handleDrop(e, folderId)}
                                                 >
                                                     <span className="text-xs text-[var(--color-text-tertiary)] flex-shrink-0">
                                                         {isExpanded ? '▼' : '▶'}
@@ -936,7 +938,7 @@ export function Notes() {
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            handleDeleteFolder(folder.id);
+                                                            handleDeleteFolder(folderId);
                                                         }}
                                                         className="opacity-0 group-hover:opacity-100 text-sm text-[var(--color-text-tertiary)] hover:text-red-500 transition-all duration-150 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--color-muted)]"
                                                     >

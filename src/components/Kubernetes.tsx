@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Editor } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
+import { K8sClusterPanel } from './K8sClusterPanel';
 
 interface Pod {
     metadata: {
@@ -32,6 +33,9 @@ interface Namespace {
 export function Kubernetes() {
     const [contexts, setContexts] = useState<string[]>([]);
     const [currentContext, setCurrentContext] = useState<string>('');
+    const [clusters, setClusters] = useState<K8sClusterProfile[]>([]);
+    const [activeClusterId, setActiveClusterId] = useState<string | null>(null);
+    const [showClusterPanel, setShowClusterPanel] = useState(false);
     const [namespaces, setNamespaces] = useState<Namespace[]>([]);
     const [selectedNamespace, setSelectedNamespace] = useState<string>('default');
     const [pods, setPods] = useState<Pod[]>([]);
@@ -61,11 +65,41 @@ export function Kubernetes() {
     const [mainView, setMainView] = useState<'pods' | 'diagnostics' | 'timeline' | 'graph'>('pods');
     const [searchQuery, setSearchQuery] = useState<{ image?: string; envVar?: string; labelSelector?: string }>({});
 
+    const resetPodView = useCallback(() => {
+        setSelectedPod(null);
+        setLogs('');
+        setShellOutput('');
+        setExecOutput('');
+        setDiagnostic(null);
+        setIsStreaming(false);
+        setIsShellActive(false);
+        setIsExecActive(false);
+    }, []);
+
+    const loadClusters = useCallback(async () => {
+        if (!window.electronAPI) return;
+        try {
+            const result = await window.electronAPI.k8s.clusters.list();
+            if (result.success) {
+                setClusters(result.clusters || []);
+                setActiveClusterId(result.activeClusterId ?? null);
+                const active = (result.clusters || []).find(c => c.id === result.activeClusterId);
+                if (active?.defaultNamespace) {
+                    setSelectedNamespace(active.defaultNamespace);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load clusters:', err);
+        }
+    }, []);
+
     useEffect(() => {
         if (!window.electronAPI) return;
-        loadContexts();
-        loadCurrentContext();
-    }, []);
+        loadClusters().then(() => {
+            loadContexts();
+            loadCurrentContext();
+        });
+    }, [loadClusters]);
 
     useEffect(() => {
         if (currentContext) {
@@ -187,9 +221,34 @@ export function Kubernetes() {
             const result = await window.electronAPI.k8s.currentContext();
             if (result.success) {
                 setCurrentContext(result.context || '');
+                if (result.activeCluster?.id) {
+                    setActiveClusterId(result.activeCluster.id);
+                }
             }
         } catch (err) {
             console.error('Failed to load current context:', err);
+        }
+    };
+
+    const handleClusterChange = async (clusterId: string) => {
+        if (!window.electronAPI || clusterId === activeClusterId) return;
+        try {
+            resetPodView();
+            const result = await window.electronAPI.k8s.clusters.activate(clusterId);
+            if (result.success && result.cluster) {
+                setActiveClusterId(clusterId);
+                setCurrentContext(result.cluster.context);
+                if (result.cluster.defaultNamespace) {
+                    setSelectedNamespace(result.cluster.defaultNamespace);
+                }
+                await loadContexts();
+                await loadNamespaces();
+                setError(null);
+            } else {
+                setError(result.error || 'Failed to switch cluster');
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to switch cluster');
         }
     };
 
@@ -199,6 +258,10 @@ export function Kubernetes() {
             const result = await window.electronAPI.k8s.useContext(context);
             if (result.success) {
                 setCurrentContext(context);
+                if (activeClusterId) {
+                    await window.electronAPI.k8s.clusters.update({ id: activeClusterId, context });
+                }
+                resetPodView();
                 await loadNamespaces();
             }
         } catch (err) {
@@ -237,24 +300,12 @@ export function Kubernetes() {
         }
     };
 
-    const handleImportConfig = async () => {
-        if (!window.electronAPI) return;
-
-        const result = await window.electronAPI.project.open();
-        if (result && result.filePath) {
-            try {
-                const importResult = await window.electronAPI.k8s.importConfig(result.filePath);
-                if (importResult.success) {
-                    await loadContexts();
-                    await loadCurrentContext();
-                    alert('Kubeconfig imported successfully!');
-                } else {
-                    setError(importResult.error || 'Failed to import config');
-                }
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'Failed to import config');
-            }
-        }
+    const handleClustersChanged = async () => {
+        await loadClusters();
+        await loadContexts();
+        await loadCurrentContext();
+        resetPodView();
+        await loadNamespaces();
     };
 
     const handleSelectPod = async (pod: Pod) => {
@@ -520,9 +571,23 @@ export function Kubernetes() {
                         Kubernetes
                     </div>
                     <select
+                        value={activeClusterId || ''}
+                        onChange={(e) => handleClusterChange(e.target.value)}
+                        className="px-3 py-1.5 rounded-lg text-sm border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] max-w-[220px]"
+                    >
+                        {clusters.length === 0 ? (
+                            <option value="">No clusters</option>
+                        ) : (
+                            clusters.map(cluster => (
+                                <option key={cluster.id} value={cluster.id}>{cluster.name}</option>
+                            ))
+                        )}
+                    </select>
+                    <select
                         value={currentContext}
                         onChange={(e) => handleContextChange(e.target.value)}
-                        className="px-3 py-1.5 rounded-lg text-sm border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)]"
+                        className="px-3 py-1.5 rounded-lg text-sm border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] max-w-[220px]"
+                        title="Context in active kubeconfig"
                     >
                         {contexts.map(ctx => (
                             <option key={ctx} value={ctx}>{ctx}</option>
@@ -542,10 +607,10 @@ export function Kubernetes() {
                 </div>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={handleImportConfig}
+                        onClick={() => setShowClusterPanel(true)}
                         className="px-4 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors duration-200"
                     >
-                        Import Config
+                        Manage Clusters
                     </button>
                     <button
                         onClick={loadPods}
@@ -1109,6 +1174,11 @@ export function Kubernetes() {
                     )}
                 </div>
             </div>
+            <K8sClusterPanel
+                isOpen={showClusterPanel}
+                onClose={() => setShowClusterPanel(false)}
+                onClustersChanged={handleClustersChanged}
+            />
         </div>
     );
 }

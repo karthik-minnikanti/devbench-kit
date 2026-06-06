@@ -1,4 +1,5 @@
 import { GitSettings } from './GitSettings';
+import { AccountSettings } from './AccountSettings';
 
 export function Profile() {
     return (
@@ -9,6 +10,7 @@ export function Profile() {
                 </div>
             </div>
             <div className="flex-1 overflow-auto">
+                <AccountSettings />
                 <GitSettings />
             </div>
         </div>

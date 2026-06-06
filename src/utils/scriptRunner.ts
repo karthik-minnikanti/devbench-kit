@@ -163,46 +163,6 @@ function createScriptContext(context: ScriptContext): any {
       },
       toObject: () => ({ ...(context.globals || {}) }),
     },
-    request: {
-      url: {
-        toString: () => context.request?.url || '',
-        getQueryParams: () => {
-          if (!context.request?.url) return [];
-          try {
-            const url = new URL(context.request.url);
-            return Array.from(url.searchParams.entries()).map(([key, value]) => ({
-              key,
-              value,
-            }));
-          } catch {
-            return [];
-          }
-        },
-      },
-      headers: {
-        get: (key: string) => context.request?.headers?.[key] || null,
-        has: (key: string) => !!context.request?.headers?.[key],
-        toObject: () => ({ ...(context.request?.headers || {}) }),
-      },
-      body: {
-        raw: context.request?.body || '',
-        json: () => {
-          try {
-            return typeof context.request?.body === 'string' 
-              ? JSON.parse(context.request.body) 
-              : context.request?.body;
-          } catch {
-            return null;
-          }
-        },
-        formData: {
-          get: (key: string) => {
-            // Implementation for form data
-            return null;
-          },
-        },
-      },
-    },
     response: context.response ? {
       code: context.response.status || 0,
       status: () => context.response?.statusText || '',

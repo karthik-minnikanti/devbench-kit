@@ -15,15 +15,15 @@ export function SchemaOptions() {
             {licenseStatus && (
                 <div className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">
                     <div className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
-                        {licenseStatus.status === 'free' ? (
+                        {licenseStatus === 'valid' ? (
                             <>
-                                <span className="w-1 h-1 bg-yellow-500 rounded-full"></span>
-                                <span className="font-semibold">Free</span>
+                                <span className="w-1 h-1 bg-green-500 rounded-full"></span>
+                                <span className="text-green-600 dark:text-green-400 font-semibold">Licensed</span>
                             </>
                         ) : (
                             <>
-                                <span className="w-1 h-1 bg-green-500 rounded-full"></span>
-                                <span className="text-green-600 dark:text-green-400 font-semibold">Pro</span>
+                                <span className="w-1 h-1 bg-yellow-500 rounded-full"></span>
+                                <span className="font-semibold">{licenseStatus}</span>
                             </>
                         )}
                     </div>

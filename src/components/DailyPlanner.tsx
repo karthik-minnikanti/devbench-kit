@@ -1832,7 +1832,7 @@ export function DailyPlanner() {
                                                                     <input
                                                                         type="text"
                                                                         value={task.estimatedTime || ''}
-                                                                        onChange={(e) => handleTaskUpdate(task.id, { estimatedTime: e.target.value })}
+                                                                        onChange={(e) => handleTaskUpdate(task.id, { estimatedTime: parseInt(e.target.value, 10) || undefined })}
                                                                         placeholder="e.g., 2h"
                                                                         className="w-full px-2 py-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)]"
                                                                     />

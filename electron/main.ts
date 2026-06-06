@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 import { fileStorage } from './fileStorage';
 import { gitService } from './gitService';
 import { k8sService } from './k8sService';
+import { k8sClusterStore } from './k8sClusterStore';
 import { dockerService } from './dockerService';
 
 const execAsync = promisify(exec);
@@ -24,6 +25,12 @@ const __dirname = dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+if (!isDev && process.platform === 'darwin') {
+    app.setAsDefaultProtocolClient('devbench');
+} else if (!isDev) {
+    app.setAsDefaultProtocolClient('devbench');
+}
 
 async function createWindow() {
     // Resolve preload path - both dev and prod use preload.mjs
@@ -429,8 +436,13 @@ function handleOAuthCallback(url: string, oauthWindow: BrowserWindow, resolve: (
         const urlObj = new URL(url);
         console.log('[OAuth] Checking URL:', url);
 
+        const isCallback =
+            urlObj.protocol === 'devbench:' ||
+            urlObj.pathname.includes('/auth/callback') ||
+            urlObj.searchParams.has('token');
+
         // Check if this is the callback URL with a token
-        if (urlObj.pathname.includes('/auth/callback') || urlObj.searchParams.has('token')) {
+        if (isCallback) {
             const token = urlObj.searchParams.get('token');
             if (token) {
                 console.log('[OAuth] Token received, closing window');
@@ -1394,22 +1406,160 @@ ipcMain.handle('docker:listFiles', async (_event: any, containerId: string, path
 
 // Initialize K8s service on startup (will retry on first use if it fails)
 let k8sInitialized = false;
-const ensureK8sInitialized = async () => {
-    if (!k8sInitialized) {
-        try {
-            await k8sService.initialize();
-            k8sInitialized = true;
-        } catch (error) {
-            console.warn('K8s service not initialized yet, will retry on first use:', error);
-        }
+
+function getKubectlContextArgs(): string[] {
+    try {
+        const context = k8sService.getCurrentContext();
+        return context ? ['--context', context] : [];
+    } catch {
+        return [];
     }
-};
+}
+
+async function activateK8sFromStore(clusterId?: string) {
+    if (clusterId) {
+        await k8sClusterStore.setActiveCluster(clusterId);
+    } else {
+        await k8sClusterStore.ensureDefaultCluster();
+    }
+
+    const active = await k8sClusterStore.getActiveCluster();
+    if (active) {
+        await k8sService.initialize(active.kubeconfigPath, active.context);
+        k8sInitialized = true;
+        return active;
+    }
+
+    await k8sService.initialize();
+    k8sInitialized = true;
+    return null;
+}
+
+// Kubernetes cluster registry handlers
+ipcMain.handle('k8s:clusters:list', async () => {
+    try {
+        await k8sClusterStore.ensureDefaultCluster();
+        const clusters = await k8sClusterStore.listClusters();
+        const active = await k8sClusterStore.getActiveCluster();
+        return { success: true, clusters, activeClusterId: active?.id ?? null };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), clusters: [], activeClusterId: null };
+    }
+});
+
+ipcMain.handle('k8s:clusters:getActive', async () => {
+    try {
+        const cluster = await k8sClusterStore.getActiveCluster();
+        return { success: true, cluster };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), cluster: null };
+    }
+});
+
+ipcMain.handle('k8s:clusters:add', async (_event: any, payload: {
+    name: string;
+    configPath: string;
+    context: string;
+    defaultNamespace?: string;
+}) => {
+    try {
+        const cluster = await k8sClusterStore.addCluster(
+            payload.name,
+            payload.configPath,
+            payload.context,
+            payload.defaultNamespace
+        );
+        await k8sService.initialize(cluster.kubeconfigPath, cluster.context);
+        k8sInitialized = true;
+        return { success: true, cluster };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:clusters:activate', async (_event: any, clusterId: string) => {
+    try {
+        const cluster = await activateK8sFromStore(clusterId);
+        return { success: true, cluster };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:clusters:remove', async (_event: any, clusterId: string) => {
+    try {
+        await k8sClusterStore.removeCluster(clusterId);
+        const active = await activateK8sFromStore();
+        return { success: true, activeCluster: active };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:clusters:update', async (_event: any, payload: {
+    id: string;
+    name?: string;
+    context?: string;
+    defaultNamespace?: string;
+}) => {
+    try {
+        const cluster = await k8sClusterStore.updateCluster(payload.id, {
+            name: payload.name,
+            context: payload.context,
+            defaultNamespace: payload.defaultNamespace,
+        });
+        const active = await k8sClusterStore.getActiveCluster();
+        if (active?.id === cluster.id) {
+            await k8sService.initialize(cluster.kubeconfigPath, cluster.context);
+            k8sInitialized = true;
+        }
+        return { success: true, cluster };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:pickKubeconfig', async () => {
+    if (!mainWindow) {
+        return { success: false, error: 'No window' };
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        filters: [
+            { name: 'Kubeconfig', extensions: ['yaml', 'yml', 'conf', 'config'] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+    }
+
+    const filePath = result.filePaths[0];
+    try {
+        const contexts = k8sService.getContextsFromFile(filePath);
+        const defaultContext = k8sService.getDefaultContextFromFile(filePath);
+        return { success: true, filePath, contexts, defaultContext };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:contextsFromFile', async (_event: any, configPath: string) => {
+    try {
+        const contexts = k8sService.getContextsFromFile(configPath);
+        const defaultContext = k8sService.getDefaultContextFromFile(configPath);
+        return { success: true, contexts, defaultContext };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), contexts: [] };
+    }
+});
 
 // Kubernetes handlers
 ipcMain.handle('k8s:contexts', async () => {
     try {
-        await ensureK8sInitialized();
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const contexts = k8sService.getContexts();
         return { success: true, contexts };
     } catch (error: any) {
@@ -1419,10 +1569,10 @@ ipcMain.handle('k8s:contexts', async () => {
 
 ipcMain.handle('k8s:current-context', async () => {
     try {
-        await ensureK8sInitialized();
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const context = k8sService.getCurrentContext();
-        return { success: true, context, error: null };
+        const active = await k8sClusterStore.getActiveCluster();
+        return { success: true, context, activeCluster: active, error: null };
     } catch (error: any) {
         return { success: false, error: error.message || String(error), context: null };
     }
@@ -1430,8 +1580,12 @@ ipcMain.handle('k8s:current-context', async () => {
 
 ipcMain.handle('k8s:use-context', async (_event: any, context: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         k8sService.setContext(context);
+        const active = await k8sClusterStore.getActiveCluster();
+        if (active) {
+            await k8sClusterStore.updateCluster(active.id, { context });
+        }
         return { success: true, output: `Switched to context: ${context}`, error: null };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
@@ -1440,9 +1594,16 @@ ipcMain.handle('k8s:use-context', async (_event: any, context: string) => {
 
 ipcMain.handle('k8s:import-config', async (_event: any, configPath: string) => {
     try {
-        await k8sService.importKubeconfig(configPath);
-        await k8sService.initialize();
-        return { success: true };
+        const contexts = k8sService.getContextsFromFile(configPath);
+        const context = k8sService.getDefaultContextFromFile(configPath) || contexts[0];
+        if (!context) {
+            return { success: false, error: 'No contexts found in kubeconfig' };
+        }
+        const name = path.basename(configPath).replace(/\.(yaml|yml|conf|config)$/i, '') || context;
+        const cluster = await k8sClusterStore.addCluster(name, configPath, context);
+        await k8sService.initialize(cluster.kubeconfigPath, cluster.context);
+        k8sInitialized = true;
+        return { success: true, cluster };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }
@@ -1450,7 +1611,7 @@ ipcMain.handle('k8s:import-config', async (_event: any, configPath: string) => {
 
 ipcMain.handle('k8s:pods', async (_event: any, namespace?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const pods = await k8sService.getPods(namespace);
         return { success: true, pods: pods.map(p => p) };
     } catch (error: any) {
@@ -1460,7 +1621,7 @@ ipcMain.handle('k8s:pods', async (_event: any, namespace?: string) => {
 
 ipcMain.handle('k8s:namespaces', async () => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const namespaces = await k8sService.getNamespaces();
         return { success: true, namespaces: namespaces.map(ns => ns) };
     } catch (error: any) {
@@ -1470,7 +1631,7 @@ ipcMain.handle('k8s:namespaces', async () => {
 
 ipcMain.handle('k8s:logs', async (_event: any, podName: string, namespace: string, tail: number = 100, container?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         // For streaming logs, we still use kubectl for now (K8s client doesn't support streaming easily)
         // But we can get initial logs from the service
         const initialLogs = await k8sService.getPodLogs(podName, namespace, container, tail);
@@ -1487,7 +1648,7 @@ ipcMain.handle('k8s:logs', async (_event: any, podName: string, namespace: strin
 
         // Start streaming with kubectl (for now - can be improved later)
         return new Promise((resolve) => {
-            const logProcess = spawn('kubectl', ['logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])]);
+            const logProcess = spawn('kubectl', [...getKubectlContextArgs(), 'logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])]);
 
             logProcess.stdout.on('data', (data) => {
                 const lines = data.toString().split('\n').filter((line: string) => line.trim());
@@ -1541,7 +1702,7 @@ ipcMain.handle('k8s:stop-logs', async (_event: any, podName: string, namespace: 
 ipcMain.handle('k8s:exec', async (_event: any, podName: string, namespace: string, initialCommand: string) => {
     return new Promise((resolve) => {
         // Start an interactive shell session
-        const execProcess = spawn('kubectl', ['exec', '-i', podName, '-n', namespace, '--', 'sh'], {
+        const execProcess = spawn('kubectl', [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', 'sh'], {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -1621,7 +1782,7 @@ ipcMain.handle('k8s:exec:stop', async (_event: any, podName: string, namespace: 
 
 ipcMain.handle('k8s:shell', async (_event: any, podName: string, namespace: string, shell: string = '/bin/sh') => {
     return new Promise((resolve) => {
-        const shellProcess = spawn('kubectl', ['exec', '-i', podName, '-n', namespace, '--', shell], {
+        const shellProcess = spawn('kubectl', [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', shell], {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -1684,7 +1845,9 @@ ipcMain.handle('k8s:shell:stop', async (_event: any, podName: string, namespace:
 
 ipcMain.handle('k8s:command', async (_event: any, command: string) => {
     try {
-        const { stdout, stderr } = await execAsync(`kubectl ${command}`);
+        await activateK8sFromStore();
+        const contextArgs = getKubectlContextArgs().join(' ');
+        const { stdout, stderr } = await execAsync(`kubectl ${contextArgs} ${command}`.replace(/\s+/g, ' ').trim());
         return { success: !stderr, output: stdout, error: stderr || null };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
@@ -1694,7 +1857,7 @@ ipcMain.handle('k8s:command', async (_event: any, command: string) => {
 // New intelligent K8s handlers
 ipcMain.handle('k8s:diagnose', async (_event: any, podName: string, namespace: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const diagnostic = await k8sService.diagnosePod(podName, namespace);
         return { success: true, diagnostic };
     } catch (error: any) {
@@ -1704,7 +1867,7 @@ ipcMain.handle('k8s:diagnose', async (_event: any, podName: string, namespace: s
 
 ipcMain.handle('k8s:timeline', async (_event: any, namespace: string, podName?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const timeline = await k8sService.getTimeline(namespace, podName);
         return { success: true, timeline };
     } catch (error: any) {
@@ -1714,7 +1877,7 @@ ipcMain.handle('k8s:timeline', async (_event: any, namespace: string, podName?: 
 
 ipcMain.handle('k8s:dependency-graph', async (_event: any, namespace: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const graph = await k8sService.getDependencyGraph(namespace);
         return { success: true, graph };
     } catch (error: any) {
@@ -1724,7 +1887,7 @@ ipcMain.handle('k8s:dependency-graph', async (_event: any, namespace: string) =>
 
 ipcMain.handle('k8s:events', async (_event: any, namespace?: string, fieldSelector?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const events = await k8sService.getEvents(namespace, fieldSelector);
         return { success: true, events };
     } catch (error: any) {
@@ -1734,7 +1897,7 @@ ipcMain.handle('k8s:events', async (_event: any, namespace?: string, fieldSelect
 
 ipcMain.handle('k8s:search', async (_event: any, query: { image?: string; envVar?: string; labelSelector?: string; namespace?: string }) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const results = await k8sService.search(query);
         return { success: true, results };
     } catch (error: any) {
@@ -1744,7 +1907,7 @@ ipcMain.handle('k8s:search', async (_event: any, query: { image?: string; envVar
 
 ipcMain.handle('k8s:scale', async (_event: any, name: string, namespace: string, replicas: number, environment?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         await k8sService.scaleDeployment(name, namespace, replicas, environment);
         return { success: true };
     } catch (error: any) {
@@ -1754,7 +1917,7 @@ ipcMain.handle('k8s:scale', async (_event: any, name: string, namespace: string,
 
 ipcMain.handle('k8s:restart-pod', async (_event: any, name: string, namespace: string, environment?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         await k8sService.restartPod(name, namespace, environment);
         return { success: true };
     } catch (error: any) {
@@ -1764,7 +1927,7 @@ ipcMain.handle('k8s:restart-pod', async (_event: any, name: string, namespace: s
 
 ipcMain.handle('k8s:rollout-restart', async (_event: any, name: string, namespace: string, environment?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         await k8sService.rolloutRestart(name, namespace, environment);
         return { success: true };
     } catch (error: any) {
@@ -1774,7 +1937,7 @@ ipcMain.handle('k8s:rollout-restart', async (_event: any, name: string, namespac
 
 ipcMain.handle('k8s:deployments', async (_event: any, namespace?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const deployments = await k8sService.getDeployments(namespace);
         return { success: true, deployments: deployments.map(d => d) };
     } catch (error: any) {
@@ -1784,7 +1947,7 @@ ipcMain.handle('k8s:deployments', async (_event: any, namespace?: string) => {
 
 ipcMain.handle('k8s:services', async (_event: any, namespace?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const services = await k8sService.getServices(namespace);
         return { success: true, services: services.map(s => s) };
     } catch (error: any) {
@@ -1794,7 +1957,7 @@ ipcMain.handle('k8s:services', async (_event: any, namespace?: string) => {
 
 ipcMain.handle('k8s:configmaps', async (_event: any, namespace?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const configMaps = await k8sService.getConfigMaps(namespace);
         return { success: true, configMaps: configMaps.map(cm => cm) };
     } catch (error: any) {
@@ -1804,7 +1967,7 @@ ipcMain.handle('k8s:configmaps', async (_event: any, namespace?: string) => {
 
 ipcMain.handle('k8s:secrets', async (_event: any, namespace?: string) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const secrets = await k8sService.getSecrets(namespace);
         return { success: true, secrets: secrets.map(s => s) };
     } catch (error: any) {
@@ -1814,7 +1977,7 @@ ipcMain.handle('k8s:secrets', async (_event: any, namespace?: string) => {
 
 ipcMain.handle('k8s:previous-logs', async (_event: any, podName: string, namespace: string, container?: string, tail: number = 100) => {
     try {
-        await k8sService.initialize();
+        await activateK8sFromStore();
         const logs = await k8sService.getPreviousPodLogs(podName, namespace, container, tail);
         return { success: true, logs };
     } catch (error: any) {

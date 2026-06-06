@@ -157,7 +157,7 @@ Create UML diagrams using Mermaid syntax:
 ## 📦 Installation
 
 ### macOS
-1. Download `DevBench-1.0.0.dmg` (Intel) or `DevBench-1.0.0-arm64.dmg` (Apple Silicon)
+1. Download the latest `DevBench-*-x64.dmg` (Intel) or `DevBench-*-arm64.dmg` (Apple Silicon) from [GitHub Releases](https://github.com/karthik-minnikanti/devbench-kit/releases)
 2. Open the DMG file
 3. Drag DevBench to your Applications folder
 4. **Important**: Since the app is not code-signed, you'll need to allow Gatekeeper to install it:
@@ -187,6 +187,15 @@ Choose the appropriate package for your distribution:
 - Fix dependencies if needed: `sudo apt-get install -f`
 
 ## 🔧 Setup
+
+### Environment variables
+Copy `.env.example` to `.env.local` for local development:
+
+```bash
+cp .env.example .env.local
+```
+
+Production release builds use `https://dev-api.devbench.in` automatically.
 
 ### Git Integration
 DevBench uses Git for data synchronization and version control:
@@ -237,7 +246,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🔄 Version History
 
-### Version 0.1
+### Version 0.1.1
 - Initial release
 - API Studio
 - Daily Planner with task management and habit tracking

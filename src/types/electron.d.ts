@@ -25,6 +25,17 @@ interface HTMLWebViewElement extends HTMLElement {
 }
 
 declare global {
+    interface K8sClusterProfile {
+        id: string;
+        name: string;
+        kubeconfigPath: string;
+        context: string;
+        defaultNamespace?: string;
+        sourceType: 'managed' | 'system';
+        createdAt: string;
+        lastUsedAt?: string;
+    }
+
     interface Window {
         electronAPI: {
             config: {
@@ -70,6 +81,16 @@ declare global {
                 shellStop: (containerId: string) => Promise<any>;
             };
             k8s: {
+                clusters: {
+                    list: () => Promise<{ success: boolean; clusters: K8sClusterProfile[]; activeClusterId: string | null; error?: string }>;
+                    getActive: () => Promise<{ success: boolean; cluster: K8sClusterProfile | null; error?: string }>;
+                    add: (payload: { name: string; configPath: string; context: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                    activate: (clusterId: string) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                    remove: (clusterId: string) => Promise<{ success: boolean; activeCluster?: K8sClusterProfile | null; error?: string }>;
+                    update: (payload: { id: string; name?: string; context?: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                };
+                pickKubeconfig: () => Promise<{ success: boolean; canceled?: boolean; filePath?: string; contexts?: string[]; defaultContext?: string; error?: string }>;
+                contextsFromFile: (configPath: string) => Promise<{ success: boolean; contexts?: string[]; defaultContext?: string; error?: string }>;
                 contexts: () => Promise<any>;
                 currentContext: () => Promise<any>;
                 useContext: (context: string) => Promise<any>;
@@ -85,6 +106,10 @@ declare global {
                 shellInput: (podName: string, namespace: string, input: string) => Promise<any>;
                 shellStop: (podName: string, namespace: string) => Promise<any>;
                 command: (command: string) => Promise<any>;
+                diagnose: (podName: string, namespace: string) => Promise<any>;
+                timeline: (namespace: string, podName?: string) => Promise<any>;
+                dependencyGraph: (namespace: string) => Promise<any>;
+                search: (query: { image?: string; envVar?: string; labelSelector?: string; namespace?: string }) => Promise<any>;
             };
             notes: {
                 list: () => Promise<any>;

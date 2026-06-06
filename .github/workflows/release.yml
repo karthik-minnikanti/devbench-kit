@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac dmg --x64
+          - os: macos-latest
+            args: --mac dmg --arm64
+          - os: windows-latest
+            args: --win nsis --x64
+          - os: ubuntu-latest
+            args: --linux AppImage --x64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and publish
+        run: npm run build && npx electron-builder ${{ matrix.args }} --publish always
+        env:
+          NODE_ENV: production
+          VITE_API_URL: https://dev-api.devbench.in
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

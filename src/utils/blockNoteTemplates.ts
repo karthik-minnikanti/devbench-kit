@@ -1,7 +1,7 @@
-import { Block } from "@blocknote/core";
+import type { PartialBlock } from "@blocknote/core";
 
 // Template Map for easy access
-export const TemplateBlockMap: Record<string, Block[]> = {
+export const TemplateBlockMap: Record<string, PartialBlock[]> = {
     // 1️⃣ Blank Template
     blank: [
         {
@@ -1822,15 +1822,10 @@ export const TemplateBlockMap: Record<string, Block[]> = {
 };
 
 // Helper function to get template blocks
-export function getTemplateBlocks(templateId: string): Block[] {
+export function getTemplateBlocks(templateId: string): PartialBlock[] {
     return TemplateBlockMap[templateId] || TemplateBlockMap.blank;
 }
 
-// Helper function to convert Block[] to PartialBlock[] for compatibility
-export function blocksToPartialBlocks(blocks: Block[]): PartialBlock[] {
-    return blocks.map(block => ({
-        type: block.type,
-        props: block.props || {},
-        content: block.content || []
-    }));
+export function blocksToPartialBlocks(blocks: PartialBlock[]): PartialBlock[] {
+    return blocks;
 }

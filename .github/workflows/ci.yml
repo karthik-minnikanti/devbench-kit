@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, readme-update]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build renderer and electron bundles
+        run: npm run build
+        env:
+          NODE_ENV: production
+          VITE_API_URL: https://dev-api.devbench.in

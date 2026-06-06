@@ -1,7 +1,5 @@
 import axios from 'axios';
-
-// Ensure API URL is always localhost:3001 for desktop app
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { API_URL } from '../config/api';
 
 export interface Subscription {
     id: string;

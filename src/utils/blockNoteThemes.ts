@@ -1,6 +1,11 @@
-import { Theme } from "@blocknote/core";
+export interface BlockNoteTheme {
+  colors: Record<string, Record<string, string>>;
+  fonts: Record<string, string>;
+  borderRadius: number;
+  spacing: Record<string, number>;
+}
 
-export const createTheme = (overrides: Partial<Theme>): Theme => ({
+export const createTheme = (overrides: Partial<BlockNoteTheme>): BlockNoteTheme => ({
   colors: {
     editor: {
       background: "#ffffff",
@@ -33,7 +38,11 @@ export const createTheme = (overrides: Partial<Theme>): Theme => ({
     ...overrides.fonts
   },
   borderRadius: 8,
-  ...overrides
+  spacing: {
+    block: 8,
+    ...overrides.spacing,
+  },
+  ...overrides,
 });
 
 // Blank / Basic Template Theme
@@ -187,7 +196,7 @@ export const StandupTheme = createTheme({
 });
 
 // Theme Map
-export const themeMap: Record<string, Theme> = {
+export const themeMap: Record<string, BlockNoteTheme> = {
   blank: BlankTheme,
   'api-documentation': ApiDocsTheme,
   'requirements': RequirementsTheme,
@@ -202,6 +211,6 @@ export const themeMap: Record<string, Theme> = {
   'daily-standup': StandupTheme,
 };
 
-export function getThemeForTemplate(templateId: string): Theme {
+export function getThemeForTemplate(templateId: string): BlockNoteTheme {
   return themeMap[templateId] || BlankTheme;
 }

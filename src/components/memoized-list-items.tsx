@@ -4,7 +4,7 @@ import { Icon } from './Icon';
 interface NoteItemProps {
     note: {
         id: string;
-        title: string;
+        title?: string;
         updatedAt: string;
     };
     isSelected: boolean;
