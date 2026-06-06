@@ -17,6 +17,8 @@ export interface ApiRequest {
   binaryData?: string; // base64 encoded
   timeout: number;
   queryParams?: Array<{ key: string; value: string; enabled: boolean }>;
+  followRedirects?: boolean;
+  sslVerification?: boolean;
 }
 
 export interface ApiResponse {
@@ -25,6 +27,56 @@ export interface ApiResponse {
   headers: Record<string, string>;
   data: any;
   time: number;
+}
+
+const IPC_INVOKE_ERROR_RE =
+  /Error invoking remote method '[^']+': (.+)$/s;
+
+/** Normalize Electron IPC invoke failures into a readable Error. */
+export function parseRequestError(error: unknown): Error {
+  if (error instanceof Error) {
+    const match = error.message.match(IPC_INVOKE_ERROR_RE);
+    if (match) {
+      const detail = match[1].trim();
+      if (detail && detail !== "[object Object]") {
+        const normalized = new Error(detail);
+        if ((error as NodeJS.ErrnoException).code) {
+          (normalized as NodeJS.ErrnoException).code = (
+            error as NodeJS.ErrnoException
+          ).code;
+        }
+        return normalized;
+      }
+    }
+
+    if (
+      error.message.includes("[object Object]") &&
+      (error as NodeJS.ErrnoException).code
+    ) {
+      return new Error(String((error as NodeJS.ErrnoException).code));
+    }
+
+    return error;
+  }
+
+  if (typeof error === "string") {
+    return new Error(error);
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message =
+      (typeof record.error === "string" && record.error) ||
+      (typeof record.message === "string" && record.message) ||
+      "Request failed";
+    const normalized = new Error(message);
+    if (typeof record.code === "string") {
+      (normalized as NodeJS.ErrnoException).code = record.code;
+    }
+    return normalized;
+  }
+
+  return new Error("Request failed");
 }
 
 class ApiClient {
@@ -53,44 +105,15 @@ class ApiClient {
           formData: request.formData,
           binaryData: request.binaryData,
           timeout: request.timeout || 30000,
+          followRedirects: request.followRedirects ?? true,
+          sslVerification: request.sslVerification ?? true,
         };
 
         try {
           const response = await (window as any).electronAPI.apiClient.request(requestData);
           return response;
-        } catch (error: any) {
-          // Handle Electron IPC errors - they can come in different formats
-          let errorMessage = 'Request failed';
-          let errorCode = '';
-          
-          // Try to extract error message from various possible formats
-          if (typeof error === 'string') {
-            errorMessage = error;
-          } else if (error && typeof error === 'object') {
-            // Electron IPC errors might have error.error, error.message, or be the error object itself
-            errorMessage = error.error || error.message || error.toString() || JSON.stringify(error);
-            errorCode = error.code || '';
-            
-            // If errorMessage is still "[object Object]", try to extract more details
-            if (errorMessage === '[object Object]' || errorMessage.includes('[object Object]')) {
-              try {
-                const errorObj = error.error || error;
-                if (typeof errorObj === 'object' && errorObj !== null) {
-                  errorMessage = errorObj.error || errorObj.message || JSON.stringify(errorObj);
-                  errorCode = errorObj.code || error.code || '';
-                }
-              } catch (e) {
-                errorMessage = 'Request failed - Unable to parse error details';
-              }
-            }
-          }
-          
-          // Create error with specific details
-          const detailedError = new Error(errorMessage);
-          if (errorCode) {
-            (detailedError as any).code = errorCode;
-          }
-          throw detailedError;
+        } catch (error: unknown) {
+          throw parseRequestError(error);
         }
       }
 

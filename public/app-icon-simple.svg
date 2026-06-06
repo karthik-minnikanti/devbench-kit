@@ -1,54 +1,9 @@
 <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- Gradient matching BrandLogo -->
-    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:rgba(37,99,235,0.7);stop-opacity:1" />
-    </linearGradient>
-  </defs>
-  
-  <!-- Background - rounded square matching BrandLogo -->
-  <rect width="1024" height="1024" rx="180" fill="url(#gradient)"/>
-  
-  <!-- Code Icon (matching the Code icon from Icons.tsx) -->
-  <g transform="translate(512, 512) scale(8)">
-    <!-- Code brackets: < > -->
-    <path 
-      d="M -40 0 L -20 -20 M 20 -20 L 40 0 M 20 20 L 40 0 M -20 20 L -40 0"
-      stroke="white" 
-      stroke-width="2.5" 
-      stroke-linecap="round" 
-      stroke-linejoin="round"
-      fill="none"
-    />
-    <!-- Inner code lines -->
-    <path 
-      d="M -20 -20 L 0 -10 M 0 -10 L 20 -20"
-      stroke="white" 
-      stroke-width="2" 
-      stroke-linecap="round" 
-      stroke-linejoin="round"
-      fill="none"
-      opacity="0.8"
-    />
-    <path 
-      d="M -20 20 L 0 10 M 0 10 L 20 20"
-      stroke="white" 
-      stroke-width="2" 
-      stroke-linecap="round" 
-      stroke-linejoin="round"
-      fill="none"
-      opacity="0.8"
-    />
+  <rect width="1024" height="1024" rx="180" fill="#f7f7f4"/>
+  <rect x="212" y="212" width="600" height="600" rx="132" fill="#ffffff" stroke="#e6e5e0" stroke-width="8"/>
+  <g transform="translate(512 512) scale(20)">
+    <path d="M8 8.5L5.5 12L8 15.5" stroke="#f54e00" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M16 8.5L18.5 12L16 15.5" stroke="#f54e00" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M13.2 7.5L10.8 16.5" stroke="#807d72" stroke-width="1.4" stroke-linecap="round" fill="none"/>
   </g>
-  
-  <!-- Pulsing dot in top-right (matching BrandLogo) -->
-  <circle cx="850" cy="174" r="80" fill="#2563eb" opacity="0.9"/>
 </svg>
-
-
-
-
-
-
-

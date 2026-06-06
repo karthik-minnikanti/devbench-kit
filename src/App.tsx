@@ -50,7 +50,6 @@ const ComponentLoader = () => {
 function App() {
     const loadConfig = useStore((state) => state.loadConfig);
     const loadHistory = useStore((state) => state.loadHistory);
-    const setTheme = useStore((state) => state.setTheme);
     const config = useStore((state) => state.config);
     const [activeTab, setActiveTab] = useState<TabType>('home');
     const [isMac, setIsMac] = useState(false);
@@ -61,9 +60,6 @@ function App() {
     const [gitRepoPath, setGitRepoPath] = useState<string | null>(null);
 
     useEffect(() => {
-        // Always remove dark class on mount and ensure light theme
-        document.documentElement.classList.remove('dark');
-
         // Detect macOS for window controls spacing
         if (typeof window !== 'undefined' && window.navigator) {
             setIsMac(navigator.platform.toUpperCase().indexOf('MAC') >= 0 ||
@@ -117,16 +113,14 @@ function App() {
         checkGitSetup();
     };
 
-    // Ensure light theme is always applied
+    // Apply saved theme to document root (Tailwind darkMode: 'class')
     useEffect(() => {
-        document.documentElement.classList.remove('dark');
-        if (config?.theme === 'dark') {
-            setTheme('light');
-        }
-    }, [config?.theme, setTheme]);
+        const theme = config?.theme ?? 'light';
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+    }, [config?.theme]);
 
-    // Allowed tabs: api, planner, js-runner, notes, excalidraw, uml (plus home)
-    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml'];
+    // Allowed tabs visible in navigation
+    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s'];
 
     // Define all tabs array with icon components (keeping all code, but filtering for display)
     const allTabs = [
@@ -329,9 +323,9 @@ function App() {
                                 </Suspense>
                                 <button
                                     onClick={() => setShowHistory(!showHistory)}
-                                    className={`px-2.5 py-1 text-xs rounded transition-all flex items-center gap-1.5 ${showHistory
+                                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${showHistory
                                         ? 'bg-[var(--color-primary)] text-white'
-                                        : 'text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border)]'
+                                        : 'text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border-soft)]'
                                         }`}
                                 >
                                     <span>{showHistory ? 'Hide' : 'History'}</span>

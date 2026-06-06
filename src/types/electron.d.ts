@@ -109,7 +109,22 @@ declare global {
                 diagnose: (podName: string, namespace: string) => Promise<any>;
                 timeline: (namespace: string, podName?: string) => Promise<any>;
                 dependencyGraph: (namespace: string) => Promise<any>;
+                events: (namespace?: string, fieldSelector?: string) => Promise<any>;
                 search: (query: { image?: string; envVar?: string; labelSelector?: string; namespace?: string }) => Promise<any>;
+                scale: (name: string, namespace: string, replicas: number, environment?: string) => Promise<any>;
+                restartPod: (name: string, namespace: string, environment?: string) => Promise<any>;
+                rolloutRestart: (name: string, namespace: string, environment?: string) => Promise<any>;
+                deployments: (namespace?: string) => Promise<any>;
+                services: (namespace?: string) => Promise<any>;
+                configMaps: (namespace?: string) => Promise<any>;
+                secrets: (namespace?: string) => Promise<any>;
+                nodes: () => Promise<any>;
+                statefulSets: (namespace?: string) => Promise<any>;
+                jobs: (namespace?: string) => Promise<any>;
+                cronJobs: (namespace?: string) => Promise<any>;
+                ingresses: (namespace?: string) => Promise<any>;
+                daemonSets: (namespace?: string) => Promise<any>;
+                replicaSets: (namespace?: string) => Promise<any>;
             };
             notes: {
                 list: () => Promise<any>;

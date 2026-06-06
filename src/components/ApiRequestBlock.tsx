@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
-import { apiClient, ApiRequest, ApiResponse } from '../utils/apiClient';
-import { Icon } from './Icon';
+import React, { useState } from "react";
+import { apiClient, ApiRequest, ApiResponse } from "../utils/apiClient";
+import { getHttpMethodBadgeClass, getHttpStatusBadgeClass } from "../utils/httpMethodColors";
+import { Icon } from "./Icon";
 
 export interface ApiRequestBlockData {
   id: string;
   name: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD";
   url: string;
   headers: string; // JSON string
   body?: string;
-  bodyType?: 'json' | 'form-data' | 'x-www-form-urlencoded' | 'raw' | 'none';
+  bodyType?: "json" | "form-data" | "x-www-form-urlencoded" | "raw" | "none";
   timeout?: number;
   queryParams?: Array<{ key: string; value: string; enabled: boolean }>;
 }
@@ -46,16 +47,16 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           parsedHeaders = JSON.parse(data.headers);
         }
       } catch (e) {
-        console.warn('Failed to parse headers:', e);
+        console.warn("Failed to parse headers:", e);
       }
 
       // Build request object
       const request: ApiRequest = {
-        method: data.method || 'GET',
-        url: data.url || '',
+        method: data.method || "GET",
+        url: data.url || "",
         headers: parsedHeaders,
         body: data.body,
-        bodyType: data.bodyType || 'json',
+        bodyType: data.bodyType || "json",
         timeout: data.timeout || 30000,
         queryParams: data.queryParams || [],
       };
@@ -63,7 +64,7 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
       const result = await apiClient.makeRequest(request);
       setResponse(result);
     } catch (err: any) {
-      setError(err.message || 'Request failed');
+      setError(err.message || "Request failed");
     } finally {
       setIsExecuting(false);
     }
@@ -78,25 +79,16 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
     });
   };
 
-  const getMethodColor = (method: string) => {
-    const colors: Record<string, string> = {
-      GET: 'bg-green-500',
-      POST: 'bg-blue-500',
-      PUT: 'bg-yellow-500',
-      DELETE: 'bg-red-500',
-      PATCH: 'bg-purple-500',
-      OPTIONS: 'bg-gray-500',
-      HEAD: 'bg-gray-500',
-    };
-    return colors[method] || 'bg-gray-500';
-  };
+  const getMethodColor = (method: string) => getHttpMethodBadgeClass(method);
 
   if (isEditing) {
     return (
       <div className="my-4 p-4 border border-[var(--color-border)] rounded-lg bg-[var(--color-card)]">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-[var(--color-text-primary)]">Edit API Request</h3>
+            <h3 className="font-semibold text-[var(--color-text-primary)]">
+              Edit API Request
+            </h3>
             <button
               onClick={() => setIsEditing(false)}
               className="px-2 py-1 text-xs rounded bg-[var(--color-muted)] hover:bg-[var(--color-hover)]"
@@ -106,10 +98,12 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           </div>
 
           <div>
-            <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Name</label>
+            <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
+              Name
+            </label>
             <input
               type="text"
-              value={data.name || ''}
+              value={data.name || ""}
               onChange={(e) => updateBlockData({ name: e.target.value })}
               placeholder="Request name"
               className="w-full px-2 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)]"
@@ -118,10 +112,14 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Method</label>
+              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
+                Method
+              </label>
               <select
-                value={data.method || 'GET'}
-                onChange={(e) => updateBlockData({ method: e.target.value as any })}
+                value={data.method || "GET"}
+                onChange={(e) =>
+                  updateBlockData({ method: e.target.value as any })
+                }
                 className="w-full px-2 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)]"
               >
                 <option value="GET">GET</option>
@@ -134,10 +132,12 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
               </select>
             </div>
             <div className="flex-2">
-              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">URL</label>
+              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
+                URL
+              </label>
               <input
                 type="text"
-                value={data.url || ''}
+                value={data.url || ""}
                 onChange={(e) => updateBlockData({ url: e.target.value })}
                 placeholder="https://api.example.com/endpoint"
                 className="w-full px-2 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)]"
@@ -146,9 +146,11 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           </div>
 
           <div>
-            <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Headers (JSON)</label>
+            <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
+              Headers (JSON)
+            </label>
             <textarea
-              value={data.headers || '{}'}
+              value={data.headers || "{}"}
               onChange={(e) => updateBlockData({ headers: e.target.value })}
               placeholder='{"Content-Type": "application/json"}'
               rows={3}
@@ -156,11 +158,15 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
             />
           </div>
 
-          {(data.method === 'POST' || data.method === 'PUT' || data.method === 'PATCH') && (
+          {(data.method === "POST" ||
+            data.method === "PUT" ||
+            data.method === "PATCH") && (
             <div>
-              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Body</label>
+              <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
+                Body
+              </label>
               <textarea
-                value={data.body || ''}
+                value={data.body || ""}
                 onChange={(e) => updateBlockData({ body: e.target.value })}
                 placeholder='{"key": "value"}'
                 rows={5}
@@ -178,14 +184,16 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
       {/* Header */}
       <div className="flex items-center justify-between p-3 bg-[var(--color-sidebar)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className={`px-2 py-0.5 text-xs font-semibold text-white rounded ${getMethodColor(data.method || 'GET')}`}>
-            {data.method || 'GET'}
+          <span
+            className={`px-2 py-0.5 text-xs font-semibold text-white rounded ${getMethodColor(data.method || "GET")}`}
+          >
+            {data.method || "GET"}
           </span>
           <span className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-            {data.name || 'Untitled Request'}
+            {data.name || "Untitled Request"}
           </span>
           <span className="text-xs text-[var(--color-text-tertiary)] truncate hidden sm:inline">
-            {data.url || 'No URL'}
+            {data.url || "No URL"}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -199,9 +207,12 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="p-1.5 rounded hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] transition-colors"
-            title={isExpanded ? 'Collapse' : 'Expand'}
+            title={isExpanded ? "Collapse" : "Expand"}
           >
-            <Icon name={isExpanded ? 'ChevronUp' : 'ChevronDown'} className="w-4 h-4" />
+            <Icon
+              name={isExpanded ? "ChevronUp" : "ChevronDown"}
+              className="w-4 h-4"
+            />
           </button>
         </div>
       </div>
@@ -212,14 +223,18 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           {/* Request Details */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-[var(--color-text-secondary)]">URL:</span>
+              <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                URL:
+              </span>
               <code className="text-xs text-[var(--color-text-primary)] bg-[var(--color-muted)] px-2 py-0.5 rounded flex-1 truncate">
-                {data.url || 'No URL set'}
+                {data.url || "No URL set"}
               </code>
             </div>
-            {data.headers && data.headers !== '{}' && (
+            {data.headers && data.headers !== "{}" && (
               <div>
-                <span className="text-xs font-medium text-[var(--color-text-secondary)]">Headers:</span>
+                <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                  Headers:
+                </span>
                 <pre className="text-xs text-[var(--color-text-primary)] bg-[var(--color-muted)] p-2 rounded mt-1 overflow-x-auto">
                   {data.headers}
                 </pre>
@@ -227,7 +242,9 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
             )}
             {data.body && (
               <div>
-                <span className="text-xs font-medium text-[var(--color-text-secondary)]">Body:</span>
+                <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                  Body:
+                </span>
                 <pre className="text-xs text-[var(--color-text-primary)] bg-[var(--color-muted)] p-2 rounded mt-1 overflow-x-auto max-h-32">
                   {data.body}
                 </pre>
@@ -258,14 +275,12 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           {response && (
             <div className="border-t border-[var(--color-border)] pt-4">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">Response</h4>
-                <span className={`text-xs px-2 py-0.5 rounded ${
-                  response.status >= 200 && response.status < 300
-                    ? 'bg-green-500/20 text-green-500'
-                    : response.status >= 400
-                    ? 'bg-red-500/20 text-red-500'
-                    : 'bg-yellow-500/20 text-yellow-500'
-                }`}>
+                <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  Response
+                </h4>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded font-semibold ${getHttpStatusBadgeClass(response.status)}`}
+                >
                   {response.status} {response.statusText}
                 </span>
               </div>
@@ -274,8 +289,8 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
               </div>
               <div className="bg-[var(--color-muted)] rounded p-3 max-h-64 overflow-auto">
                 <pre className="text-xs text-[var(--color-text-primary)] whitespace-pre-wrap">
-                  {typeof response.data === 'string' 
-                    ? response.data 
+                  {typeof response.data === "string"
+                    ? response.data
                     : JSON.stringify(response.data, null, 2)}
                 </pre>
               </div>
@@ -286,11 +301,11 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
           {error && (
             <div className="border-t border-[var(--color-border)] pt-4">
               <div className="flex items-center gap-2 mb-2">
-                <Icon name="AlertCircle" className="w-4 h-4 text-red-500" />
-                <h4 className="text-sm font-semibold text-red-500">Error</h4>
+                <Icon name="AlertCircle" className="w-4 h-4 text-[var(--color-semantic-error)]" />
+                <h4 className="text-sm font-semibold text-[var(--color-semantic-error)]">Error</h4>
               </div>
-              <div className="bg-red-500/10 border border-red-500/20 rounded p-3">
-                <p className="text-xs text-red-500">{error}</p>
+              <div className="bg-[var(--color-semantic-error)]/10 border border-[var(--color-semantic-error)]/25 rounded p-3">
+                <p className="text-xs text-[var(--color-semantic-error)]">{error}</p>
               </div>
             </div>
           )}
@@ -299,4 +314,3 @@ export function ApiRequestBlock({ block, editor }: ApiRequestBlockProps) {
     </div>
   );
 }
-

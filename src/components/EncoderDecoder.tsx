@@ -1,42 +1,52 @@
-import { useState } from 'react';
-import { Editor } from '@monaco-editor/react';
-import { encodeBase64, decodeBase64, encodeUrl, decodeUrl } from '../utils/encoders';
+import { useState } from "react";
+import { Editor } from "@monaco-editor/react";
+import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
+import {
+  encodeBase64,
+  decodeBase64,
+  encodeUrl,
+  decodeUrl,
+} from "../utils/encoders";
 
-type EncoderType = 'base64-encode' | 'base64-decode' | 'url-encode' | 'url-decode';
+type EncoderType =
+  | "base64-encode"
+  | "base64-decode"
+  | "url-encode"
+  | "url-decode";
 
 export function EncoderDecoder() {
-  const [input, setInput] = useState('');
-  const [output, setOutput] = useState('');
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [type, setType] = useState<EncoderType>('base64-encode');
+  const [type, setType] = useState<EncoderType>("base64-encode");
 
   const handleEncodeDecode = () => {
     setError(null);
     try {
       switch (type) {
-        case 'base64-encode':
+        case "base64-encode":
           setOutput(encodeBase64(input));
           break;
-        case 'base64-decode':
+        case "base64-decode":
           setOutput(decodeBase64(input));
           break;
-        case 'url-encode':
+        case "url-encode":
           setOutput(encodeUrl(input));
           break;
-        case 'url-decode':
+        case "url-decode":
           setOutput(decodeUrl(input));
           break;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Operation failed');
-      setOutput('');
+      setError(err instanceof Error ? err.message : "Operation failed");
+      setOutput("");
     }
   };
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100/50 dark:border-gray-800/50 bg-gradient-to-r from-gray-50/30 to-transparent dark:from-gray-800/30 backdrop-blur-sm flex items-center justify-between flex-shrink-0">
-        <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2 tracking-tight">
+      <div className="tool-header">
+        <h2 className="title-sm flex items-center gap-2">
           <span className="text-lg">🔐</span>
           Encoder / Decoder
         </h2>
@@ -51,19 +61,16 @@ export function EncoderDecoder() {
             <option value="url-encode">URL Encode</option>
             <option value="url-decode">URL Decode</option>
           </select>
-          <button
-            onClick={handleEncodeDecode}
-            className="btn-primary text-xs"
-          >
-            {type.includes('encode') ? '⚡ Encode' : '🔓 Decode'}
+          <button onClick={handleEncodeDecode} className="btn-primary text-xs">
+            {type.includes("encode") ? "⚡ Encode" : "🔓 Decode"}
           </button>
         </div>
       </div>
       <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card shadow-soft overflow-hidden">
-          <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-transparent dark:from-gray-800/50 backdrop-blur-sm border-b border-gray-100 dark:border-gray-800">
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-primary-500 rounded-full"></span>
+        <div className="flex-1 flex flex-col card overflow-hidden">
+          <div className="px-4 py-2.5 editor-pane-header">
+            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
               Input
             </div>
           </div>
@@ -73,22 +80,23 @@ export function EncoderDecoder() {
               width="100%"
               defaultLanguage="plaintext"
               value={input}
-              onChange={(value) => setInput(value || '')}
-              theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+              onChange={(value) => setInput(value || "")}
+              theme={getMonacoTheme()}
+          beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
-                wordWrap: 'on',
+                wordWrap: "on",
                 padding: { top: 16, bottom: 16 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card shadow-soft overflow-hidden">
-          <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-transparent dark:from-gray-800/50 backdrop-blur-sm border-b border-gray-100 dark:border-gray-800">
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+        <div className="flex-1 flex flex-col card overflow-hidden">
+          <div className="px-4 py-2.5 editor-pane-header">
+            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
               Output
             </div>
           </div>
@@ -97,19 +105,23 @@ export function EncoderDecoder() {
               height="100%"
               width="100%"
               defaultLanguage="plaintext"
-              value={output || (error ? `Error: ${error}` : '// Output will appear here...')}
-              theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+              value={
+                output ||
+                (error ? `Error: ${error}` : "// Output will appear here...")
+              }
+              theme={getMonacoTheme()}
+          beforeMount={onMonacoBeforeMount}
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
                 fontSize: 14,
-                wordWrap: 'on',
+                wordWrap: "on",
                 padding: { top: 16, bottom: 16 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="absolute bottom-4 left-4 right-4 bg-red-500/95 dark:bg-red-600/95 backdrop-blur-sm border border-red-400/50 text-white px-4 py-3 rounded-xl shadow-soft-lg animate-slide-up">
+              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">⚠️</span>
                   <span className="font-medium">{error}</span>
@@ -122,5 +134,3 @@ export function EncoderDecoder() {
     </div>
   );
 }
-
-

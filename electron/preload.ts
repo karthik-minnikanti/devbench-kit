@@ -135,6 +135,13 @@ try {
             services: (namespace?: string) => ipcRenderer.invoke('k8s:services', namespace),
             configMaps: (namespace?: string) => ipcRenderer.invoke('k8s:configmaps', namespace),
             secrets: (namespace?: string) => ipcRenderer.invoke('k8s:secrets', namespace),
+            nodes: () => ipcRenderer.invoke('k8s:nodes'),
+            statefulSets: (namespace?: string) => ipcRenderer.invoke('k8s:statefulsets', namespace),
+            jobs: (namespace?: string) => ipcRenderer.invoke('k8s:jobs', namespace),
+            cronJobs: (namespace?: string) => ipcRenderer.invoke('k8s:cronjobs', namespace),
+            ingresses: (namespace?: string) => ipcRenderer.invoke('k8s:ingresses', namespace),
+            daemonSets: (namespace?: string) => ipcRenderer.invoke('k8s:daemonsets', namespace),
+            replicaSets: (namespace?: string) => ipcRenderer.invoke('k8s:replicasets', namespace),
         },
         onK8sLog: (callback: (data: any) => void) => {
             ipcRenderer.on('k8s:log', (_event: any, data: any) => callback(data));

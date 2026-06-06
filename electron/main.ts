@@ -1975,6 +1975,76 @@ ipcMain.handle('k8s:secrets', async (_event: any, namespace?: string) => {
     }
 });
 
+ipcMain.handle('k8s:nodes', async () => {
+    try {
+        await activateK8sFromStore();
+        const nodes = await k8sService.getNodes();
+        return { success: true, nodes: nodes.map(n => n) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), nodes: [] };
+    }
+});
+
+ipcMain.handle('k8s:statefulsets', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const statefulSets = await k8sService.getStatefulSets(namespace);
+        return { success: true, statefulSets: statefulSets.map(s => s) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), statefulSets: [] };
+    }
+});
+
+ipcMain.handle('k8s:jobs', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const jobs = await k8sService.getJobs(namespace);
+        return { success: true, jobs: jobs.map(j => j) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), jobs: [] };
+    }
+});
+
+ipcMain.handle('k8s:cronjobs', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const cronJobs = await k8sService.getCronJobs(namespace);
+        return { success: true, cronJobs: cronJobs.map(c => c) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), cronJobs: [] };
+    }
+});
+
+ipcMain.handle('k8s:ingresses', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const ingresses = await k8sService.getIngresses(namespace);
+        return { success: true, ingresses: ingresses.map(i => i) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), ingresses: [] };
+    }
+});
+
+ipcMain.handle('k8s:daemonsets', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const daemonSets = await k8sService.getDaemonSets(namespace);
+        return { success: true, daemonSets: daemonSets.map(d => d) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), daemonSets: [] };
+    }
+});
+
+ipcMain.handle('k8s:replicasets', async (_event: any, namespace?: string) => {
+    try {
+        await activateK8sFromStore();
+        const replicaSets = await k8sService.getReplicaSets(namespace);
+        return { success: true, replicaSets: replicaSets.map(r => r) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), replicaSets: [] };
+    }
+});
+
 ipcMain.handle('k8s:previous-logs', async (_event: any, podName: string, namespace: string, container?: string, tail: number = 100) => {
     try {
         await activateK8sFromStore();
@@ -2478,6 +2548,18 @@ ipcMain.handle('apiclient:saveEnvironments', async (_event: any, data: { environ
 });
 
 // IPC handler for API client requests - uses Node's http/https to bypass CORS
+function rejectApiClientRequest(
+    reject: (reason?: unknown) => void,
+    message: string,
+    code?: string,
+) {
+    const error = new Error(message) as NodeJS.ErrnoException;
+    if (code) {
+        error.code = code;
+    }
+    reject(error);
+}
+
 ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
     return new Promise((resolve, reject) => {
         try {
@@ -2491,15 +2573,12 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
                 formData,
                 binaryData,
                 timeout = 30000,
+                sslVerification = true,
             } = requestData;
 
             // Validate URL
             if (!url || typeof url !== 'string') {
-                return reject({ 
-                    error: 'Invalid URL',
-                    message: 'Invalid URL',
-                    code: 'EINVAL'
-                });
+                return rejectApiClientRequest(reject, 'Invalid URL', 'EINVAL');
             }
 
             // Build final URL with query parameters
@@ -2610,7 +2689,7 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
                     requestBodyData = Buffer.from(base64Data, 'base64');
                     requestHeaders['Content-Type'] = 'application/octet-stream';
                 } catch (e) {
-                    return reject({ error: 'Invalid binary data' });
+                    return rejectApiClientRequest(reject, 'Invalid binary data', 'EINVAL');
                 }
             } else if (bodyType === 'raw' || bodyType === 'json') {
                 requestBodyData = requestBody;
@@ -2623,13 +2702,17 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
 
             // Make the request
             const startTime = Date.now();
-            const options = {
+            const options: https.RequestOptions & { hostname: string; port: string | number; path: string; method: string; headers: Record<string, string> } = {
                 hostname: urlObj.hostname,
                 port: urlObj.port || (isHttps ? 443 : 80),
                 path: urlObj.pathname + urlObj.search,
                 method,
                 headers: requestHeaders,
             };
+
+            if (isHttps) {
+                options.rejectUnauthorized = sslVerification !== false;
+            }
 
             const req = client.request(options, (res) => {
                 const responseHeaders: Record<string, string> = {};
@@ -2729,20 +2812,16 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
                 }
                 
                 // Ensure we're rejecting with a serializable object
-                reject({ 
-                    error: String(errorMsg), 
-                    code: String(errorCode || ''),
-                    message: String(errorMsg)
-                });
+                rejectApiClientRequest(reject, String(errorMsg), String(errorCode || '') || undefined);
             });
 
             req.setTimeout(timeout, () => {
                 req.destroy();
-                reject({ 
-                    error: `Request timeout after ${timeout}ms`, 
-                    code: 'ETIMEDOUT',
-                    message: `Request timeout after ${timeout}ms`
-                });
+                rejectApiClientRequest(
+                    reject,
+                    `Request timeout after ${timeout}ms`,
+                    'ETIMEDOUT',
+                );
             });
 
             // Write request body if present
@@ -2770,11 +2849,7 @@ ipcMain.handle('api-client:request', async (_event: any, requestData: any) => {
             }
             
             // Ensure we're rejecting with a serializable object
-            reject({ 
-                error: String(errorMsg), 
-                code: String(errorCode || ''),
-                message: String(errorMsg)
-            });
+            rejectApiClientRequest(reject, String(errorMsg), String(errorCode || '') || undefined);
         }
     });
 });

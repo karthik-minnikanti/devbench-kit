@@ -1,22 +1,42 @@
-import { useState, useEffect, useRef } from 'react';
-import { Editor } from '@monaco-editor/react';
-import { apiClient, ApiRequest, ApiResponse, BodyType, FormDataField } from '../utils/apiClient';
-import { parseCurl } from '../utils/curlParser';
-import { useStore } from '../state/store';
-import { getFolders, saveFolder, deleteFolder, Folder } from '../utils/folders';
-import { groupByDate, DateGroup } from '../utils/dateGrouping';
-import { Icon } from './Icon';
-import { Icons } from './Icons';
-import { ImportExportModal } from './ImportExportModal';
-import { VariablesManager } from './VariablesManager';
-import { ParsedSwaggerRequest } from '../utils/swaggerParser';
-import { ParsedPostmanRequest } from '../utils/postmanParser';
-import { getVariables, replaceVariables, replaceVariablesInObject, areVariablesValid, Variable } from '../utils/variables';
-import { EnvironmentsManager, Environment } from './EnvironmentsManager';
-import { ScriptEditor } from './ScriptEditor';
-import { RequestHistory, HistoryEntry } from './RequestHistory';
-import { Console, ConsoleLog } from './Console';
-import { executeScript, ScriptContext } from '../utils/scriptRunner';
+import { useState, useEffect, useRef } from "react";
+import { Editor } from "@monaco-editor/react";
+import {
+  apiClient,
+  ApiRequest,
+  ApiResponse,
+  BodyType,
+  FormDataField,
+  parseRequestError,
+} from "../utils/apiClient";
+import { parseCurl } from "../utils/curlParser";
+import { useStore } from "../state/store";
+import { getFolders, saveFolder, deleteFolder, Folder } from "../utils/folders";
+import { groupByDate, DateGroup } from "../utils/dateGrouping";
+import { Icon } from "./Icon";
+import { Icons } from "./Icons";
+import { ImportExportModal } from "./ImportExportModal";
+import { VariablesManager } from "./VariablesManager";
+import { ParsedSwaggerRequest } from "../utils/swaggerParser";
+import { ParsedPostmanRequest } from "../utils/postmanParser";
+import {
+  getVariables,
+  replaceVariables,
+  replaceVariablesInObject,
+  areVariablesValid,
+  Variable,
+} from "../utils/variables";
+import { EnvironmentsManager, Environment } from "./EnvironmentsManager";
+import { ScriptEditor } from "./ScriptEditor";
+import { RequestHistory, HistoryEntry } from "./RequestHistory";
+import { Console, ConsoleLog } from "./Console";
+import { executeScript, ScriptContext } from "../utils/scriptRunner";
+import {
+  getHttpMethodDisplay,
+  getHttpMethodLabelClass,
+  getHttpMethodTextClass,
+  getHttpStatusBadgeClass,
+} from "../utils/httpMethodColors";
+import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
 
 interface QueryParam {
   key: string;
@@ -30,7 +50,7 @@ interface Header {
   enabled: boolean;
 }
 
-type AuthType = 'none' | 'bearer' | 'basic' | 'apikey' | 'oauth2';
+type AuthType = "none" | "bearer" | "basic" | "apikey" | "oauth2";
 
 interface AuthConfig {
   type: AuthType;
@@ -39,17 +59,24 @@ interface AuthConfig {
   basicPassword?: string;
   apiKeyKey?: string;
   apiKeyValue?: string;
-  apiKeyLocation?: 'header' | 'query';
+  apiKeyLocation?: "header" | "query";
   oauth2Token?: string;
 }
 
-type RequestTab = 'params' | 'headers' | 'body' | 'auth' | 'pre-request' | 'tests' | 'settings';
-type ResponseTab = 'preview' | 'raw' | 'headers';
+type RequestTab =
+  | "params"
+  | "headers"
+  | "body"
+  | "auth"
+  | "pre-request"
+  | "tests"
+  | "settings";
+type ResponseTab = "preview" | "raw" | "headers";
 
 export interface SavedApiRequest {
   id: string;
   name: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD";
   url: string;
   headers: string;
   queryParams?: QueryParam[];
@@ -62,102 +89,247 @@ export interface SavedApiRequest {
   folderId?: string | null;
   preRequestScript?: string;
   testScript?: string;
+  authConfig?: AuthConfig;
+  followRedirects?: boolean;
+  sslVerification?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+function encodeBasicAuthCredentials(
+  username: string,
+  password: string,
+): string {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function buildHeadersJson(headersList: Header[]): string {
+  return JSON.stringify(
+    headersList
+      .filter((h) => h.enabled && h.key)
+      .reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {}),
+    null,
+    2,
+  );
+}
+
+function parseHeadersToList(headers: string | undefined): Header[] {
+  if (!headers) {
+    return [{ key: "", value: "", enabled: true }];
+  }
+  try {
+    const parsedHeaders = JSON.parse(headers);
+    const headersArray: Header[] = Object.entries(parsedHeaders || {}).map(
+      ([key, value]) => ({
+        key,
+        value: String(value),
+        enabled: true,
+      }),
+    );
+    if (headersArray.length > 0) {
+      return [...headersArray, { key: "", value: "", enabled: true }];
+    }
+  } catch {
+    // fall through
+  }
+  return [{ key: "", value: "", enabled: true }];
+}
+
+function normalizeHeadersJson(headers: string): string {
+  try {
+    const parsed = JSON.parse(headers);
+    const sorted: Record<string, string> = {};
+    Object.keys(parsed)
+      .sort()
+      .forEach((key) => {
+        sorted[key] = String(parsed[key]);
+      });
+    return JSON.stringify(sorted);
+  } catch {
+    return headers;
+  }
+}
+
+function normalizeSavedRequest(
+  raw: Partial<SavedApiRequest>,
+  index: number,
+): SavedApiRequest {
+  const headers =
+    typeof raw.headers === "string"
+      ? raw.headers
+      : raw.headers
+        ? JSON.stringify(raw.headers, null, 2)
+        : "{}";
+  const url = raw.url ?? "";
+  const name = raw.name?.trim() || url || "Untitled Request";
+
+  return {
+    id: raw.id || `legacy-${Date.now()}-${index}`,
+    name,
+    method: raw.method || "GET",
+    url,
+    headers,
+    queryParams: raw.queryParams,
+    bodyType: raw.bodyType || "json",
+    body: raw.body,
+    formData: raw.formData,
+    binaryData: raw.binaryData,
+    timeout: raw.timeout ?? 30000,
+    authConfig: raw.authConfig,
+    followRedirects: raw.followRedirects,
+    sslVerification: raw.sslVerification,
+    preRequestScript: raw.preRequestScript,
+    testScript: raw.testScript,
+    response: raw.response,
+    folderId: raw.folderId,
+    createdAt: raw.createdAt || new Date().toISOString(),
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+  };
+}
+
+function requestDefinitionComparable(
+  request: Pick<
+    SavedApiRequest,
+    | "name"
+    | "method"
+    | "url"
+    | "headers"
+    | "queryParams"
+    | "bodyType"
+    | "body"
+    | "formData"
+    | "binaryData"
+    | "timeout"
+    | "authConfig"
+    | "followRedirects"
+    | "sslVerification"
+    | "preRequestScript"
+    | "testScript"
+  >,
+): string {
+  return JSON.stringify({
+    name: request.name,
+    method: request.method,
+    url: request.url,
+    headers: normalizeHeadersJson(request.headers),
+    queryParams: (request.queryParams || []).filter((p) => p.key || p.value),
+    bodyType: request.bodyType,
+    body: request.body ?? "",
+    formData: request.formData ?? [],
+    binaryData: request.binaryData ?? "",
+    timeout: request.timeout,
+    authConfig: request.authConfig ?? { type: "none" },
+    followRedirects: request.followRedirects ?? true,
+    sslVerification: request.sslVerification ?? true,
+    preRequestScript: request.preRequestScript ?? "",
+    testScript: request.testScript ?? "",
+  });
 }
 
 // Sanitize HTML to prevent external resource loading and XSS
 function sanitizeHtmlForPreview(html: string): string {
   // Create a temporary DOM element to parse HTML
   const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  
+  const doc = parser.parseFromString(html, "text/html");
+
   // Remove all script tags
-  const scripts = doc.querySelectorAll('script');
-  scripts.forEach(script => script.remove());
-  
+  const scripts = doc.querySelectorAll("script");
+  scripts.forEach((script) => script.remove());
+
   // Remove all external links and resources
   // Remove external stylesheets
   const links = doc.querySelectorAll('link[rel="stylesheet"]');
-  links.forEach(link => {
-    const href = link.getAttribute('href');
-    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+  links.forEach((link) => {
+    const href = link.getAttribute("href");
+    if (href && (href.startsWith("http://") || href.startsWith("https://"))) {
       link.remove();
     }
   });
-  
+
   // Remove iframes
-  const iframes = doc.querySelectorAll('iframe');
-  iframes.forEach(iframe => iframe.remove());
-  
+  const iframes = doc.querySelectorAll("iframe");
+  iframes.forEach((iframe) => iframe.remove());
+
   // Remove external styles in style tags that might contain @import
-  const styleTags = doc.querySelectorAll('style');
-  styleTags.forEach(style => {
-    let content = style.textContent || '';
+  const styleTags = doc.querySelectorAll("style");
+  styleTags.forEach((style) => {
+    let content = style.textContent || "";
     // Remove @import statements
-    content = content.replace(/@import\s+url\([^)]+\)/gi, '');
-    content = content.replace(/@import\s+['"][^'"]+['"]/gi, '');
+    content = content.replace(/@import\s+url\([^)]+\)/gi, "");
+    content = content.replace(/@import\s+['"][^'"]+['"]/gi, "");
     style.textContent = content;
   });
-  
+
   // Remove inline event handlers (onclick, onload, etc.)
-  const allElements = doc.querySelectorAll('*');
-  allElements.forEach(el => {
-    Array.from(el.attributes).forEach(attr => {
-      if (attr.name.startsWith('on')) {
+  const allElements = doc.querySelectorAll("*");
+  allElements.forEach((el) => {
+    Array.from(el.attributes).forEach((attr) => {
+      if (attr.name.startsWith("on")) {
         el.removeAttribute(attr.name);
       }
     });
   });
-  
+
   // Return sanitized HTML
   return doc.documentElement.outerHTML;
 }
 
 export function ApiClient() {
-  const [method, setMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD'>('GET');
-  const [url, setUrl] = useState('');
+  const [method, setMethod] = useState<
+    "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD"
+  >("GET");
+  const [url, setUrl] = useState("");
   const [headersList, setHeadersList] = useState<Header[]>([
-    { key: 'Content-Type', value: 'application/json', enabled: true }
+    { key: "Content-Type", value: "application/json", enabled: true },
   ]);
-  const [bodyType, setBodyType] = useState<BodyType>('json');
-  const [body, setBody] = useState('');
+  const [bodyType, setBodyType] = useState<BodyType>("json");
+  const [body, setBody] = useState("");
   const [formData, setFormData] = useState<FormDataField[]>([
-    { key: '', value: '', type: 'text', enabled: true }
+    { key: "", value: "", type: "text", enabled: true },
   ]);
   const [queryParams, setQueryParams] = useState<QueryParam[]>([
-    { key: '', value: '', enabled: true }
+    { key: "", value: "", enabled: true },
   ]);
-  const [baseUrl, setBaseUrl] = useState<string>('');
-  const [urlInput, setUrlInput] = useState<string>(''); // Raw URL input value (not computed)
+  const [baseUrl, setBaseUrl] = useState<string>("");
+  const [urlInput, setUrlInput] = useState<string>(""); // Raw URL input value (not computed)
   const urlDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const [binaryData, setBinaryData] = useState<string>('');
+  const [binaryData, setBinaryData] = useState<string>("");
   const [timeout, setRequestTimeout] = useState(30000);
-  const [activeRequestTab, setActiveRequestTab] = useState<RequestTab>('params');
-  const [activeResponseTab, setActiveResponseTab] = useState<ResponseTab>('preview');
-  const [authConfig, setAuthConfig] = useState<AuthConfig>({ type: 'none' });
+  const [activeRequestTab, setActiveRequestTab] =
+    useState<RequestTab>("params");
+  const [activeResponseTab, setActiveResponseTab] =
+    useState<ResponseTab>("preview");
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({ type: "none" });
   const [followRedirects, setFollowRedirects] = useState(true);
   const [sslVerification, setSslVerification] = useState(true);
 
   // Convert headers list to JSON string for backward compatibility
   const headers = JSON.stringify(
     headersList
-      .filter(h => h.enabled && h.key)
+      .filter((h) => h.enabled && h.key)
       .reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {}),
     null,
-    2
+    2,
   );
 
   // Build URL with query parameters
-  const buildUrlWithQueryParams = (base: string, params: QueryParam[]): string => {
-    const enabledParams = params.filter(p => p.enabled && p.key);
+  const buildUrlWithQueryParams = (
+    base: string,
+    params: QueryParam[],
+  ): string => {
+    const enabledParams = params.filter((p) => p.enabled && p.key);
     if (enabledParams.length === 0) return base;
 
     // Only use URL API if base is a valid absolute URL
-    if (base && (base.startsWith('http://') || base.startsWith('https://'))) {
+    if (base && (base.startsWith("http://") || base.startsWith("https://"))) {
       try {
         const urlObj = new URL(base);
-        enabledParams.forEach(param => {
+        enabledParams.forEach((param) => {
           urlObj.searchParams.append(param.key, param.value);
         });
         return urlObj.toString();
@@ -167,15 +339,26 @@ export function ApiClient() {
     }
 
     // Manual construction for relative URLs or invalid URLs
-    const separator = base.includes('?') ? '&' : '?';
-    const queryString = enabledParams.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&');
+    const separator = base.includes("?") ? "&" : "?";
+    const queryString = enabledParams
+      .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+      .join("&");
     return `${base}${separator}${queryString}`;
   };
 
   // Parse URL to extract base and query params
-  const parseUrl = (fullUrl: string): { base: string; params: QueryParam[] } => {
+  const parseUrl = (
+    fullUrl: string | undefined | null,
+  ): { base: string; params: QueryParam[] } => {
+    if (!fullUrl) {
+      return { base: "", params: [] };
+    }
+
     // Only use URL API if it's a valid absolute URL
-    if (fullUrl && (fullUrl.startsWith('http://') || fullUrl.startsWith('https://'))) {
+    if (
+      fullUrl &&
+      (fullUrl.startsWith("http://") || fullUrl.startsWith("https://"))
+    ) {
       try {
         const urlObj = new URL(fullUrl);
         const base = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
@@ -190,7 +373,7 @@ export function ApiClient() {
     }
 
     // Manual parsing for relative URLs or invalid URLs
-    const queryIndex = fullUrl.indexOf('?');
+    const queryIndex = fullUrl.indexOf("?");
     if (queryIndex >= 0) {
       const base = fullUrl.substring(0, queryIndex);
       const queryString = fullUrl.substring(queryIndex + 1);
@@ -206,13 +389,14 @@ export function ApiClient() {
 
   // Compute the full URL with query parameters for display
   // Always use urlInput if it exists (even if empty string), only fall back to computed URL if urlInput is null/undefined
-  const displayUrl = urlInput !== undefined && urlInput !== null
-    ? urlInput
-    : (() => {
-      if (!baseUrl && !url) return '';
-      const currentBase = baseUrl || url.split('?')[0];
-      return buildUrlWithQueryParams(currentBase, queryParams);
-    })();
+  const displayUrl =
+    urlInput !== undefined && urlInput !== null
+      ? urlInput
+      : (() => {
+          if (!baseUrl && !url) return "";
+          const currentBase = baseUrl || url.split("?")[0];
+          return buildUrlWithQueryParams(currentBase, queryParams);
+        })();
 
   // Track if user is actively typing (to prevent interference)
   const isTypingRef = useRef(false);
@@ -225,12 +409,12 @@ export function ApiClient() {
     }
 
     // If urlInput is empty, clear state immediately (no debounce needed)
-    if (urlInput === '') {
+    if (urlInput === "") {
       isTypingRef.current = false;
       // Clear state if input is empty
-      if (url !== '') {
-        setUrl('');
-        setBaseUrl('');
+      if (url !== "") {
+        setUrl("");
+        setBaseUrl("");
       }
       return;
     }
@@ -248,7 +432,7 @@ export function ApiClient() {
       isTypingRef.current = false;
       try {
         // Only parse if urlInput is not empty and looks like a valid URL
-        if (!urlInput || urlInput.trim() === '') {
+        if (!urlInput || urlInput.trim() === "") {
           urlDebounceTimeoutRef.current = null;
           return;
         }
@@ -256,7 +440,7 @@ export function ApiClient() {
         const { base, params } = parseUrl(urlInput.trim());
 
         // Validate that base is not empty or just whitespace
-        if (!base || base.trim() === '') {
+        if (!base || base.trim() === "") {
           urlDebounceTimeoutRef.current = null;
           return;
         }
@@ -265,10 +449,10 @@ export function ApiClient() {
         setUrl(urlInput.trim());
         // Only update queryParams if we found params in the URL
         if (params.length > 0) {
-          setQueryParams([...params, { key: '', value: '', enabled: true }]);
+          setQueryParams([...params, { key: "", value: "", enabled: true }]);
         }
       } catch (err) {
-        console.error('Failed to parse URL:', err);
+        console.error("Failed to parse URL:", err);
       }
       urlDebounceTimeoutRef.current = null;
     }, 500);
@@ -287,7 +471,12 @@ export function ApiClient() {
     // 2. User is not actively typing
     // 3. urlInput matches the current url (meaning user finished typing and it was parsed)
     // 4. urlInput is not empty (don't override empty input)
-    if (baseUrl && !isTypingRef.current && urlInput === url && urlInput !== '') {
+    if (
+      baseUrl &&
+      !isTypingRef.current &&
+      urlInput === url &&
+      urlInput !== ""
+    ) {
       const newUrl = buildUrlWithQueryParams(baseUrl, queryParams);
       if (newUrl !== url && newUrl !== urlInput) {
         setUrl(newUrl);
@@ -306,9 +495,9 @@ export function ApiClient() {
       urlDebounceTimeoutRef.current = null;
     }
     // If user clears the input, also clear the underlying state
-    if (newUrl === '') {
-      setBaseUrl('');
-      setUrl('');
+    if (newUrl === "") {
+      setBaseUrl("");
+      setUrl("");
     }
   };
 
@@ -317,38 +506,54 @@ export function ApiClient() {
   const [error, setError] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
-  const [importExportMode, setImportExportMode] = useState<'import' | 'export'>('import');
-  const [importExportType, setImportExportType] = useState<'swagger' | 'postman' | 'curl' | undefined>(undefined);
+  const [importExportMode, setImportExportMode] = useState<"import" | "export">(
+    "import",
+  );
+  const [importExportType, setImportExportType] = useState<
+    "swagger" | "postman" | "curl" | undefined
+  >(undefined);
   const [requests, setRequests] = useState<SavedApiRequest[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
-  const [requestName, setRequestName] = useState<string>('');
+  const [requestName, setRequestName] = useState<string>("");
+  const [saving, setSaving] = useState(false);
   // Tab system - track open tabs (like Postman)
   const [openTabs, setOpenTabs] = useState<string[]>([]); // Array of request IDs
   const [activeTab, setActiveTab] = useState<string | null>(null); // Currently active tab
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['Today', 'Yesterday', 'This Week']));
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    new Set(["Today", "Yesterday", "This Week"]),
+  );
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(),
+  );
   const [showSidebar, setShowSidebar] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderName, setNewFolderName] = useState("");
   const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
-  const [highlightedRequestId, setHighlightedRequestId] = useState<string | null>(null);
+  const [highlightedRequestId, setHighlightedRequestId] = useState<
+    string | null
+  >(null);
   const [variables, setVariables] = useState<Variable[]>([]);
   const [showVariablesManager, setShowVariablesManager] = useState(false);
-  const [focusedHeaderIndex, setFocusedHeaderIndex] = useState<number | null>(null);
+  const [focusedHeaderIndex, setFocusedHeaderIndex] = useState<number | null>(
+    null,
+  );
   const [environments, setEnvironments] = useState<Environment[]>([]);
-  const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
+  const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(
+    null,
+  );
   const [showEnvironmentsManager, setShowEnvironmentsManager] = useState(false);
   const [requestHistory, setRequestHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([]);
   const [showConsole, setShowConsole] = useState(false);
-  const [preRequestScript, setPreRequestScript] = useState<string>('');
-  const [testScript, setTestScript] = useState<string>('');
+  const [preRequestScript, setPreRequestScript] = useState<string>("");
+  const [testScript, setTestScript] = useState<string>("");
   const [showTestExamples, setShowTestExamples] = useState<boolean>(false);
-  const [showPreRequestExamples, setShowPreRequestExamples] = useState<boolean>(false);
+  const [showPreRequestExamples, setShowPreRequestExamples] =
+    useState<boolean>(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(256); // Default 256px (w-64)
   const [requestWidth, setRequestWidth] = useState<number>(50); // Percentage of available space
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -361,14 +566,14 @@ export function ApiClient() {
   // Load resize settings from localStorage
   const loadResizeSettings = () => {
     try {
-      const stored = localStorage.getItem('devbench-api-resize');
+      const stored = localStorage.getItem("devbench-api-resize");
       if (stored) {
         const settings = JSON.parse(stored);
         if (settings.sidebarWidth) setSidebarWidth(settings.sidebarWidth);
         if (settings.requestWidth) setRequestWidth(settings.requestWidth);
       }
     } catch (err) {
-      console.error('Failed to load resize settings:', err);
+      console.error("Failed to load resize settings:", err);
     }
   };
 
@@ -378,11 +583,14 @@ export function ApiClient() {
       const settings: any = {};
       if (sidebar !== undefined) settings.sidebarWidth = sidebar;
       if (request !== undefined) settings.requestWidth = request;
-      const existing = localStorage.getItem('devbench-api-resize');
+      const existing = localStorage.getItem("devbench-api-resize");
       const current = existing ? JSON.parse(existing) : {};
-      localStorage.setItem('devbench-api-resize', JSON.stringify({ ...current, ...settings }));
+      localStorage.setItem(
+        "devbench-api-resize",
+        JSON.stringify({ ...current, ...settings }),
+      );
     } catch (err) {
-      console.error('Failed to save resize settings:', err);
+      console.error("Failed to save resize settings:", err);
     }
   };
 
@@ -400,10 +608,15 @@ export function ApiClient() {
   useEffect(() => {
     return () => {
       // Save console logs before unmount as a safety measure
-      if (consoleLogs.length > 0 && (window as any).electronAPI?.apiClient?.saveConsoleLogs) {
-        (window as any).electronAPI.apiClient.saveConsoleLogs(consoleLogs).catch((err: any) => {
-          console.error('Failed to save console logs on unmount:', err);
-        });
+      if (
+        consoleLogs.length > 0 &&
+        (window as any).electronAPI?.apiClient?.saveConsoleLogs
+      ) {
+        (window as any).electronAPI.apiClient
+          .saveConsoleLogs(consoleLogs)
+          .catch((err: any) => {
+            console.error("Failed to save console logs on unmount:", err);
+          });
       }
     };
   }, [consoleLogs]);
@@ -412,21 +625,45 @@ export function ApiClient() {
   const loadConsoleLogs = async () => {
     try {
       if ((window as any).electronAPI?.apiClient?.getConsoleLogs) {
-        const result = await (window as any).electronAPI.apiClient.getConsoleLogs();
+        const result = await (
+          window as any
+        ).electronAPI.apiClient.getConsoleLogs();
         if (result.success) {
           setConsoleLogs(result.logs || []);
         }
       }
     } catch (err) {
-      console.error('Failed to load console logs:', err);
+      console.error("Failed to load console logs:", err);
     }
   };
 
   // Load environments from file system
+  const persistEnvironmentState = async (
+    envs: Environment[],
+    activeId: string | null,
+  ) => {
+    const payload = { environments: envs, activeEnvironmentId: activeId };
+    localStorage.setItem("devbench-api-environments", JSON.stringify(payload));
+    if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
+      await (window as any).electronAPI.apiClient.saveEnvironments(payload);
+    }
+  };
+
+  const handleSetActiveEnvironment = async (id: string | null) => {
+    setActiveEnvironmentId(id);
+    try {
+      await persistEnvironmentState(environments, id);
+    } catch (err) {
+      console.error("Failed to save active environment:", err);
+    }
+  };
+
   const loadEnvironments = async () => {
     try {
       if ((window as any).electronAPI?.apiClient?.getEnvironments) {
-        const result = await (window as any).electronAPI.apiClient.getEnvironments();
+        const result = await (
+          window as any
+        ).electronAPI.apiClient.getEnvironments();
         if (result.success) {
           setEnvironments(result.environments || []);
           setActiveEnvironmentId(result.activeEnvironmentId || null);
@@ -434,7 +671,7 @@ export function ApiClient() {
         }
       }
       // Fallback to localStorage for migration
-      const stored = localStorage.getItem('devbench-api-environments');
+      const stored = localStorage.getItem("devbench-api-environments");
       if (stored) {
         const parsed = JSON.parse(stored);
         setEnvironments(parsed.environments || []);
@@ -448,51 +685,48 @@ export function ApiClient() {
         }
       }
     } catch (err) {
-      console.error('Failed to load environments:', err);
+      console.error("Failed to load environments:", err);
     }
   };
 
   // Save environments to file system
-  const saveEnvironments = async (env: Omit<Environment, 'createdAt' | 'updatedAt'>) => {
+  const saveEnvironments = async (
+    env: Omit<Environment, "createdAt" | "updatedAt">,
+  ) => {
     try {
-      const existing = environments.find(e => e.id === env.id);
+      const existing = environments.find((e) => e.id === env.id);
       const updated: Environment = existing
         ? { ...existing, ...env, updatedAt: new Date().toISOString() }
-        : { ...env, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        : {
+            ...env,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
 
       const updatedEnvs = existing
-        ? environments.map(e => e.id === env.id ? updated : e)
+        ? environments.map((e) => (e.id === env.id ? updated : e))
         : [...environments, updated];
 
       setEnvironments(updatedEnvs);
 
-      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
-        await (window as any).electronAPI.apiClient.saveEnvironments({
-          environments: updatedEnvs,
-          activeEnvironmentId,
-        });
-      }
+      await persistEnvironmentState(updatedEnvs, activeEnvironmentId);
     } catch (err) {
-      console.error('Failed to save environment:', err);
+      console.error("Failed to save environment:", err);
     }
   };
 
   // Delete environment
   const deleteEnvironment = async (id: string) => {
     try {
-      const updated = environments.filter(e => e.id !== id);
-      const newActiveId = activeEnvironmentId === id ? null : activeEnvironmentId;
+      const updated = environments.filter((e) => e.id !== id);
+      const newActiveId =
+        activeEnvironmentId === id ? null : activeEnvironmentId;
       setEnvironments(updated);
       setActiveEnvironmentId(newActiveId);
 
-      if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
-        await (window as any).electronAPI.apiClient.saveEnvironments({
-          environments: updated,
-          activeEnvironmentId: newActiveId,
-        });
-      }
+      await persistEnvironmentState(updated, newActiveId);
     } catch (err) {
-      console.error('Failed to delete environment:', err);
+      console.error("Failed to delete environment:", err);
     }
   };
 
@@ -507,7 +741,7 @@ export function ApiClient() {
         }
       }
       // Fallback to localStorage for migration
-      const stored = localStorage.getItem('devbench-api-history');
+      const stored = localStorage.getItem("devbench-api-history");
       if (stored) {
         const parsed = JSON.parse(stored);
         setRequestHistory(parsed);
@@ -517,7 +751,7 @@ export function ApiClient() {
         }
       }
     } catch (err) {
-      console.error('Failed to load request history:', err);
+      console.error("Failed to load request history:", err);
     }
   };
 
@@ -525,12 +759,13 @@ export function ApiClient() {
   const addToHistory = async (entry: HistoryEntry) => {
     const updated = [entry, ...requestHistory].slice(0, 1000); // Keep last 1000 requests
     setRequestHistory(updated);
+    localStorage.setItem("devbench-api-history", JSON.stringify(updated));
 
     if ((window as any).electronAPI?.apiClient?.saveHistory) {
       try {
         await (window as any).electronAPI.apiClient.saveHistory(updated);
       } catch (err) {
-        console.error('Failed to save history to file system:', err);
+        console.error("Failed to save history to file system:", err);
       }
     }
   };
@@ -538,12 +773,13 @@ export function ApiClient() {
   // Clear request history
   const clearHistory = async () => {
     setRequestHistory([]);
+    localStorage.setItem("devbench-api-history", JSON.stringify([]));
 
     if ((window as any).electronAPI?.apiClient?.saveHistory) {
       try {
         await (window as any).electronAPI.apiClient.saveHistory([]);
       } catch (err) {
-        console.error('Failed to clear history in file system:', err);
+        console.error("Failed to clear history in file system:", err);
       }
     }
   };
@@ -554,13 +790,13 @@ export function ApiClient() {
       try {
         await (window as any).electronAPI.apiClient.saveConsoleLogs(logs);
       } catch (err) {
-        console.error('Failed to save console logs to file system:', err);
+        console.error("Failed to save console logs to file system:", err);
       }
     }
   };
 
   // Add console log and save to file system immediately
-  const addConsoleLog = async (log: Omit<ConsoleLog, 'id' | 'timestamp'>) => {
+  const addConsoleLog = async (log: Omit<ConsoleLog, "id" | "timestamp">) => {
     const newLog: ConsoleLog = {
       ...log,
       id: `log-${Date.now()}-${Math.random()}`,
@@ -574,9 +810,11 @@ export function ApiClient() {
     // Save immediately to file system (await like history and environments)
     if ((window as any).electronAPI?.apiClient?.saveConsoleLogs) {
       try {
-        await (window as any).electronAPI.apiClient.saveConsoleLogs(updatedLogs);
+        await (window as any).electronAPI.apiClient.saveConsoleLogs(
+          updatedLogs,
+        );
       } catch (err: any) {
-        console.error('Failed to save console log:', err);
+        console.error("Failed to save console log:", err);
       }
     }
   };
@@ -590,7 +828,7 @@ export function ApiClient() {
       try {
         await (window as any).electronAPI.apiClient.saveConsoleLogs([]);
       } catch (err: any) {
-        console.error('Failed to clear console logs in file system:', err);
+        console.error("Failed to clear console logs in file system:", err);
       }
     }
   };
@@ -604,10 +842,14 @@ export function ApiClient() {
         saveResizeSettings(newWidth, undefined);
       }
       if (isResizingRequest) {
-        const container = requestResizeRef.current?.parentElement?.parentElement;
+        const container =
+          requestResizeRef.current?.parentElement?.parentElement;
         if (container) {
           const containerWidth = container.clientWidth;
-          const newRequestWidth = Math.max(20, Math.min(80, (e.clientX / containerWidth) * 100));
+          const newRequestWidth = Math.max(
+            20,
+            Math.min(80, (e.clientX / containerWidth) * 100),
+          );
           setRequestWidth(newRequestWidth);
           saveResizeSettings(undefined, newRequestWidth);
         }
@@ -620,17 +862,17 @@ export function ApiClient() {
     };
 
     if (isResizingSidebar || isResizingRequest) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
     }
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
   }, [isResizingSidebar, isResizingRequest]);
 
@@ -642,7 +884,7 @@ export function ApiClient() {
   // reload variables if the folderId actually changed (not on every field edit)
   useEffect(() => {
     if (selectedRequest) {
-      const request = requests.find(r => r.id === selectedRequest);
+      const request = requests.find((r) => r.id === selectedRequest);
       const folderId = request?.folderId;
       // Only reload if folderId actually changed
       if (lastVariablesFolderIdRef.current !== folderId) {
@@ -675,32 +917,42 @@ export function ApiClient() {
         try {
           const result = await (window as any).electronAPI.apiClient.get();
           if (result.success && result.requests && result.requests.length > 0) {
-            setRequests(result.requests);
+            const normalized = result.requests.map(normalizeSavedRequest);
+            setRequests(normalized);
             // Also update localStorage for backward compatibility
-            localStorage.setItem('devbench-api-requests', JSON.stringify(result.requests));
+            localStorage.setItem(
+              "devbench-api-requests",
+              JSON.stringify(normalized),
+            );
             return;
           }
         } catch (err) {
-          console.warn('Failed to load from file storage, falling back to localStorage:', err);
+          console.warn(
+            "Failed to load from file storage, falling back to localStorage:",
+            err,
+          );
         }
       }
 
       // Fallback to localStorage
-      const stored = localStorage.getItem('devbench-api-requests');
+      const stored = localStorage.getItem("devbench-api-requests");
       if (stored) {
         const parsed = JSON.parse(stored);
-        setRequests(parsed);
+        const normalized = Array.isArray(parsed)
+          ? parsed.map(normalizeSavedRequest)
+          : [];
+        setRequests(normalized);
         // Migrate to file storage if we have data in localStorage
-        if ((window as any).electronAPI?.apiClient?.save && parsed.length > 0) {
+        if ((window as any).electronAPI?.apiClient?.save && normalized.length > 0) {
           try {
-            await (window as any).electronAPI.apiClient.save(parsed);
+            await (window as any).electronAPI.apiClient.save(normalized);
           } catch (err) {
-            console.warn('Failed to migrate to file storage:', err);
+            console.warn("Failed to migrate to file storage:", err);
           }
         }
       }
     } catch (err) {
-      console.error('Failed to load API requests:', err);
+      console.error("Failed to load API requests:", err);
     }
   };
 
@@ -714,7 +966,7 @@ export function ApiClient() {
       });
       setFolders(loadedFolders);
     } catch (err) {
-      console.error('Failed to load folders:', err);
+      console.error("Failed to load folders:", err);
     }
   };
 
@@ -723,32 +975,39 @@ export function ApiClient() {
       const vars = await getVariables(folderId);
       setVariables(vars);
     } catch (err) {
-      console.error('Failed to load variables:', err);
+      console.error("Failed to load variables:", err);
     }
   };
 
   // Get current folder ID for variable validation
   const currentFolderId = selectedRequest
-    ? requests.find(r => r.id === selectedRequest)?.folderId || null
+    ? requests.find((r) => r.id === selectedRequest)?.folderId || null
     : null;
 
   // Helper function to get all variables including environment variables
   const getAllVariablesForValidation = (): Variable[] => {
     const currentFolderId = selectedRequest
-      ? requests.find(r => r.id === selectedRequest)?.folderId || null
+      ? requests.find((r) => r.id === selectedRequest)?.folderId || null
       : null;
 
-    const activeEnv = environments.find(e => e.id === activeEnvironmentId);
+    const activeEnv = environments.find((e) => e.id === activeEnvironmentId);
     const envVars = activeEnv?.variables || {};
 
     // Combine variables: environment variables override folder/global variables
     const allVars = [...variables];
     Object.entries(envVars).forEach(([key, value]) => {
-      const existing = allVars.find(v => v.key === key && v.folderId === currentFolderId);
+      const existing = allVars.find(
+        (v) => v.key === key && v.folderId === currentFolderId,
+      );
       if (existing) {
         existing.value = value;
       } else {
-        allVars.push({ key, value, folderId: currentFolderId || null, id: `env-${key}` });
+        allVars.push({
+          key,
+          value,
+          folderId: currentFolderId || null,
+          id: `env-${key}`,
+        });
       }
     });
 
@@ -757,69 +1016,75 @@ export function ApiClient() {
 
   // Helper function to get border color class based on variable validity
   const getVariableBorderClass = (text: string): string => {
-    if (!text) return '';
+    if (!text) return "";
     const allVars = getAllVariablesForValidation();
     const currentFolderId = selectedRequest
-      ? requests.find(r => r.id === selectedRequest)?.folderId || null
+      ? requests.find((r) => r.id === selectedRequest)?.folderId || null
       : null;
     const isValid = areVariablesValid(text, allVars, currentFolderId);
     return isValid
-      ? 'border-green-500/50 focus:border-green-500'
-      : 'border-red-500/50 focus:border-red-500';
+      ? "border-[var(--color-semantic-success)]/50 focus:border-[var(--color-semantic-success)]"
+      : "border-[var(--color-semantic-error)]/50 focus:border-[var(--color-semantic-error)]";
+  };
+
+  const persistRequestList = async (updatedRequests: SavedApiRequest[]) => {
+    if ((window as any).electronAPI?.apiClient?.save) {
+      const result = await (window as any).electronAPI.apiClient.save(
+        updatedRequests,
+      );
+      if (!result.success) {
+        throw new Error(result.error || "Failed to sync requests to storage");
+      }
+    }
+
+    localStorage.setItem(
+      "devbench-api-requests",
+      JSON.stringify(updatedRequests),
+    );
+    setRequests(updatedRequests);
   };
 
   const saveRequests = async (updatedRequests: SavedApiRequest[]) => {
     try {
-      // Save to localStorage first for immediate UI update
-      localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
-      setRequests(updatedRequests);
-
-      // Save each request individually to file storage and trigger Git sync
-      if ((window as any).electronAPI?.apiClient?.saveRequest) {
-        try {
-          // Save all requests in parallel
-          const savePromises = updatedRequests.map(request =>
-            (window as any).electronAPI.apiClient.saveRequest(request)
-          );
-          const results = await Promise.all(savePromises);
-
-          // Check for any failures
-          const failures = results.filter(r => !r.success);
-          if (failures.length > 0) {
-            console.error('Failed to save some API requests to file storage:', failures);
-          }
-        } catch (err) {
-          console.error('Failed to save API requests to file storage:', err);
-        }
-      }
+      await persistRequestList(updatedRequests);
     } catch (err) {
-      console.error('Failed to save API requests:', err);
+      console.error("Failed to save API requests:", err);
     }
   };
 
   const saveRequest = async (request: SavedApiRequest) => {
     try {
       // Update local state
-      const updatedRequests = requests.map(r => r.id === request.id ? request : r);
-      if (!updatedRequests.find(r => r.id === request.id)) {
+      const updatedRequests = requests.map((r) =>
+        r.id === request.id ? request : r,
+      );
+      if (!updatedRequests.find((r) => r.id === request.id)) {
         updatedRequests.push(request);
       }
-      localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
+      localStorage.setItem(
+        "devbench-api-requests",
+        JSON.stringify(updatedRequests),
+      );
       setRequests(updatedRequests);
 
       // Save individual request to file storage
       if ((window as any).electronAPI?.apiClient?.saveRequest) {
         try {
-          const result = await (window as any).electronAPI.apiClient.saveRequest(request);
+          const result = await (
+            window as any
+          ).electronAPI.apiClient.saveRequest(request);
           if (!result.success) {
-            console.error('Failed to save API request to file storage:', result.error);
+            console.error(
+              "Failed to save API request to file storage:",
+              result.error,
+            );
           }
         } catch (err) {
-          console.error('Failed to save API request to file storage:', err);
+          console.error("Failed to save API request to file storage:", err);
         }
       }
     } catch (err) {
-      console.error('Failed to save API request:', err);
+      console.error("Failed to save API request:", err);
     }
   };
 
@@ -836,35 +1101,38 @@ export function ApiClient() {
       });
       if (newFolder) {
         loadFolders();
-        setNewFolderName('');
+        setNewFolderName("");
         setShowNewFolderInput(false);
         // Auto-expand the new folder
         if (newFolder.id) {
-          setExpandedFolders(prev => new Set(prev).add(newFolder.id!));
+          setExpandedFolders((prev) => new Set(prev).add(newFolder.id!));
         }
         if ((window as any).showToast) {
-          (window as any).showToast('Folder created successfully', 'success');
+          (window as any).showToast("Folder created successfully", "success");
         }
       } else {
         if ((window as any).showToast) {
-          (window as any).showToast('Failed to create folder', 'error');
+          (window as any).showToast("Failed to create folder", "error");
         }
       }
     } catch (err) {
-      console.error('Failed to create folder:', err);
+      console.error("Failed to create folder:", err);
       if ((window as any).showToast) {
-        (window as any).showToast('Failed to create folder', 'error');
+        (window as any).showToast("Failed to create folder", "error");
       }
     }
   };
 
   const handleDeleteFolder = async (folderId: string) => {
-    if (!confirm('Delete this folder? Items inside will be moved to root.')) return;
+    if (!confirm("Delete this folder? Items inside will be moved to root."))
+      return;
     try {
       const success = deleteFolder(folderId);
       if (success) {
-        const requestsInFolder = requests.filter(r => r.folderId === folderId);
-        const updatedRequests = requests.map(r => {
+        const requestsInFolder = requests.filter(
+          (r) => r.folderId === folderId,
+        );
+        const updatedRequests = requests.map((r) => {
           if (r.folderId === folderId) {
             return { ...r, folderId: null };
           }
@@ -875,22 +1143,22 @@ export function ApiClient() {
         await loadRequests();
       }
     } catch (err) {
-      console.error('Failed to delete folder:', err);
+      console.error("Failed to delete folder:", err);
     }
   };
 
   const handleDragStart = (e: React.DragEvent, requestId: string) => {
     e.stopPropagation();
     setDraggedRequestId(requestId);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('application/x-request-id', requestId);
-    e.dataTransfer.setData('text/plain', '');
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-request-id", requestId);
+    e.dataTransfer.setData("text/plain", "");
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = "move";
     setDragOverFolderId(folderId);
   };
 
@@ -903,25 +1171,29 @@ export function ApiClient() {
     }
   };
 
-  const handleDrop = async (e: React.DragEvent, targetFolderId: string | null) => {
+  const handleDrop = async (
+    e: React.DragEvent,
+    targetFolderId: string | null,
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverFolderId(null);
 
-    const requestId = e.dataTransfer.getData('application/x-request-id') || draggedRequestId;
+    const requestId =
+      e.dataTransfer.getData("application/x-request-id") || draggedRequestId;
     if (!requestId) {
       setDraggedRequestId(null);
       return;
     }
 
-    const request = requests.find(r => r.id === requestId);
+    const request = requests.find((r) => r.id === requestId);
     if (!request || request.folderId === targetFolderId) {
       setDraggedRequestId(null);
       return;
     }
 
     try {
-      const updatedRequests = requests.map(r => {
+      const updatedRequests = requests.map((r) => {
         if (r.id === requestId) {
           return { ...r, folderId: targetFolderId };
         }
@@ -932,19 +1204,19 @@ export function ApiClient() {
       // Sync the moved request to backend
       // Sync removed - using file storage
       if (targetFolderId) {
-        setExpandedFolders(prev => new Set(prev).add(targetFolderId));
+        setExpandedFolders((prev) => new Set(prev).add(targetFolderId));
       }
     } catch (err) {
-      console.error('Failed to move request:', err);
+      console.error("Failed to move request:", err);
     } finally {
       setDraggedRequestId(null);
     }
   };
 
   const toggleFolder = (folderId: string) => {
-    const normalizedId = String(folderId || '');
+    const normalizedId = String(folderId || "");
     if (!normalizedId) return;
-    setExpandedFolders(prev => {
+    setExpandedFolders((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(normalizedId)) {
         newSet.delete(normalizedId);
@@ -957,14 +1229,17 @@ export function ApiClient() {
 
   const getRequestsInFolder = (folderId: string | null) => {
     if (folderId === null) {
-      return requests.filter(request => request.folderId === null || request.folderId === undefined);
+      return requests.filter(
+        (request) =>
+          request.folderId === null || request.folderId === undefined,
+      );
     } else {
-      return requests.filter(request => request.folderId === folderId);
+      return requests.filter((request) => request.folderId === folderId);
     }
   };
 
   const toggleGroup = (label: string) => {
-    setExpandedGroups(prev => {
+    setExpandedGroups((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(label)) {
         newSet.delete(label);
@@ -975,11 +1250,45 @@ export function ApiClient() {
     });
   };
 
+  const applySavedRequestToState = (request: SavedApiRequest) => {
+    setRequestName(request.name ?? "");
+    setMethod(request.method ?? "GET");
+
+    const requestUrl = request.url ?? "";
+    const { base, params } = parseUrl(requestUrl);
+    setBaseUrl(base);
+    setUrl(requestUrl);
+    setUrlInput(requestUrl);
+
+    if (request.queryParams && request.queryParams.length > 0) {
+      setQueryParams(request.queryParams);
+    } else if (params.length > 0) {
+      setQueryParams([...params, { key: "", value: "", enabled: true }]);
+    } else {
+      setQueryParams([{ key: "", value: "", enabled: true }]);
+    }
+
+    setHeadersList(parseHeadersToList(request.headers ?? "{}"));
+    setBodyType(request.bodyType);
+    setBody(request.body || "");
+    setFormData(
+      request.formData || [{ key: "", value: "", type: "text", enabled: true }],
+    );
+    setBinaryData(request.binaryData || "");
+    setRequestTimeout(request.timeout);
+    setResponse(request.response || null);
+    setAuthConfig(request.authConfig || { type: "none" });
+    setPreRequestScript(request.preRequestScript || "");
+    setTestScript(request.testScript || "");
+    setFollowRedirects(request.followRedirects ?? true);
+    setSslVerification(request.sslVerification ?? true);
+  };
+
   const handleSelectRequest = (requestId: string) => {
-    const request = requests.find(r => r.id === requestId);
+    const request = requests.find((r) => r.id === requestId);
     if (request) {
       // Add to tabs if not already open
-      setOpenTabs(prev => {
+      setOpenTabs((prev) => {
         if (!prev.includes(requestId)) {
           return [...prev, requestId];
         }
@@ -987,100 +1296,166 @@ export function ApiClient() {
       });
       setActiveTab(requestId);
       setSelectedRequest(requestId);
-      setRequestName(request.name);
-      setMethod(request.method);
-
-      // Parse URL to extract base URL and query parameters
-      const requestUrl = request.url;
-      const { base, params } = parseUrl(requestUrl);
-      setBaseUrl(base);
-      setUrl(requestUrl);
-      setUrlInput(requestUrl); // Update input value
-
-      // Use saved queryParams if available, otherwise use parsed ones
-      if (request.queryParams && request.queryParams.length > 0) {
-        setQueryParams(request.queryParams);
-      } else if (params.length > 0) {
-        setQueryParams([...params, { key: '', value: '', enabled: true }]);
-      } else {
-        setQueryParams([{ key: '', value: '', enabled: true }]);
-      }
-
-      // Parse headers string and convert to headersList
-      try {
-        const parsedHeaders = typeof request.headers === 'string'
-          ? JSON.parse(request.headers)
-          : request.headers;
-        const headersArray: Header[] = Object.entries(parsedHeaders || {}).map(([key, value]) => ({
-          key,
-          value: String(value),
-          enabled: true
-        }));
-        if (headersArray.length > 0) {
-          setHeadersList([...headersArray, { key: '', value: '', enabled: true }]);
-        } else {
-          setHeadersList([{ key: '', value: '', enabled: true }]);
-        }
-      } catch (e) {
-        setHeadersList([{ key: '', value: '', enabled: true }]);
-      }
-
-      setBodyType(request.bodyType);
-      setBody(request.body || '');
-      setFormData(request.formData || [{ key: '', value: '', type: 'text', enabled: true }]);
-      setBinaryData(request.binaryData || '');
-      setRequestTimeout(request.timeout);
-      setResponse(request.response || null);
+      applySavedRequestToState(request);
     }
   };
 
-  const handleDeleteRequest = async (requestId: string) => {
-    if (!confirm('Delete this request?')) return;
+  const buildSavedRequestFromState = (
+    existing: SavedApiRequest | null,
+    id: string,
+  ): SavedApiRequest => {
+    const trimmedName = (requestName ?? "").trim();
+    const urlBase = baseUrl || url.split("?")[0] || url;
+    const defaultName = urlBase
+      ? `${method} ${urlBase.replace(/^https?:\/\//, "").slice(0, 48)}`
+      : "Untitled Request";
+    const name = trimmedName || existing?.name || defaultName;
+
+    return {
+      id,
+      name,
+      method,
+      url: urlBase || url,
+      headers: buildHeadersJson(headersList),
+      queryParams,
+      bodyType,
+      body: bodyType === "json" || bodyType === "raw" ? body : undefined,
+      formData:
+        bodyType === "form-data" || bodyType === "x-www-form-urlencoded"
+          ? formData
+          : undefined,
+      binaryData: bodyType === "binary" ? binaryData : undefined,
+      timeout,
+      authConfig,
+      followRedirects,
+      sslVerification,
+      preRequestScript: preRequestScript || undefined,
+      testScript: testScript || undefined,
+      response: response || existing?.response,
+      folderId: existing?.folderId ?? null,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const isTabUnsaved = (tabId: string): boolean => {
+    if (tabId.startsWith("temp-")) return true;
+    if (activeTab !== tabId) return false;
+
+    const saved = requests.find((r) => r.id === tabId);
+    if (!saved) return true;
+
+    const draft = buildSavedRequestFromState(saved, tabId);
+    return (
+      requestDefinitionComparable(draft) !==
+      requestDefinitionComparable(saved)
+    );
+  };
+
+  const handleSaveRequest = async () => {
+    if (!url && !baseUrl) {
+      setError("Enter a URL before saving.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
     try {
-      // Delete from file storage
-      if ((window as any).electronAPI?.apiClient?.deleteRequest) {
-        try {
-          const result = await (window as any).electronAPI.apiClient.deleteRequest(requestId);
-          if (!result.success) {
-            console.error('Failed to delete API request from file storage:', result.error);
-          }
-        } catch (err) {
-          console.error('Failed to delete API request from file storage:', err);
+      let requestId = selectedRequest;
+      let existing: SavedApiRequest | null = null;
+
+      if (requestId) {
+        existing = requests.find((r) => r.id === requestId) ?? null;
+      } else if (activeTab?.startsWith("temp-")) {
+        requestId = activeTab.replace("temp-", "");
+      } else if (activeTab) {
+        existing = requests.find((r) => r.id === activeTab) ?? null;
+        if (existing) {
+          requestId = activeTab;
         }
       }
 
-      // Update local state
-      const updatedRequests = requests.filter(r => r.id !== requestId);
-      localStorage.setItem('devbench-api-requests', JSON.stringify(updatedRequests));
+      if (!requestId) {
+        requestId = Date.now().toString();
+      }
+
+      if (!existing) {
+        existing = requests.find((r) => r.id === requestId) ?? null;
+      }
+
+      const savedRequest = buildSavedRequestFromState(existing, requestId);
+      const updatedRequests = existing
+        ? requests.map((r) => (r.id === requestId ? savedRequest : r))
+        : [...requests, savedRequest];
+
       setRequests(updatedRequests);
+      await saveRequest(savedRequest);
+
+      if (activeTab?.startsWith("temp-")) {
+        setOpenTabs((prev) =>
+          prev.map((tabId) => (tabId === activeTab ? requestId : tabId)),
+        );
+      } else if (!openTabs.includes(requestId)) {
+        setOpenTabs((prev) => [...prev, requestId]);
+      }
+
+      setActiveTab(requestId);
+      setSelectedRequest(requestId);
+      setRequestName(savedRequest.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save request");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        void handleSaveRequest();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  const handleDeleteRequest = async (requestId: string) => {
+    if (!confirm("Delete this request?")) return;
+    try {
+      const updatedRequests = requests.filter((r) => r.id !== requestId);
+      await persistRequestList(updatedRequests);
 
       // Close tab if open
-      setOpenTabs(prev => {
-        const newTabs = prev.filter(id => id !== requestId);
+      setOpenTabs((prev) => {
+        const newTabs = prev.filter((id) => id !== requestId);
         if (newTabs.length === 0) {
           setActiveTab(null);
           setSelectedRequest(null);
-          setRequestName('');
-          setMethod('GET');
-          setUrl('');
-          setBaseUrl('');
-          setUrlInput('');
-          setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
-          setQueryParams([{ key: '', value: '', enabled: true }]);
-          setBodyType('json');
-          setBody('');
-          setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
-          setBinaryData('');
+          setRequestName("");
+          setMethod("GET");
+          setUrl("");
+          setBaseUrl("");
+          setUrlInput("");
+          setHeadersList([
+            { key: "Content-Type", value: "application/json", enabled: true },
+          ]);
+          setQueryParams([{ key: "", value: "", enabled: true }]);
+          setBodyType("json");
+          setBody("");
+          setFormData([{ key: "", value: "", type: "text", enabled: true }]);
+          setBinaryData("");
           setResponse(null);
-          setAuthConfig({ type: 'none' });
+          setAuthConfig({ type: "none" });
         } else if (activeTab === requestId) {
           // If closing active tab, switch to the previous one or first one
           const currentIndex = prev.indexOf(requestId);
           const newActiveIndex = currentIndex > 0 ? currentIndex - 1 : 0;
           const newActiveId = newTabs[newActiveIndex];
           setActiveTab(newActiveId);
-          if (newActiveId && !newActiveId.startsWith('temp-')) {
-            const request = updatedRequests.find(r => r.id === newActiveId);
+          if (newActiveId && !newActiveId.startsWith("temp-")) {
+            const request = updatedRequests.find((r) => r.id === newActiveId);
             if (request) {
               handleSelectRequest(newActiveId);
             }
@@ -1091,82 +1466,121 @@ export function ApiClient() {
 
       if (selectedRequest === requestId) {
         setSelectedRequest(null);
-        setRequestName('');
-        setMethod('GET');
-        setUrl('');
-        setBaseUrl('');
-        setUrlInput(''); // Clear input value
-        setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
-        setQueryParams([{ key: '', value: '', enabled: true }]);
-        setBodyType('json');
-        setBody('');
-        setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
-        setBinaryData('');
+        setRequestName("");
+        setMethod("GET");
+        setUrl("");
+        setBaseUrl("");
+        setUrlInput(""); // Clear input value
+        setHeadersList([
+          { key: "Content-Type", value: "application/json", enabled: true },
+        ]);
+        setQueryParams([{ key: "", value: "", enabled: true }]);
+        setBodyType("json");
+        setBody("");
+        setFormData([{ key: "", value: "", type: "text", enabled: true }]);
+        setBinaryData("");
         setResponse(null);
-        setAuthConfig({ type: 'none' });
+        setAuthConfig({ type: "none" });
       }
     } catch (err) {
-      console.error('Failed to delete request:', err);
+      console.error("Failed to delete request:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to delete request",
+      );
     }
   };
 
   const handleCreateRequest = () => {
     // Create a new temporary request ID for the tab
     const newRequestId = `temp-${Date.now()}`;
-    setOpenTabs(prev => [...prev, newRequestId]);
+    setOpenTabs((prev) => [...prev, newRequestId]);
     setActiveTab(newRequestId);
     setSelectedRequest(null);
-    setRequestName('');
-    setMethod('GET');
-    setUrl('');
-    setBaseUrl('');
-    setUrlInput(''); // Clear input value
-    setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
-    setQueryParams([{ key: '', value: '', enabled: true }]);
-    setBodyType('json');
-    setBody('');
-    setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
-    setBinaryData('');
+    setRequestName("");
+    setMethod("GET");
+    setUrl("");
+    setBaseUrl("");
+    setUrlInput(""); // Clear input value
+    setHeadersList([
+      { key: "Content-Type", value: "application/json", enabled: true },
+    ]);
+    setQueryParams([{ key: "", value: "", enabled: true }]);
+    setBodyType("json");
+    setBody("");
+    setFormData([{ key: "", value: "", type: "text", enabled: true }]);
+    setBinaryData("");
     setResponse(null);
-    setAuthConfig({ type: 'none' });
+    setAuthConfig({ type: "none" });
+    setPreRequestScript("");
+    setTestScript("");
   };
-
 
   // Update Content-Type header when body type changes
   useEffect(() => {
-    const contentTypeIndex = headersList.findIndex(h => h.key.toLowerCase() === 'content-type');
+    const contentTypeIndex = headersList.findIndex(
+      (h) => h.key.toLowerCase() === "content-type",
+    );
 
-    if (bodyType === 'json') {
+    if (bodyType === "json") {
       if (contentTypeIndex >= 0) {
         const updated = [...headersList];
-        updated[contentTypeIndex] = { ...updated[contentTypeIndex], value: 'application/json', enabled: true };
+        updated[contentTypeIndex] = {
+          ...updated[contentTypeIndex],
+          value: "application/json",
+          enabled: true,
+        };
         setHeadersList(updated);
       } else {
-        setHeadersList([...headersList, { key: 'Content-Type', value: 'application/json', enabled: true }]);
+        setHeadersList([
+          ...headersList,
+          { key: "Content-Type", value: "application/json", enabled: true },
+        ]);
       }
-    } else if (bodyType === 'x-www-form-urlencoded') {
+    } else if (bodyType === "x-www-form-urlencoded") {
       if (contentTypeIndex >= 0) {
         const updated = [...headersList];
-        updated[contentTypeIndex] = { ...updated[contentTypeIndex], value: 'application/x-www-form-urlencoded', enabled: true };
+        updated[contentTypeIndex] = {
+          ...updated[contentTypeIndex],
+          value: "application/x-www-form-urlencoded",
+          enabled: true,
+        };
         setHeadersList(updated);
       } else {
-        setHeadersList([...headersList, { key: 'Content-Type', value: 'application/x-www-form-urlencoded', enabled: true }]);
+        setHeadersList([
+          ...headersList,
+          {
+            key: "Content-Type",
+            value: "application/x-www-form-urlencoded",
+            enabled: true,
+          },
+        ]);
       }
-    } else if (bodyType === 'form-data') {
+    } else if (bodyType === "form-data") {
       if (contentTypeIndex >= 0) {
         const updated = [...headersList];
         updated.splice(contentTypeIndex, 1);
         setHeadersList(updated);
       }
-    } else if (bodyType === 'binary') {
+    } else if (bodyType === "binary") {
       if (contentTypeIndex >= 0) {
         const updated = [...headersList];
-        updated[contentTypeIndex] = { ...updated[contentTypeIndex], value: 'application/octet-stream', enabled: true };
+        updated[contentTypeIndex] = {
+          ...updated[contentTypeIndex],
+          value: "application/octet-stream",
+          enabled: true,
+        };
         setHeadersList(updated);
       } else {
-        setHeadersList([...headersList, { key: 'Content-Type', value: 'application/octet-stream', enabled: true }]);
+        setHeadersList([
+          ...headersList,
+          {
+            key: "Content-Type",
+            value: "application/octet-stream",
+            enabled: true,
+          },
+        ]);
       }
-    } else if (bodyType === 'none') {
+    } else if (bodyType === "none") {
       if (contentTypeIndex >= 0) {
         const updated = [...headersList];
         updated.splice(contentTypeIndex, 1);
@@ -1174,7 +1588,6 @@ export function ApiClient() {
       }
     }
   }, [bodyType]);
-
 
   const handleRequest = async () => {
     setLoading(true);
@@ -1184,21 +1597,28 @@ export function ApiClient() {
     try {
       // Get current folder ID for variable resolution
       const currentFolderId = selectedRequest
-        ? requests.find(r => r.id === selectedRequest)?.folderId || null
+        ? requests.find((r) => r.id === selectedRequest)?.folderId || null
         : null;
 
       // Get active environment variables
-      const activeEnv = environments.find(e => e.id === activeEnvironmentId);
+      const activeEnv = environments.find((e) => e.id === activeEnvironmentId);
       let envVars = { ...(activeEnv?.variables || {}) };
 
       // Combine variables: environment variables override folder/global variables
       const allVariables = [...variables];
       Object.entries(envVars).forEach(([key, value]) => {
-        const existing = allVariables.find(v => v.key === key && v.folderId === currentFolderId);
+        const existing = allVariables.find(
+          (v) => v.key === key && v.folderId === currentFolderId,
+        );
         if (existing) {
           existing.value = value;
         } else {
-          allVariables.push({ key, value, folderId: currentFolderId || null, id: `env-${key}` });
+          allVariables.push({
+            key,
+            value,
+            folderId: currentFolderId || null,
+            id: `env-${key}`,
+          });
         }
       });
 
@@ -1209,74 +1629,141 @@ export function ApiClient() {
       // Replace variables in headers
       let parsedHeaders: Record<string, string> = {};
       headersList
-        .filter(h => h.enabled && h.key)
-        .forEach(h => {
-          const resolvedKey = replaceVariables(h.key, variables, currentFolderId);
-          const resolvedValue = replaceVariables(h.value, variables, currentFolderId);
+        .filter((h) => h.enabled && h.key)
+        .forEach((h) => {
+          const resolvedKey = replaceVariables(
+            h.key,
+            allVariables,
+            currentFolderId,
+          );
+          const resolvedValue = replaceVariables(
+            h.value,
+            allVariables,
+            currentFolderId,
+          );
           parsedHeaders[resolvedKey] = resolvedValue;
         });
 
       // Replace variables in auth config
       let resolvedAuthConfig = { ...authConfig };
-      if (authConfig.type === 'bearer' && authConfig.bearerToken) {
-        resolvedAuthConfig.bearerToken = replaceVariables(authConfig.bearerToken, variables, currentFolderId);
-        parsedHeaders['Authorization'] = `Bearer ${resolvedAuthConfig.bearerToken}`;
-      } else if (authConfig.type === 'basic' && authConfig.basicUsername && authConfig.basicPassword) {
-        const resolvedUsername = replaceVariables(authConfig.basicUsername, variables, currentFolderId);
-        const resolvedPassword = replaceVariables(authConfig.basicPassword, variables, currentFolderId);
-        const credentials = btoa(`${resolvedUsername}:${resolvedPassword}`);
-        parsedHeaders['Authorization'] = `Basic ${credentials}`;
-      } else if (authConfig.type === 'apikey' && authConfig.apiKeyKey && authConfig.apiKeyValue) {
-        const resolvedKey = replaceVariables(authConfig.apiKeyKey, variables, currentFolderId);
-        const resolvedValue = replaceVariables(authConfig.apiKeyValue, variables, currentFolderId);
-        if (authConfig.apiKeyLocation === 'header') {
+      if (authConfig.type === "bearer" && authConfig.bearerToken) {
+        resolvedAuthConfig.bearerToken = replaceVariables(
+          authConfig.bearerToken,
+          allVariables,
+          currentFolderId,
+        );
+        parsedHeaders["Authorization"] =
+          `Bearer ${resolvedAuthConfig.bearerToken}`;
+      } else if (
+        authConfig.type === "basic" &&
+        authConfig.basicUsername &&
+        authConfig.basicPassword
+      ) {
+        const resolvedUsername = replaceVariables(
+          authConfig.basicUsername,
+          allVariables,
+          currentFolderId,
+        );
+        const resolvedPassword = replaceVariables(
+          authConfig.basicPassword,
+          allVariables,
+          currentFolderId,
+        );
+        const credentials = encodeBasicAuthCredentials(
+          resolvedUsername,
+          resolvedPassword,
+        );
+        parsedHeaders["Authorization"] = `Basic ${credentials}`;
+      } else if (
+        authConfig.type === "apikey" &&
+        authConfig.apiKeyKey &&
+        authConfig.apiKeyValue
+      ) {
+        const resolvedKey = replaceVariables(
+          authConfig.apiKeyKey,
+          allVariables,
+          currentFolderId,
+        );
+        const resolvedValue = replaceVariables(
+          authConfig.apiKeyValue,
+          allVariables,
+          currentFolderId,
+        );
+        if (authConfig.apiKeyLocation === "header") {
           parsedHeaders[resolvedKey] = resolvedValue;
         }
-      } else if (authConfig.type === 'oauth2' && authConfig.oauth2Token) {
-        const resolvedToken = replaceVariables(authConfig.oauth2Token, variables, currentFolderId);
-        parsedHeaders['Authorization'] = `Bearer ${resolvedToken}`;
+      } else if (authConfig.type === "oauth2" && authConfig.oauth2Token) {
+        const resolvedToken = replaceVariables(
+          authConfig.oauth2Token,
+          allVariables,
+          currentFolderId,
+        );
+        parsedHeaders["Authorization"] = `Bearer ${resolvedToken}`;
       }
 
       // Replace variables in query params
       const resolvedQueryParams = queryParams
-        .filter(p => p.enabled && p.key)
-        .map(p => ({
-          key: replaceVariables(p.key, variables, currentFolderId),
-          value: replaceVariables(p.value, variables, currentFolderId),
-          enabled: p.enabled
+        .filter((p) => p.enabled && p.key)
+        .map((p) => ({
+          key: replaceVariables(p.key, allVariables, currentFolderId),
+          value: replaceVariables(p.value, allVariables, currentFolderId),
+          enabled: p.enabled,
         }));
 
       // Add API key to query params if needed
-      if (authConfig.type === 'apikey' && authConfig.apiKeyLocation === 'query' && authConfig.apiKeyKey && authConfig.apiKeyValue) {
-        const resolvedKey = replaceVariables(authConfig.apiKeyKey, variables, currentFolderId);
-        const resolvedValue = replaceVariables(authConfig.apiKeyValue, variables, currentFolderId);
-        const apiKeyParam = resolvedQueryParams.find(p => p.key === resolvedKey);
+      if (
+        authConfig.type === "apikey" &&
+        authConfig.apiKeyLocation === "query" &&
+        authConfig.apiKeyKey &&
+        authConfig.apiKeyValue
+      ) {
+        const resolvedKey = replaceVariables(
+          authConfig.apiKeyKey,
+          allVariables,
+          currentFolderId,
+        );
+        const resolvedValue = replaceVariables(
+          authConfig.apiKeyValue,
+          allVariables,
+          currentFolderId,
+        );
+        const apiKeyParam = resolvedQueryParams.find(
+          (p) => p.key === resolvedKey,
+        );
         if (!apiKeyParam) {
-          resolvedQueryParams.push({ key: resolvedKey, value: resolvedValue, enabled: true });
+          resolvedQueryParams.push({
+            key: resolvedKey,
+            value: resolvedValue,
+            enabled: true,
+          });
         }
       }
 
       // Replace variables in body
       let resolvedBody = body;
-      if (bodyType === 'json' || bodyType === 'raw') {
+      if (bodyType === "json" || bodyType === "raw") {
         if (body) {
           try {
             const parsed = JSON.parse(body);
-            resolvedBody = JSON.stringify(replaceVariablesInObject(parsed, variables, currentFolderId), null, 2);
+            resolvedBody = JSON.stringify(
+              replaceVariablesInObject(parsed, allVariables, currentFolderId),
+              null,
+              2,
+            );
           } catch {
-            resolvedBody = replaceVariables(body, variables, currentFolderId);
+            resolvedBody = replaceVariables(body, allVariables, currentFolderId);
           }
         }
       }
 
       // Replace variables in form data
       const resolvedFormData = formData
-        .filter(f => f.enabled && f.key)
-        .map(f => ({
-          key: replaceVariables(f.key, variables, currentFolderId),
-          value: replaceVariables(f.value, variables, currentFolderId),
+        .filter((f) => f.enabled && f.key)
+        .map((f) => ({
+          key: replaceVariables(f.key, allVariables, currentFolderId),
+          value: replaceVariables(f.value, allVariables, currentFolderId),
           type: f.type,
-          enabled: f.enabled
+          enabled: f.enabled,
         }));
 
       const request: ApiRequest = {
@@ -1286,34 +1773,71 @@ export function ApiClient() {
         queryParams: resolvedQueryParams,
         bodyType,
         timeout: timeout || 30000,
+        followRedirects,
+        sslVerification,
       };
 
-      if (bodyType === 'json' || bodyType === 'raw') {
+      if (bodyType === "json" || bodyType === "raw") {
         request.body = resolvedBody || undefined;
-      } else if (bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') {
+      } else if (
+        bodyType === "form-data" ||
+        bodyType === "x-www-form-urlencoded"
+      ) {
         request.formData = resolvedFormData;
-      } else if (bodyType === 'binary') {
-        request.binaryData = replaceVariables(binaryData, variables, currentFolderId);
+      } else if (bodyType === "binary") {
+        request.binaryData = replaceVariables(
+          binaryData,
+          allVariables,
+          currentFolderId,
+        );
       }
 
       // Execute pre-request script if available
       if (preRequestScript) {
         clearConsole();
-        addConsoleLog({ type: 'info', message: 'Executing pre-request script...' });
+        addConsoleLog({
+          type: "info",
+          message: "Executing pre-request script...",
+        });
         const scriptContext: ScriptContext = {
-          request: { url: resolvedUrl, method, headers: { ...parsedHeaders }, body: request.body },
+          request: {
+            url: resolvedUrl,
+            method,
+            headers: { ...parsedHeaders },
+            body: request.body,
+          },
           environment: envVars,
           globals: {},
           console: {
-            log: (...args) => addConsoleLog({ type: 'log', message: args.map(String).join(' ') }),
-            error: (...args) => addConsoleLog({ type: 'error', message: args.map(String).join(' ') }),
-            warn: (...args) => addConsoleLog({ type: 'warn', message: args.map(String).join(' ') }),
-            info: (...args) => addConsoleLog({ type: 'info', message: args.map(String).join(' ') }),
+            log: (...args) =>
+              addConsoleLog({
+                type: "log",
+                message: args.map(String).join(" "),
+              }),
+            error: (...args) =>
+              addConsoleLog({
+                type: "error",
+                message: args.map(String).join(" "),
+              }),
+            warn: (...args) =>
+              addConsoleLog({
+                type: "warn",
+                message: args.map(String).join(" "),
+              }),
+            info: (...args) =>
+              addConsoleLog({
+                type: "info",
+                message: args.map(String).join(" "),
+              }),
           },
         };
         const scriptResult = executeScript(preRequestScript, scriptContext);
-        scriptResult.logs.forEach(log => {
-          const type = log.startsWith('[ERROR]') ? 'error' : log.startsWith('[WARN]') ? 'warn' : 'log';
+        scriptResult.logs.forEach((log) => {
+          const type = log.startsWith("[ERROR]")
+            ? "error"
+            : log.startsWith("[WARN]")
+              ? "warn"
+              : "log";
           addConsoleLog({ type, message: log });
         });
 
@@ -1321,46 +1845,84 @@ export function ApiClient() {
         if (scriptResult.updatedContext) {
           // Update environment variables
           if (scriptResult.updatedContext.environment) {
-            envVars = { ...envVars, ...scriptResult.updatedContext.environment };
+            envVars = {
+              ...envVars,
+              ...scriptResult.updatedContext.environment,
+            };
             // Add environment variables to the variables list for resolution
-            Object.entries(scriptResult.updatedContext.environment).forEach(([key, value]) => {
-              const existing = allVariables.find(v => v.key === key && v.folderId === currentFolderId);
-              if (existing) {
-                existing.value = String(value);
-              } else {
-                allVariables.push({ key, value: String(value), folderId: currentFolderId || null, id: `script-${key}-${Date.now()}` });
-              }
-            });
+            Object.entries(scriptResult.updatedContext.environment).forEach(
+              ([key, value]) => {
+                const existing = allVariables.find(
+                  (v) => v.key === key && v.folderId === currentFolderId,
+                );
+                if (existing) {
+                  existing.value = String(value);
+                } else {
+                  allVariables.push({
+                    key,
+                    value: String(value),
+                    folderId: currentFolderId || null,
+                    id: `script-${key}-${Date.now()}`,
+                  });
+                }
+              },
+            );
           }
 
           // Update URL if modified by script
           if (scriptResult.updatedContext.request?.url) {
             resolvedUrl = scriptResult.updatedContext.request.url;
             // Re-resolve variables in the new URL
-            resolvedUrl = replaceVariables(resolvedUrl, allVariables, currentFolderId);
+            resolvedUrl = replaceVariables(
+              resolvedUrl,
+              allVariables,
+              currentFolderId,
+            );
           }
 
           // Update headers if modified by script
           if (scriptResult.updatedContext.request?.headers) {
-            parsedHeaders = { ...parsedHeaders, ...scriptResult.updatedContext.request.headers };
+            parsedHeaders = {
+              ...parsedHeaders,
+              ...scriptResult.updatedContext.request.headers,
+            };
           }
 
           // Update body if modified by script
           if (scriptResult.updatedContext.request?.body !== undefined) {
-            if (bodyType === 'json' || bodyType === 'raw') {
+            if (bodyType === "json" || bodyType === "raw") {
               resolvedBody = scriptResult.updatedContext.request.body;
               // Re-resolve variables in the new body
               if (resolvedBody) {
                 try {
                   const parsed = JSON.parse(resolvedBody);
-                  resolvedBody = JSON.stringify(replaceVariablesInObject(parsed, allVariables, currentFolderId), null, 2);
+                  resolvedBody = JSON.stringify(
+                    replaceVariablesInObject(
+                      parsed,
+                      allVariables,
+                      currentFolderId,
+                    ),
+                    null,
+                    2,
+                  );
                 } catch {
-                  resolvedBody = replaceVariables(resolvedBody, allVariables, currentFolderId);
+                  resolvedBody = replaceVariables(
+                    resolvedBody,
+                    allVariables,
+                    currentFolderId,
+                  );
                 }
               }
             }
           }
         }
+      }
+
+      // Apply script mutations to the outgoing request
+      request.url = resolvedUrl;
+      request.headers = parsedHeaders;
+      if (bodyType === "json" || bodyType === "raw") {
+        request.body = resolvedBody || undefined;
       }
 
       const startTime = Date.now();
@@ -1382,236 +1944,70 @@ export function ApiClient() {
 
       // Execute test script if available
       if (testScript) {
-        addConsoleLog({ type: 'info', message: 'Executing test script...' });
+        addConsoleLog({ type: "info", message: "Executing test script..." });
         const scriptContext: ScriptContext = {
-          request: { url: resolvedUrl, method, headers: parsedHeaders, body: request.body },
-          response: { status: result.status, statusText: result.statusText, headers: result.headers, body: result.data, time: requestTime },
+          request: {
+            url: resolvedUrl,
+            method,
+            headers: parsedHeaders,
+            body: request.body,
+          },
+          response: {
+            status: result.status,
+            statusText: result.statusText,
+            headers: result.headers,
+            body: result.data,
+            time: requestTime,
+          },
           environment: envVars,
           globals: {},
           console: {
-            log: (...args) => addConsoleLog({ type: 'log', message: args.map(String).join(' ') }),
-            error: (...args) => addConsoleLog({ type: 'error', message: args.map(String).join(' ') }),
-            warn: (...args) => addConsoleLog({ type: 'warn', message: args.map(String).join(' ') }),
-            info: (...args) => addConsoleLog({ type: 'info', message: args.map(String).join(' ') }),
+            log: (...args) =>
+              addConsoleLog({
+                type: "log",
+                message: args.map(String).join(" "),
+              }),
+            error: (...args) =>
+              addConsoleLog({
+                type: "error",
+                message: args.map(String).join(" "),
+              }),
+            warn: (...args) =>
+              addConsoleLog({
+                type: "warn",
+                message: args.map(String).join(" "),
+              }),
+            info: (...args) =>
+              addConsoleLog({
+                type: "info",
+                message: args.map(String).join(" "),
+              }),
           },
         };
         const scriptResult = executeScript(testScript, scriptContext);
-        scriptResult.logs.forEach(log => {
-          const type = log.startsWith('[TEST FAIL]') || log.startsWith('[ERROR]') ? 'error' :
-            log.startsWith('[TEST PASS]') ? 'info' :
-              log.startsWith('[WARN]') ? 'warn' : 'log';
+        scriptResult.logs.forEach((log) => {
+          const type =
+            log.startsWith("[TEST FAIL]") || log.startsWith("[ERROR]")
+              ? "error"
+              : log.startsWith("[TEST PASS]")
+                ? "info"
+                : log.startsWith("[WARN]")
+                  ? "warn"
+                  : "log";
           addConsoleLog({ type, message: log });
         });
       }
-
-      let updatedRequests: SavedApiRequest[];
-      let requestToUpdate: SavedApiRequest | null = null;
-      let requestIndex = -1;
-
-      // First, check if there's a selected request - if so, update that one
-      if (selectedRequest) {
-        requestIndex = requests.findIndex(r => r.id === selectedRequest);
-        if (requestIndex >= 0) {
-          requestToUpdate = requests[requestIndex];
-        }
-      }
-
-      // If no selected request, check if a request with the same signature already exists
-      if (!requestToUpdate) {
-        // Helper function to normalize formData for comparison
-        const normalizeFormData = (fd?: FormDataField[]) => {
-          if (!fd) return undefined;
-          return fd
-            .filter(f => f.enabled && f.key)
-            .map(f => ({ key: f.key, value: f.value, type: f.type }))
-            .sort((a, b) => {
-              if (a.key !== b.key) return a.key.localeCompare(b.key);
-              return a.value.localeCompare(b.value);
-            });
-        };
-
-        // Normalize current formData for comparison
-        const normalizedFormData = normalizeFormData(
-          (bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') ? formData : undefined
-        );
-
-        const requestSignature = JSON.stringify({
-          method,
-          url,
-          headers: parsedHeaders,
-          bodyType,
-          body: bodyType === 'json' || bodyType === 'raw' ? (body || '').trim() : undefined,
-          formData: normalizedFormData,
-          binaryData: bodyType === 'binary' ? binaryData : undefined,
-        });
-
-        requestIndex = requests.findIndex(r => {
-          try {
-            const existingHeaders = JSON.parse(r.headers);
-            // Normalize existing formData for comparison
-            const existingFormData = normalizeFormData(
-              (r.bodyType === 'form-data' || r.bodyType === 'x-www-form-urlencoded') ? r.formData : undefined
-            );
-
-            const existingSignature = JSON.stringify({
-              method: r.method,
-              url: r.url,
-              headers: existingHeaders,
-              bodyType: r.bodyType,
-              body: r.bodyType === 'json' || r.bodyType === 'raw' ? (r.body || '').trim() : undefined,
-              formData: existingFormData,
-              binaryData: r.binaryData,
-            });
-            return existingSignature === requestSignature;
-          } catch {
-            return false;
-          }
-        });
-
-        if (requestIndex >= 0) {
-          requestToUpdate = requests[requestIndex];
-        }
-      }
-
-      if (requestToUpdate && requestIndex >= 0) {
-        // Update existing request instead of creating a new one
-        const updatedRequest: SavedApiRequest = {
-          ...requestToUpdate,
-          name: requestName || requestToUpdate.name || `${method} ${url}` || 'Untitled Request',
-          method,
-          url,
-          headers: JSON.stringify(parsedHeaders, null, 2),
-          bodyType,
-          body: bodyType === 'json' || bodyType === 'raw' ? body : undefined,
-          formData: bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded' ? formData : undefined,
-          binaryData: bodyType === 'binary' ? binaryData : undefined,
-          timeout,
-          response: result,
-          preRequestScript: preRequestScript || undefined,
-          testScript: testScript || undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        updatedRequests = [...requests];
-        updatedRequests[requestIndex] = updatedRequest;
-
-        // Update selected request if it was the one we updated
-        if (selectedRequest === requestToUpdate.id) {
-          setSelectedRequest(requestToUpdate.id);
-          setRequestName(updatedRequest.name);
-        }
-        // Ensure the updated request is in tabs
-        setOpenTabs(prev => {
-          if (!prev.includes(requestToUpdate.id)) {
-            return [...prev, requestToUpdate.id];
-          }
-          return prev;
-        });
-        if (activeTab !== requestToUpdate.id) {
-          setActiveTab(requestToUpdate.id);
-        }
-      } else {
-        // Create new request only if no existing request found
-        // If we have an active tab with a temp ID, use that, otherwise create new ID
-        const newRequestId = activeTab && activeTab.startsWith('temp-') ? activeTab.replace('temp-', '') : Date.now().toString();
-        const savedRequest: SavedApiRequest = {
-          id: newRequestId,
-          name: requestName || `${method} ${url}` || 'Untitled Request',
-          method,
-          url,
-          headers: JSON.stringify(parsedHeaders, null, 2),
-          bodyType,
-          body: bodyType === 'json' || bodyType === 'raw' ? body : undefined,
-          formData: bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded' ? formData : undefined,
-          binaryData: bodyType === 'binary' ? binaryData : undefined,
-          timeout,
-          response: result,
-          preRequestScript: preRequestScript || undefined,
-          testScript: testScript || undefined,
-          folderId: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        updatedRequests = [...requests, savedRequest];
-
-        // Update tabs if we had a temp tab
-        if (activeTab && activeTab.startsWith('temp-')) {
-          setOpenTabs(prev => prev.map(tabId => tabId === activeTab ? newRequestId : tabId));
-          setActiveTab(newRequestId);
-          setSelectedRequest(newRequestId);
-        } else if (!activeTab) {
-          // Add to tabs if not already there
-          setOpenTabs(prev => {
-            if (!prev.includes(newRequestId)) {
-              return [...prev, newRequestId];
-            }
-            return prev;
-          });
-          setActiveTab(newRequestId);
-          setSelectedRequest(newRequestId);
-        }
-      }
-
-      // Save the updated/created request individually
-      const requestToSync = requestToUpdate && requestIndex >= 0
-        ? updatedRequests[requestIndex]
-        : updatedRequests[updatedRequests.length - 1];
-
-      if (requestToSync) {
-        await saveRequest(requestToSync);
-      } else {
-        await saveRequests(updatedRequests);
-      }
-
-      setRequestName('');
     } catch (err) {
-      // Extract detailed error information
-      let errorMessage = 'Request failed';
+      const parsed = parseRequestError(err);
+      let errorMessage = parsed.message;
+      const code = (parsed as NodeJS.ErrnoException).code;
 
-      if (err instanceof Error) {
-        errorMessage = err.message;
+      if (code && !parsed.message.includes(code)) {
+        errorMessage = `${parsed.message} (${code})`;
+      }
 
-        // Check for status code in error
-        if ((err as any).status) {
-          errorMessage = `${(err as any).status} ${(err as any).statusText || err.message}`;
-        }
-
-        // Check for error code (like ECONNREFUSED)
-        if ((err as any).code) {
-          errorMessage = `${err.message} (${(err as any).code})`;
-        }
-
-        // Check for original error details
-        if ((err as any).originalError) {
-          const originalErr = (err as any).originalError;
-          if (originalErr.message) {
-            errorMessage = `${errorMessage} - ${originalErr.message}`;
-          }
-        }
-      } else if (typeof err === 'string') {
-        errorMessage = err;
-      } else if (err && typeof err === 'object') {
-        // Handle various error object formats
-        errorMessage = (err as any).error || (err as any).message || String(err);
-
-        // If still showing [object Object], try to extract more details
-        if (errorMessage === '[object Object]' || errorMessage.includes('[object Object]')) {
-          try {
-            // Try to get error from nested structure
-            const errorObj = (err as any).error || err;
-            if (typeof errorObj === 'object' && errorObj !== null) {
-              errorMessage = errorObj.error || errorObj.message || JSON.stringify(errorObj, null, 2);
-            } else {
-              errorMessage = JSON.stringify(err, null, 2);
-            }
-          } catch (e) {
-            errorMessage = 'Request failed - Unable to parse error details';
-          }
-        }
-
-        // Add error code if available
-        if ((err as any).code) {
-          errorMessage = `${errorMessage} (${(err as any).code})`;
-        }
+      if ((parsed as any).status) {
+        errorMessage = `${(parsed as any).status} ${(parsed as any).statusText || parsed.message}`;
       }
 
       setError(errorMessage);
@@ -1620,9 +2016,14 @@ export function ApiClient() {
     }
   };
 
-  const handleImportCurl = async (parsed: ReturnType<typeof parseCurl>, saveToFolder: boolean, folderId: string | null, requestName: string) => {
+  const handleImportCurl = async (
+    parsed: ReturnType<typeof parseCurl>,
+    saveToFolder: boolean,
+    folderId: string | null,
+    requestName: string,
+  ) => {
     if (!parsed) {
-      setError('Failed to parse curl command. Please check the format.');
+      setError("Failed to parse curl command. Please check the format.");
       return;
     }
 
@@ -1630,24 +2031,28 @@ export function ApiClient() {
     setUrl(parsed.url);
     setUrlInput(parsed.url); // Update input value
     // Convert headers object to headersList
-    const headersArray: Header[] = Object.entries(parsed.headers).map(([key, value]) => ({
-      key,
-      value: String(value),
-      enabled: true
-    }));
+    const headersArray: Header[] = Object.entries(parsed.headers).map(
+      ([key, value]) => ({
+        key,
+        value: String(value),
+        enabled: true,
+      }),
+    );
     if (headersArray.length > 0) {
-      setHeadersList([...headersArray, { key: '', value: '', enabled: true }]);
+      setHeadersList([...headersArray, { key: "", value: "", enabled: true }]);
     } else {
-      setHeadersList([{ key: '', value: '', enabled: true }]);
+      setHeadersList([{ key: "", value: "", enabled: true }]);
     }
     if (parsed.queryParams && parsed.queryParams.length > 0) {
-      setQueryParams(parsed.queryParams.map(qp => ({ ...qp, enabled: true })));
+      setQueryParams(
+        parsed.queryParams.map((qp) => ({ ...qp, enabled: true })),
+      );
     } else {
-      setQueryParams([{ key: '', value: '', enabled: true }]);
+      setQueryParams([{ key: "", value: "", enabled: true }]);
     }
     if (parsed.body) {
       setBody(parsed.body);
-      setBodyType('json');
+      setBodyType("json");
     }
 
     // If saveToFolder is true, save the request
@@ -1655,8 +2060,8 @@ export function ApiClient() {
       let defaultName = `${parsed.method} Request`;
       try {
         const urlObj = new URL(parsed.url);
-        const pathParts = urlObj.pathname.split('/').filter(p => p);
-        defaultName = `${parsed.method} ${pathParts[pathParts.length - 1] || 'Request'}`;
+        const pathParts = urlObj.pathname.split("/").filter((p) => p);
+        defaultName = `${parsed.method} ${pathParts[pathParts.length - 1] || "Request"}`;
       } catch (e) {
         // If URL parsing fails, use default name
       }
@@ -1668,16 +2073,21 @@ export function ApiClient() {
         url: parsed.url,
         headers: JSON.stringify(
           headersArray
-            .filter(h => h.enabled && h.key)
+            .filter((h) => h.enabled && h.key)
             .reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {}),
           null,
-          2
+          2,
         ),
-        queryParams: parsed.queryParams?.map(qp => ({ key: qp.key, value: qp.value, enabled: true })) || [],
-        bodyType: parsed.body ? 'json' : 'none',
-        body: parsed.body || '',
+        queryParams:
+          parsed.queryParams?.map((qp) => ({
+            key: qp.key,
+            value: qp.value,
+            enabled: true,
+          })) || [],
+        bodyType: parsed.body ? "json" : "none",
+        body: parsed.body || "",
         formData: [],
-        binaryData: '',
+        binaryData: "",
         timeout: 30000,
         folderId: folderId,
         createdAt: new Date().toISOString(),
@@ -1694,65 +2104,105 @@ export function ApiClient() {
 
   const generateCurlCommand = (): string => {
     if (!url) {
-      return '';
+      return "";
     }
 
-    const parts: string[] = ['curl'];
+    const parts: string[] = ["curl"];
 
     // Add method
-    if (method !== 'GET') {
+    if (method !== "GET") {
       parts.push(`-X ${method}`);
     }
 
     // Build URL with query parameters
     let finalUrl = url;
-    const enabledParams = queryParams.filter(p => p.enabled && p.key);
+    const enabledParams = queryParams.filter((p) => p.enabled && p.key);
 
     // Add API key to query params if needed
-    if (authConfig.type === 'apikey' && authConfig.apiKeyLocation === 'query' && authConfig.apiKeyKey && authConfig.apiKeyValue) {
-      enabledParams.push({ key: authConfig.apiKeyKey, value: authConfig.apiKeyValue, enabled: true });
+    if (
+      authConfig.type === "apikey" &&
+      authConfig.apiKeyLocation === "query" &&
+      authConfig.apiKeyKey &&
+      authConfig.apiKeyValue
+    ) {
+      enabledParams.push({
+        key: authConfig.apiKeyKey,
+        value: authConfig.apiKeyValue,
+        enabled: true,
+      });
     }
 
     if (enabledParams.length > 0) {
       try {
         const urlObj = new URL(url);
-        enabledParams.forEach(param => {
+        enabledParams.forEach((param) => {
           urlObj.searchParams.append(param.key, param.value);
         });
         finalUrl = urlObj.toString();
       } catch (e) {
         // If URL is not valid, append query params manually
-        const separator = url.includes('?') ? '&' : '?';
-        const queryString = enabledParams.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&');
+        const separator = url.includes("?") ? "&" : "?";
+        const queryString = enabledParams
+          .map(
+            (p) =>
+              `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`,
+          )
+          .join("&");
         finalUrl = `${url}${separator}${queryString}`;
       }
     }
     parts.push(`'${finalUrl.replace(/'/g, "'\\''")}'`);
 
     // Add headers
-    const enabledHeaders = headersList.filter(h => h.enabled && h.key);
+    const enabledHeaders = headersList.filter((h) => h.enabled && h.key);
 
     // Add auth headers from authConfig
-    if (authConfig.type === 'bearer' && authConfig.bearerToken) {
-      enabledHeaders.push({ key: 'Authorization', value: `Bearer ${authConfig.bearerToken}`, enabled: true });
-    } else if (authConfig.type === 'basic' && authConfig.basicUsername && authConfig.basicPassword) {
-      const credentials = btoa(`${authConfig.basicUsername}:${authConfig.basicPassword}`);
-      enabledHeaders.push({ key: 'Authorization', value: `Basic ${credentials}`, enabled: true });
-    } else if (authConfig.type === 'apikey' && authConfig.apiKeyKey && authConfig.apiKeyValue) {
-      if (authConfig.apiKeyLocation === 'header') {
-        enabledHeaders.push({ key: authConfig.apiKeyKey, value: authConfig.apiKeyValue, enabled: true });
+    if (authConfig.type === "bearer" && authConfig.bearerToken) {
+      enabledHeaders.push({
+        key: "Authorization",
+        value: `Bearer ${authConfig.bearerToken}`,
+        enabled: true,
+      });
+    } else if (
+      authConfig.type === "basic" &&
+      authConfig.basicUsername &&
+      authConfig.basicPassword
+    ) {
+      const credentials = btoa(
+        `${authConfig.basicUsername}:${authConfig.basicPassword}`,
+      );
+      enabledHeaders.push({
+        key: "Authorization",
+        value: `Basic ${credentials}`,
+        enabled: true,
+      });
+    } else if (
+      authConfig.type === "apikey" &&
+      authConfig.apiKeyKey &&
+      authConfig.apiKeyValue
+    ) {
+      if (authConfig.apiKeyLocation === "header") {
+        enabledHeaders.push({
+          key: authConfig.apiKeyKey,
+          value: authConfig.apiKeyValue,
+          enabled: true,
+        });
       }
-    } else if (authConfig.type === 'oauth2' && authConfig.oauth2Token) {
-      enabledHeaders.push({ key: 'Authorization', value: `Bearer ${authConfig.oauth2Token}`, enabled: true });
+    } else if (authConfig.type === "oauth2" && authConfig.oauth2Token) {
+      enabledHeaders.push({
+        key: "Authorization",
+        value: `Bearer ${authConfig.oauth2Token}`,
+        enabled: true,
+      });
     }
 
-    enabledHeaders.forEach(header => {
+    enabledHeaders.forEach((header) => {
       const escapedValue = header.value.replace(/'/g, "'\\''");
       parts.push(`-H '${header.key}: ${escapedValue}'`);
     });
 
     // Add body
-    if (bodyType === 'json' && body) {
+    if (bodyType === "json" && body) {
       try {
         // Try to minify JSON
         const parsed = JSON.parse(body);
@@ -1761,14 +2211,14 @@ export function ApiClient() {
       } catch {
         parts.push(`-d '${body.replace(/'/g, "'\\''")}'`);
       }
-    } else if (bodyType === 'raw' && body) {
+    } else if (bodyType === "raw" && body) {
       parts.push(`-d '${body.replace(/'/g, "'\\''")}'`);
-    } else if (bodyType === 'x-www-form-urlencoded' && body) {
+    } else if (bodyType === "x-www-form-urlencoded" && body) {
       parts.push(`-d '${body.replace(/'/g, "'\\''")}'`);
-    } else if (bodyType === 'form-data' && formData.length > 0) {
-      const enabledFormData = formData.filter(f => f.enabled && f.key);
-      enabledFormData.forEach(field => {
-        if (field.type === 'file') {
+    } else if (bodyType === "form-data" && formData.length > 0) {
+      const enabledFormData = formData.filter((f) => f.enabled && f.key);
+      enabledFormData.forEach((field) => {
+        if (field.type === "file") {
           // For files, we can't include the actual file content in cURL easily
           // Just show a placeholder
           parts.push(`-F '${field.key}=@<file>'`);
@@ -1777,19 +2227,19 @@ export function ApiClient() {
           parts.push(`-F '${field.key}=${escapedValue}'`);
         }
       });
-    } else if (bodyType === 'binary' && binaryData) {
+    } else if (bodyType === "binary" && binaryData) {
       // For binary data, we'd typically use --data-binary with a file
       // Since we have base64, we'll skip it or show a placeholder
       parts.push(`--data-binary '@<file>'`);
     }
 
-    return parts.join(' \\\n  ');
+    return parts.join(" \\\n ");
   };
 
   const handleCopyAsCurl = async () => {
     const curlCommand = generateCurlCommand();
     if (!curlCommand) {
-      setError('Please enter a URL first');
+      setError("Please enter a URL first");
       return;
     }
 
@@ -1799,11 +2249,13 @@ export function ApiClient() {
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
     } catch (err) {
-      setError('Failed to copy to clipboard');
+      setError("Failed to copy to clipboard");
     }
   };
 
-  const handleImportSwaggerPostman = async (importedRequests: ParsedSwaggerRequest[] | ParsedPostmanRequest[]) => {
+  const handleImportSwaggerPostman = async (
+    importedRequests: ParsedSwaggerRequest[] | ParsedPostmanRequest[],
+  ) => {
     try {
       setLoading(true);
       setError(null);
@@ -1811,9 +2263,16 @@ export function ApiClient() {
       // Extract folders from requests
       const folderMap = new Map<string, string>();
       importedRequests.forEach((req) => {
-        const folderKey = 'tag' in req && req.tag ? req.tag : ('folderPath' in req && req.folderPath ? req.folderPath : null);
+        const folderKey =
+          "tag" in req && req.tag
+            ? req.tag
+            : "folderPath" in req && req.folderPath
+              ? req.folderPath
+              : null;
         if (folderKey) {
-          const folderName = folderKey.includes('/') ? folderKey.split('/').pop() || folderKey : folderKey;
+          const folderName = folderKey.includes("/")
+            ? folderKey.split("/").pop() || folderKey
+            : folderKey;
           if (!folderMap.has(folderKey)) {
             folderMap.set(folderKey, folderName);
           }
@@ -1823,7 +2282,7 @@ export function ApiClient() {
       // Create folders if needed
       const createdFolders: Record<string, string> = {};
       for (const [key, name] of folderMap.entries()) {
-        const existingFolder = folders.find(f => f.name === name);
+        const existingFolder = folders.find((f) => f.name === name);
         if (!existingFolder) {
           const newFolder = saveFolder({ name, parentId: null });
           if (newFolder && newFolder.id) {
@@ -1836,7 +2295,12 @@ export function ApiClient() {
 
       // Convert imported requests to SavedApiRequest format
       const newRequests: SavedApiRequest[] = importedRequests.map((req) => {
-        const folderKey = 'tag' in req && req.tag ? req.tag : ('folderPath' in req && req.folderPath ? req.folderPath : null);
+        const folderKey =
+          "tag" in req && req.tag
+            ? req.tag
+            : "folderPath" in req && req.folderPath
+              ? req.folderPath
+              : null;
         const folderId = folderKey ? createdFolders[folderKey] || null : null;
 
         return {
@@ -1849,7 +2313,7 @@ export function ApiClient() {
           bodyType: req.bodyType,
           body: req.body,
           formData: [],
-          binaryData: '',
+          binaryData: "",
           timeout: 30000,
           folderId: folderId,
           createdAt: new Date().toISOString(),
@@ -1871,16 +2335,15 @@ export function ApiClient() {
         setSelectedRequest(newRequests[0].id);
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to import requests');
-      console.error('Import error:', err);
+      setError(err.message || "Failed to import requests");
+      console.error("Import error:", err);
     } finally {
       setLoading(false);
     }
   };
 
-
   const addQueryParam = () => {
-    setQueryParams([...queryParams, { key: '', value: '', enabled: true }]);
+    setQueryParams([...queryParams, { key: "", value: "", enabled: true }]);
   };
 
   const removeQueryParam = (index: number) => {
@@ -1894,7 +2357,7 @@ export function ApiClient() {
   };
 
   const addHeader = () => {
-    setHeadersList([...headersList, { key: '', value: '', enabled: true }]);
+    setHeadersList([...headersList, { key: "", value: "", enabled: true }]);
   };
 
   const removeHeader = (index: number) => {
@@ -1908,14 +2371,20 @@ export function ApiClient() {
   };
 
   const addFormDataField = () => {
-    setFormData([...formData, { key: '', value: '', type: 'text', enabled: true }]);
+    setFormData([
+      ...formData,
+      { key: "", value: "", type: "text", enabled: true },
+    ]);
   };
 
   const removeFormDataField = (index: number) => {
     setFormData(formData.filter((_, i) => i !== index));
   };
 
-  const updateFormDataField = (index: number, field: Partial<FormDataField>) => {
+  const updateFormDataField = (
+    index: number,
+    field: Partial<FormDataField>,
+  ) => {
     const updated = [...formData];
     updated[index] = { ...updated[index], ...field };
     setFormData(updated);
@@ -1925,7 +2394,7 @@ export function ApiClient() {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = reader.result as string;
-      updateFormDataField(index, { value: base64, type: 'file' });
+      updateFormDataField(index, { value: base64, type: "file" });
     };
     reader.readAsDataURL(file);
   };
@@ -1939,21 +2408,26 @@ export function ApiClient() {
   };
 
   const renderBodyEditor = () => {
-    if (bodyType === 'none') {
+    if (bodyType === "none") {
       return (
-        <div className="h-full flex items-center justify-center text-gray-500 dark:text-gray-400 text-sm">
+        <div className="h-full flex items-center justify-center text-[var(--color-text-tertiary)] text-sm">
           This request does not have a body
         </div>
       );
     }
 
-    if (bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') {
+    if (bodyType === "form-data" || bodyType === "x-www-form-urlencoded") {
       return (
         <div className="h-full overflow-auto p-4">
           <div className="space-y-2">
-            <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-600 dark:text-gray-400 mb-2 pb-2 border-b border-gray-200 dark:border-gray-800">
+            <div className="grid grid-cols-12 gap-2 text-xs font-medium text-[var(--color-text-secondary)] mb-2 pb-2 border-b border-[var(--color-border)]">
               <div className="col-span-1 flex items-center">
-                <input type="checkbox" checked={true} disabled className="w-3 h-3" />
+                <input
+                  type="checkbox"
+                  checked={true}
+                  disabled
+                  className="w-3 h-3"
+                />
               </div>
               <div className="col-span-3">Key</div>
               <div className="col-span-2">Type</div>
@@ -1966,7 +2440,9 @@ export function ApiClient() {
                   <input
                     type="checkbox"
                     checked={field.enabled}
-                    onChange={(e) => updateFormDataField(index, { enabled: e.target.checked })}
+                    onChange={(e) =>
+                      updateFormDataField(index, { enabled: e.target.checked })
+                    }
                     className="w-3 h-3"
                   />
                 </div>
@@ -1974,7 +2450,9 @@ export function ApiClient() {
                   <input
                     type="text"
                     value={field.key}
-                    onChange={(e) => updateFormDataField(index, { key: e.target.value })}
+                    onChange={(e) =>
+                      updateFormDataField(index, { key: e.target.value })
+                    }
                     placeholder="Key"
                     className="w-full input-field text-xs py-1 px-2"
                   />
@@ -1983,8 +2461,11 @@ export function ApiClient() {
                   <select
                     value={field.type}
                     onChange={(e) => {
-                      const newType = e.target.value as 'text' | 'file';
-                      updateFormDataField(index, { type: newType, value: newType === 'file' ? '' : field.value });
+                      const newType = e.target.value as "text" | "file";
+                      updateFormDataField(index, {
+                        type: newType,
+                        value: newType === "file" ? "" : field.value,
+                      });
                     }}
                     className="w-full input-field text-xs py-1 px-2"
                   >
@@ -1993,7 +2474,7 @@ export function ApiClient() {
                   </select>
                 </div>
                 <div className="col-span-5">
-                  {field.type === 'file' ? (
+                  {field.type === "file" ? (
                     <div className="flex items-center gap-2">
                       <input
                         type="file"
@@ -2009,10 +2490,10 @@ export function ApiClient() {
                         htmlFor={`file-${index}`}
                         className="btn-secondary text-xs py-1 px-2 cursor-pointer"
                       >
-                        {field.value ? 'Change File' : 'Choose File'}
+                        {field.value ? "Change File" : "Choose File"}
                       </label>
                       {field.value && (
-                        <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1">
+                        <span className="text-xs text-[var(--color-text-secondary)] truncate flex-1">
                           File selected
                         </span>
                       )}
@@ -2021,7 +2502,9 @@ export function ApiClient() {
                     <input
                       type="text"
                       value={field.value}
-                      onChange={(e) => updateFormDataField(index, { value: e.target.value })}
+                      onChange={(e) =>
+                        updateFormDataField(index, { value: e.target.value })
+                      }
                       placeholder="Value"
                       className="w-full input-field text-xs py-1 px-2"
                     />
@@ -2030,7 +2513,7 @@ export function ApiClient() {
                 <div className="col-span-1">
                   <button
                     onClick={() => removeFormDataField(index)}
-                    className="text-red-500 hover:text-red-700 dark:hover:text-red-400 text-xs"
+                    className="text-[var(--color-semantic-error)] hover:text-[var(--color-semantic-error)]  text-xs"
                   >
                     ✕
                   </button>
@@ -2048,7 +2531,7 @@ export function ApiClient() {
       );
     }
 
-    if (bodyType === 'binary') {
+    if (bodyType === "binary") {
       return (
         <div className="h-full flex flex-col p-4">
           <div className="mb-2">
@@ -2066,11 +2549,11 @@ export function ApiClient() {
               htmlFor="binary-file"
               className="btn-secondary text-xs py-2 px-3 cursor-pointer inline-block"
             >
-              {binaryData ? 'Change File' : 'Choose File'}
+              {binaryData ? "Change File" : "Choose File"}
             </label>
             {binaryData && (
               <button
-                onClick={() => setBinaryData('')}
+                onClick={() => setBinaryData("")}
                 className="btn-secondary text-xs py-2 px-3 ml-2"
               >
                 Clear
@@ -2079,10 +2562,11 @@ export function ApiClient() {
           </div>
           {binaryData && (
             <div className="flex-1 overflow-auto">
-              <div className="text-xs text-gray-600 dark:text-gray-400 mb-2">
-                File loaded ({Math.round((binaryData.length * 3) / 4 / 1024)} KB)
+              <div className="text-xs text-[var(--color-text-secondary)] mb-2">
+                File loaded ({Math.round((binaryData.length * 3) / 4 / 1024)}{" "}
+                KB)
               </div>
-              <div className="bg-gray-100 dark:bg-gray-800 rounded p-2 font-mono text-xs break-all">
+              <div className="bg-[var(--color-muted)] rounded p-2 font-mono text-xs break-all">
                 {binaryData.substring(0, 200)}...
               </div>
             </div>
@@ -2096,14 +2580,15 @@ export function ApiClient() {
       <Editor
         height="100%"
         width="100%"
-        defaultLanguage={bodyType === 'json' ? 'json' : 'plaintext'}
+        defaultLanguage={bodyType === "json" ? "json" : "plaintext"}
         value={body}
-        onChange={(value) => setBody(value || '')}
-        theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+        onChange={(value) => setBody(value || "")}
+        theme={getMonacoTheme()}
+        beforeMount={onMonacoBeforeMount}
         options={{
           minimap: { enabled: false },
           fontSize: 12,
-          wordWrap: 'on',
+          wordWrap: "on",
           padding: { top: 0, bottom: 0 },
           automaticLayout: true,
           scrollBeyondLastLine: false,
@@ -2119,18 +2604,23 @@ export function ApiClient() {
   const filterRequests = (requests: SavedApiRequest[]) => {
     if (!searchQuery.trim()) return requests;
     const query = searchQuery.toLowerCase();
-    return requests.filter(req => {
+    return requests.filter((req) => {
       // Search in name, URL, method
-      if (req.name?.toLowerCase().includes(query) ||
+      if (
+        req.name?.toLowerCase().includes(query) ||
         req.url?.toLowerCase().includes(query) ||
-        req.method?.toLowerCase().includes(query)) {
+        req.method?.toLowerCase().includes(query)
+      ) {
         return true;
       }
 
       // Search in headers
       if (req.headers) {
         try {
-          const headers = typeof req.headers === 'string' ? JSON.parse(req.headers) : req.headers;
+          const headers =
+            typeof req.headers === "string"
+              ? JSON.parse(req.headers)
+              : req.headers;
           const headersStr = JSON.stringify(headers).toLowerCase();
           if (headersStr.includes(query)) {
             return true;
@@ -2150,9 +2640,10 @@ export function ApiClient() {
 
       // Search in response data
       if (req.response?.data) {
-        const responseData = typeof req.response.data === 'string'
-          ? req.response.data
-          : JSON.stringify(req.response.data);
+        const responseData =
+          typeof req.response.data === "string"
+            ? req.response.data
+            : JSON.stringify(req.response.data);
         if (responseData.toLowerCase().includes(query)) {
           return true;
         }
@@ -2160,7 +2651,9 @@ export function ApiClient() {
 
       // Search in response headers
       if (req.response?.headers) {
-        const responseHeadersStr = JSON.stringify(req.response.headers).toLowerCase();
+        const responseHeadersStr = JSON.stringify(
+          req.response.headers,
+        ).toLowerCase();
         if (responseHeadersStr.includes(query)) {
           return true;
         }
@@ -2171,32 +2664,39 @@ export function ApiClient() {
   };
 
   // Filter folders and their requests
-  const filteredFolders = folders.filter(folder => {
+  const filteredFolders = folders.filter((folder) => {
     if (!searchQuery.trim()) return true;
-    const folderRequests = getRequestsInFolder(String(folder.id || ''));
-    return folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      filterRequests(folderRequests).length > 0;
+    const folderRequests = getRequestsInFolder(String(folder.id || ""));
+    return (
+      folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      filterRequests(folderRequests).length > 0
+    );
   });
 
   // Filter root requests
-  const filteredRootRequestsGrouped = rootRequestsGrouped.map(group => ({
-    ...group,
-    items: filterRequests(group.items as SavedApiRequest[])
-  })).filter(group => group.items.length > 0);
+  const filteredRootRequestsGrouped = rootRequestsGrouped
+    .map((group) => ({
+      ...group,
+      items: filterRequests(group.items as SavedApiRequest[]),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-gradient-to-r from-gray-50/30 to-transparent dark:from-gray-800/30 backdrop-blur-sm flex-shrink-0">
+      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-gradient-to-r from-[var(--color-muted)]/30 to-transparent backdrop-blur-sm flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowSidebar(!showSidebar)}
               className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] active:scale-95"
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
+              title={showSidebar ? "Hide sidebar" : "Show sidebar"}
             >
-              <Icon name={showSidebar ? "ChevronLeft" : "ChevronRight"} className="w-4 h-4 transition-transform duration-200" />
+              <Icon
+                name={showSidebar ? "ChevronLeft" : "ChevronRight"}
+                className="w-4 h-4 transition-transform duration-200"
+              />
             </button>
-            <div className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wider">
+            <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
               API Studio
             </div>
           </div>
@@ -2209,7 +2709,7 @@ export function ApiClient() {
             </button>
             <button
               onClick={() => {
-                setImportExportMode('import');
+                setImportExportMode("import");
                 setImportExportType(undefined);
                 setShowImportExport(true);
               }}
@@ -2218,14 +2718,30 @@ export function ApiClient() {
               <Icons.FileDown />
               Import
             </button>
-            <button
-              onClick={() => setShowEnvironmentsManager(true)}
-              className="btn-secondary text-xs flex items-center gap-1"
-              title="Manage Environments"
-            >
-              <Icon name="Folder" />
-              {activeEnvironmentId ? environments.find(e => e.id === activeEnvironmentId)?.name || 'Environment' : 'Environment'}
-            </button>
+            <div className="flex items-center gap-1">
+              <select
+                value={activeEnvironmentId || ""}
+                onChange={(e) =>
+                  handleSetActiveEnvironment(e.target.value || null)
+                }
+                className="input-field !h-8 !py-1 !text-xs max-w-[180px]"
+                title="Active environment"
+              >
+                <option value="">No Environment</option>
+                {environments.map((env) => (
+                  <option key={env.id} value={env.id}>
+                    {env.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => setShowEnvironmentsManager(true)}
+                className="btn-secondary !h-8 !w-8 !p-0 flex items-center justify-center"
+                title="Manage environments"
+              >
+                <Icon name="Settings" className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <button
               onClick={() => setShowVariablesManager(true)}
               className="btn-secondary text-xs flex items-center gap-1"
@@ -2257,11 +2773,11 @@ export function ApiClient() {
             </button>
             <button
               onClick={handleCopyAsCurl}
-              className={`btn-secondary text-xs flex items-center gap-1 ${copySuccess ? 'bg-green-500/10 border-green-500/30' : ''}`}
+              className={`btn-secondary text-xs flex items-center gap-1 ${copySuccess ? "bg-[var(--color-semantic-success)]/10 border-[var(--color-semantic-success)]/30" : ""}`}
               title="Copy as cURL"
             >
               <Icon name={copySuccess ? "Check" : "Copy"} className="w-4 h-4" />
-              {copySuccess ? 'Copied!' : 'Copy cURL'}
+              {copySuccess ? "Copied!" : "Copy cURL"}
             </button>
           </div>
         </div>
@@ -2286,27 +2802,18 @@ export function ApiClient() {
           activeEnvironmentId={activeEnvironmentId}
           onSaveEnvironment={saveEnvironments}
           onDeleteEnvironment={deleteEnvironment}
-          onSetActive={async (id: string | null) => {
-            setActiveEnvironmentId(id);
-            // Save active environment ID to file system
-            if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
-              try {
-                await (window as any).electronAPI.apiClient.saveEnvironments({
-                  environments,
-                  activeEnvironmentId: id,
-                });
-              } catch (err) {
-                console.error('Failed to save active environment:', err);
-              }
-            }
-          }}
+          onSetActive={handleSetActiveEnvironment}
         />
       )}
 
       {showVariablesManager && (
         <VariablesManager
           isOpen={showVariablesManager}
-          folderId={selectedRequest ? requests.find(r => r.id === selectedRequest)?.folderId || null : null}
+          folderId={
+            selectedRequest
+              ? requests.find((r) => r.id === selectedRequest)?.folderId || null
+              : null
+          }
           folders={folders}
           onClose={() => {
             setShowVariablesManager(false);
@@ -2322,8 +2829,8 @@ export function ApiClient() {
           history={requestHistory}
           onSelectRequest={(entry) => {
             // Load the request from history
-            const matchingRequest = requests.find(r =>
-              r.method === entry.method && r.url === entry.url
+            const matchingRequest = requests.find(
+              (r) => r.method === entry.method && r.url === entry.url,
             );
             if (matchingRequest) {
               handleSelectRequest(matchingRequest.id);
@@ -2331,7 +2838,7 @@ export function ApiClient() {
               // Create a new request from history entry
               setMethod(entry.method as any);
               setUrl(entry.url);
-              setRequestName(entry.requestName || '');
+              setRequestName(entry.requestName || "");
             }
           }}
           onClearHistory={clearHistory}
@@ -2367,11 +2874,17 @@ export function ApiClient() {
                         setShowNewFolderInput(true);
                       }
                     }}
-                    className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${showNewFolderInput ? 'bg-[var(--color-primary)]/20 text-[var(--color-primary)]' : 'hover:bg-[var(--color-muted)]'
-                      }`}
+                    className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${
+                      showNewFolderInput
+                        ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
+                        : "hover:bg-[var(--color-muted)]"
+                    }`}
                     title="New Folder"
                   >
-                    <Icon name="FolderPlus" className="w-3.5 h-3.5 transition-transform duration-200" />
+                    <Icon
+                      name="FolderPlus"
+                      className="w-3.5 h-3.5 transition-transform duration-200"
+                    />
                   </button>
                   <button
                     onClick={handleCreateRequest}
@@ -2390,11 +2903,11 @@ export function ApiClient() {
                         value={newFolderName}
                         onChange={(e) => setNewFolderName(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          if (e.key === "Enter") {
                             handleCreateFolder();
-                          } else if (e.key === 'Escape') {
+                          } else if (e.key === "Escape") {
                             setShowNewFolderInput(false);
-                            setNewFolderName('');
+                            setNewFolderName("");
                           }
                         }}
                         placeholder="Folder name..."
@@ -2411,7 +2924,7 @@ export function ApiClient() {
                       <button
                         onClick={() => {
                           setShowNewFolderInput(false);
-                          setNewFolderName('');
+                          setNewFolderName("");
                         }}
                         className="px-2 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] transition-all duration-200 active:scale-95"
                       >
@@ -2423,7 +2936,10 @@ export function ApiClient() {
                 {/* Search Bar */}
                 <div className="relative">
                   <div className="absolute left-2 top-1/2 transform -translate-y-1/2 pointer-events-none">
-                    <Icon name="Search" className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
+                    <Icon
+                      name="Search"
+                      className="w-3.5 h-3.5 text-[var(--color-text-tertiary)]"
+                    />
                   </div>
                   <input
                     type="text"
@@ -2434,23 +2950,27 @@ export function ApiClient() {
                   />
                   {searchQuery && (
                     <button
-                      onClick={() => setSearchQuery('')}
+                      onClick={() => setSearchQuery("")}
                       className="absolute right-2 top-1/2 transform -translate-y-1/2 p-0.5 hover:bg-[var(--color-muted)] rounded transition-all duration-200 active:scale-95"
                       title="Clear search"
                     >
-                      <Icon name="X" className="w-3 h-3 text-[var(--color-text-tertiary)]" />
+                      <Icon
+                        name="X"
+                        className="w-3 h-3 text-[var(--color-text-tertiary)]"
+                      />
                     </button>
                   )}
                 </div>
               </div>
 
               {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-2"
+              <div
+                className="flex-1 overflow-y-auto custom-scrollbar p-2 flex flex-col min-h-0"
                 onDragOver={(e) => {
                   if (draggedRequestId) {
                     e.preventDefault();
                     e.stopPropagation();
-                    e.dataTransfer.dropEffect = 'move';
+                    e.dataTransfer.dropEffect = "move";
                     setDragOverFolderId(null);
                   }
                 }}
@@ -2463,16 +2983,32 @@ export function ApiClient() {
                 }}
               >
                 {folders.length === 0 && rootRequests.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Icon name="FileText" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
-                    <p className="text-sm text-[var(--color-text-secondary)]">No requests yet</p>
-                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Create your first request</p>
+                  <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-8">
+                    <Icon
+                      name="FileText"
+                      className="w-8 h-8 text-[var(--color-text-tertiary)] mb-3 opacity-50"
+                    />
+                    <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+                      No requests yet
+                    </p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                      Create your first request
+                    </p>
                   </div>
-                ) : (filteredFolders.length === 0 && filteredRootRequestsGrouped.length === 0 && searchQuery) ? (
-                  <div className="text-center py-12">
-                    <Icon name="Search" className="w-8 h-8 text-[var(--color-text-tertiary)] mx-auto mb-2 opacity-50" />
-                    <p className="text-sm text-[var(--color-text-secondary)]">No results found</p>
-                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Try a different search term</p>
+                ) : filteredFolders.length === 0 &&
+                  filteredRootRequestsGrouped.length === 0 &&
+                  searchQuery ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-8">
+                    <Icon
+                      name="Search"
+                      className="w-8 h-8 text-[var(--color-text-tertiary)] mb-3 opacity-50"
+                    />
+                    <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+                      No results found
+                    </p>
+                    <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                      Try a different search term
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2480,10 +3016,11 @@ export function ApiClient() {
                     {filteredFolders.length > 0 && (
                       <div className="space-y-1">
                         {filteredFolders.map((folder) => {
-                          const folderId = String(folder.id || '');
+                          const folderId = String(folder.id || "");
                           if (!folderId) return null;
                           const folderRequests = getRequestsInFolder(folderId);
-                          const filteredFolderRequests = filterRequests(folderRequests);
+                          const filteredFolderRequests =
+                            filterRequests(folderRequests);
                           const isExpanded = expandedFolders.has(folderId);
                           return (
                             <div key={folderId} className="space-y-1">
@@ -2491,10 +3028,12 @@ export function ApiClient() {
                                 onDragOver={(e) => handleDragOver(e, folderId)}
                                 onDragLeave={handleDragLeave}
                                 onDrop={(e) => handleDrop(e, folderId)}
-                                className={`flex items-center gap-1 group rounded transition-all duration-200 ${dragOverFolderId === folderId && draggedRequestId
-                                  ? 'bg-[var(--color-primary)]/20 border-2 border-[var(--color-primary)]'
-                                  : ''
-                                  }`}
+                                className={`flex items-center gap-1 group rounded transition-all duration-200 ${
+                                  dragOverFolderId === folderId &&
+                                  draggedRequestId
+                                    ? "bg-[var(--color-primary)]/20 border-2 border-[var(--color-primary)]"
+                                    : ""
+                                }`}
                               >
                                 <button
                                   onClick={(e) => {
@@ -2503,8 +3042,13 @@ export function ApiClient() {
                                   }}
                                   className="flex-1 flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-left active:scale-[0.98]"
                                 >
-                                  <Icon name={isExpanded ? "FolderOpen" : "Folder"} className={`w-4 h-4 text-[var(--color-text-secondary)] flex-shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-0' : ''}`} />
-                                  <span className="text-xs font-medium text-[var(--color-text-primary)] truncate flex-1">{folder.name}</span>
+                                  <Icon
+                                    name={isExpanded ? "FolderOpen" : "Folder"}
+                                    className={`w-4 h-4 text-[var(--color-text-secondary)] flex-shrink-0 transition-transform duration-200 ${isExpanded ? "rotate-0" : ""}`}
+                                  />
+                                  <span className="text-xs font-medium text-[var(--color-text-primary)] truncate flex-1">
+                                    {folder.name}
+                                  </span>
                                   <span className="text-[10px] text-[var(--color-text-tertiary)] bg-[var(--color-muted)] px-1 py-0.5 rounded">
                                     {filteredFolderRequests.length}
                                   </span>
@@ -2514,7 +3058,7 @@ export function ApiClient() {
                                     e.stopPropagation();
                                     handleDeleteFolder(folderId);
                                   }}
-                                  className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 text-xs text-[var(--color-text-tertiary)] hover:text-red-500 active:scale-95"
+                                  className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)] active:scale-95"
                                   title="Delete folder"
                                 >
                                   <Icon name="X" className="w-3.5 h-3.5" />
@@ -2524,12 +3068,14 @@ export function ApiClient() {
                                 <div className="ml-4 space-y-0.5 border-l border-[var(--color-border)] pl-1.5 transition-all duration-200 ease-in-out">
                                   {filteredFolderRequests.length === 0 ? (
                                     <div className="px-2 py-1 text-[10px] text-[var(--color-text-tertiary)] italic">
-                                      {searchQuery ? 'No matching requests' : 'Empty folder'}
+                                      {searchQuery
+                                        ? "No matching requests"
+                                        : "Empty folder"}
                                     </div>
                                   ) : (
-                                    filteredFolderRequests.map((request) => (
+                                    filteredFolderRequests.map((request, index) => (
                                       <div
-                                        key={request.id}
+                                        key={request.id || `folder-req-${index}`}
                                         draggable
                                         onDragStart={(e) => {
                                           e.stopPropagation();
@@ -2539,25 +3085,28 @@ export function ApiClient() {
                                           setDraggedRequestId(null);
                                           setDragOverFolderId(null);
                                         }}
-                                        className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group relative ${selectedRequest === request.id
-                                          ? 'border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50'
-                                          : 'border-l-[3px] border-transparent hover:bg-[var(--color-muted)]'
-                                          } ${draggedRequestId === request.id ? 'opacity-50' : ''} active:scale-[0.98]`}
-                                        onClick={() => handleSelectRequest(request.id)}
+                                        className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group relative ${
+                                          selectedRequest === request.id
+                                            ? "border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50"
+                                            : "border-l-[3px] border-transparent hover:bg-[var(--color-muted)]"
+                                        } ${draggedRequestId === request.id ? "opacity-50" : ""} active:scale-[0.98]`}
+                                        onClick={() =>
+                                          handleSelectRequest(request.id)
+                                        }
                                       >
                                         <div className="flex items-center justify-between gap-2">
                                           <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
-                                              request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
-                                                request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
-                                                  request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
-                                                    request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
-                                                      'bg-gray-500/20 text-gray-600 dark:text-gray-400'
-                                              }`}>
-                                              {request.method}
+                                            <span
+                                              className={getHttpMethodLabelClass(
+                                                request.method,
+                                              )}
+                                            >
+                                              {getHttpMethodDisplay(request.method)}
                                             </span>
-                                            <span className={`truncate text-[10px] ${selectedRequest === request.id ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
-                                              {request.url}
+                                            <span
+                                              className={`truncate text-[10px] ${selectedRequest === request.id ? "text-[var(--color-text-primary)] font-medium" : "text-[var(--color-text-secondary)]"}`}
+                                            >
+                                              {request.name || request.url}
                                             </span>
                                           </div>
                                           <button
@@ -2565,13 +3114,17 @@ export function ApiClient() {
                                               e.stopPropagation();
                                               handleDeleteRequest(request.id);
                                             }}
-                                            className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
-                                              ? 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                              : 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                              }`}
+                                            className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${
+                                              selectedRequest === request.id
+                                                ? "text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]"
+                                                : "text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]"
+                                            }`}
                                             title="Delete request"
                                           >
-                                            <Icon name="X" className="w-3.5 h-3.5" />
+                                            <Icon
+                                              name="X"
+                                              className="w-3.5 h-3.5"
+                                            />
                                           </button>
                                         </div>
                                       </div>
@@ -2604,9 +3157,9 @@ export function ApiClient() {
                             </button>
                             {expandedGroups.has(group.label) && (
                               <div className="space-y-0.5 ml-0.5">
-                                {group.items.map((request) => (
+                                {group.items.map((request, index) => (
                                   <div
-                                    key={request.id}
+                                    key={request.id || `${group.label}-${index}`}
                                     draggable
                                     onDragStart={(e) => {
                                       e.stopPropagation();
@@ -2616,25 +3169,28 @@ export function ApiClient() {
                                       setDraggedRequestId(null);
                                       setDragOverFolderId(null);
                                     }}
-                                    className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group active:scale-[0.98] relative ${selectedRequest === request.id
-                                      ? 'border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50'
-                                      : 'border-l-[3px] border-transparent hover:bg-[var(--color-muted)]'
-                                      } ${draggedRequestId === request.id ? 'opacity-50' : ''}`}
-                                    onClick={() => handleSelectRequest(request.id)}
+                                    className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group active:scale-[0.98] relative ${
+                                      selectedRequest === request.id
+                                        ? "border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50"
+                                        : "border-l-[3px] border-transparent hover:bg-[var(--color-muted)]"
+                                    } ${draggedRequestId === request.id ? "opacity-50" : ""}`}
+                                    onClick={() =>
+                                      handleSelectRequest(request.id)
+                                    }
                                   >
                                     <div className="flex items-center justify-between gap-2">
                                       <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold flex-shrink-0 ${request.method === 'GET' ? 'bg-green-500/20 text-green-600 dark:text-green-400' :
-                                          request.method === 'POST' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' :
-                                            request.method === 'PUT' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
-                                              request.method === 'DELETE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
-                                                request.method === 'PATCH' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' :
-                                                  'bg-gray-500/20 text-gray-600 dark:text-gray-400'
-                                          }`}>
-                                          {request.method}
+                                        <span
+                                          className={getHttpMethodLabelClass(
+                                            request.method,
+                                          )}
+                                        >
+                                          {getHttpMethodDisplay(request.method)}
                                         </span>
-                                        <span className={`truncate text-[10px] ${selectedRequest === request.id ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
-                                          {request.url}
+                                        <span
+                                          className={`truncate text-[10px] ${selectedRequest === request.id ? "text-[var(--color-text-primary)] font-medium" : "text-[var(--color-text-secondary)]"}`}
+                                        >
+                                          {request.name || request.url}
                                         </span>
                                       </div>
                                       <button
@@ -2642,13 +3198,17 @@ export function ApiClient() {
                                           e.stopPropagation();
                                           handleDeleteRequest(request.id);
                                         }}
-                                        className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${selectedRequest === request.id
-                                          ? 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                          : 'text-[var(--color-text-tertiary)] hover:text-red-500'
-                                          }`}
+                                        className={`opacity-0 group-hover:opacity-100 transition-all duration-200 p-0.5 active:scale-95 ${
+                                          selectedRequest === request.id
+                                            ? "text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]"
+                                            : "text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]"
+                                        }`}
                                         title="Delete request"
                                       >
-                                        <Icon name="X" className="w-3.5 h-3.5" />
+                                        <Icon
+                                          name="X"
+                                          className="w-3.5 h-3.5"
+                                        />
                                       </button>
                                     </div>
                                   </div>
@@ -2659,7 +3219,6 @@ export function ApiClient() {
                         ))}
                       </div>
                     )}
-
                   </div>
                 )}
               </div>
@@ -2672,7 +3231,7 @@ export function ApiClient() {
                 setIsResizingSidebar(true);
               }}
               className="w-1 flex-shrink-0 bg-[var(--color-border)] hover:bg-[var(--color-primary)] cursor-col-resize transition-colors group"
-              style={{ cursor: 'col-resize' }}
+              style={{ cursor: "col-resize" }}
             >
               <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 <div className="w-0.5 h-8 bg-[var(--color-primary)] rounded" />
@@ -2695,106 +3254,95 @@ export function ApiClient() {
               </button>
             ) : (
               openTabs.map((tabId) => {
-                const request = requests.find(r => r.id === tabId);
+                const request = requests.find((r) => r.id === tabId);
                 const isActive = activeTab === tabId;
-                const tabName = request?.name || 'New Request';
+                const tabName =
+                  (isActive && (requestName ?? "").trim()) ||
+                  request?.name ||
+                  "New Request";
                 const tabMethod = request?.method || method;
 
                 return (
                   <div
                     key={tabId}
-                    className={`group flex items-center gap-1.5 px-3 py-2 border-r border-[var(--color-border)] border-b-2 cursor-pointer transition-all duration-200 min-w-0 relative ${isActive
-                      ? 'bg-[var(--color-background)] text-[var(--color-text-primary)] border-b-[var(--color-primary)] font-medium'
-                      : 'bg-[var(--color-sidebar)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] border-b-transparent'
-                      }`}
+                    className={`group flex items-center gap-1.5 px-3 py-2 border-r border-[var(--color-border)] border-b-2 cursor-pointer transition-all duration-200 min-w-0 relative ${
+                      isActive
+                        ? "bg-[var(--color-background)] text-[var(--color-text-primary)] border-b-[var(--color-primary)] font-medium"
+                        : "bg-[var(--color-sidebar)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] border-b-transparent"
+                    }`}
                     onClick={() => {
                       setActiveTab(tabId);
                       if (request) {
                         setSelectedRequest(tabId);
-                        setRequestName(request.name);
-                        setMethod(request.method);
-                        const { base, params } = parseUrl(request.url);
-                        setBaseUrl(base);
-                        setUrl(request.url);
-                        setUrlInput(request.url);
-                        if (request.queryParams && request.queryParams.length > 0) {
-                          setQueryParams(request.queryParams);
-                        } else if (params.length > 0) {
-                          setQueryParams([...params, { key: '', value: '', enabled: true }]);
-                        } else {
-                          setQueryParams([{ key: '', value: '', enabled: true }]);
-                        }
-                        try {
-                          const parsedHeaders = typeof request.headers === 'string'
-                            ? JSON.parse(request.headers)
-                            : request.headers;
-                          const headersArray: Header[] = Object.entries(parsedHeaders || {}).map(([key, value]) => ({
-                            key,
-                            value: String(value),
-                            enabled: true
-                          }));
-                          if (headersArray.length > 0) {
-                            setHeadersList([...headersArray, { key: '', value: '', enabled: true }]);
-                          } else {
-                            setHeadersList([{ key: '', value: '', enabled: true }]);
-                          }
-                        } catch (e) {
-                          setHeadersList([{ key: '', value: '', enabled: true }]);
-                        }
-                        setBodyType(request.bodyType);
-                        setBody(request.body || '');
-                        setFormData(request.formData || [{ key: '', value: '', type: 'text', enabled: true }]);
-                        setBinaryData(request.binaryData || '');
-                        setRequestTimeout(request.timeout);
-                        setResponse(request.response || null);
+                        applySavedRequestToState(request);
                       } else {
                         // New request tab
                         setSelectedRequest(null);
-                        setRequestName('');
-                        setMethod('GET');
-                        setUrl('');
-                        setBaseUrl('');
-                        setUrlInput('');
-                        setHeadersList([{ key: 'Content-Type', value: 'application/json', enabled: true }]);
-                        setQueryParams([{ key: '', value: '', enabled: true }]);
-                        setBodyType('json');
-                        setBody('');
-                        setFormData([{ key: '', value: '', type: 'text', enabled: true }]);
-                        setBinaryData('');
+                        setRequestName("");
+                        setMethod("GET");
+                        setUrl("");
+                        setBaseUrl("");
+                        setUrlInput("");
+                        setHeadersList([
+                          {
+                            key: "Content-Type",
+                            value: "application/json",
+                            enabled: true,
+                          },
+                        ]);
+                        setQueryParams([{ key: "", value: "", enabled: true }]);
+                        setBodyType("json");
+                        setBody("");
+                        setFormData([
+                          { key: "", value: "", type: "text", enabled: true },
+                        ]);
+                        setBinaryData("");
                         setResponse(null);
+                        setAuthConfig({ type: "none" });
+                        setPreRequestScript("");
+                        setTestScript("");
                       }
                     }}
                   >
-                    <span className={`text-[10px] font-semibold flex-shrink-0 ${tabMethod === 'GET' ? 'text-green-600' :
-                      tabMethod === 'POST' ? 'text-blue-600' :
-                        tabMethod === 'PUT' ? 'text-yellow-600' :
-                          tabMethod === 'DELETE' ? 'text-red-600' :
-                            tabMethod === 'PATCH' ? 'text-purple-600' :
-                              'text-gray-600'
-                      }`}>
+                    <span
+                      className={`text-[10px] font-semibold flex-shrink-0 ${getHttpMethodTextClass(tabMethod)}`}
+                    >
                       {tabMethod}
                     </span>
-                    <span className="text-xs truncate flex-1 min-w-0">{tabName}</span>
+                    <span className="text-xs truncate flex-1 min-w-0">
+                      {tabName}
+                    </span>
+                    {isTabUnsaved(tabId) && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] flex-shrink-0"
+                        title="Unsaved changes"
+                        aria-label="Unsaved changes"
+                      />
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setOpenTabs(prev => {
-                          const newTabs = prev.filter(id => id !== tabId);
+                        setOpenTabs((prev) => {
+                          const newTabs = prev.filter((id) => id !== tabId);
                           if (newTabs.length === 0) {
                             setActiveTab(null);
                             setSelectedRequest(null);
-                            setRequestName('');
-                            setMethod('GET');
-                            setUrl('');
-                            setBaseUrl('');
-                            setUrlInput('');
+                            setRequestName("");
+                            setMethod("GET");
+                            setUrl("");
+                            setBaseUrl("");
+                            setUrlInput("");
                           } else if (isActive) {
                             // If closing active tab, switch to the previous one or first one
                             const currentIndex = prev.indexOf(tabId);
-                            const newActiveIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+                            const newActiveIndex =
+                              currentIndex > 0 ? currentIndex - 1 : 0;
                             const newActiveId = newTabs[newActiveIndex];
                             setActiveTab(newActiveId);
-                            if (newActiveId && !newActiveId.startsWith('temp-')) {
+                            if (
+                              newActiveId &&
+                              !newActiveId.startsWith("temp-")
+                            ) {
                               handleSelectRequest(newActiveId);
                             }
                           }
@@ -2829,22 +3377,14 @@ export function ApiClient() {
                 type="text"
                 value={requestName}
                 onChange={(e) => setRequestName(e.target.value)}
-                placeholder="Request name (optional)..."
+                placeholder="Request name"
                 className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs"
               />
               <div className="flex gap-2 items-center">
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className="w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer"
-                  style={{
-                    color: method === 'GET' ? '#10b981' :
-                      method === 'POST' ? '#3b82f6' :
-                        method === 'PUT' ? '#f59e0b' :
-                          method === 'DELETE' ? '#ef4444' :
-                            method === 'PATCH' ? '#8b5cf6' :
-                              '#6b7280'
-                  }}
+                  className={`w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer ${getHttpMethodTextClass(method)}`}
                 >
                   <option value="GET">GET</option>
                   <option value="POST">POST</option>
@@ -2861,15 +3401,33 @@ export function ApiClient() {
                   placeholder="https://api.example.com/endpoint"
                   className={`flex-1 px-3 py-2 rounded-l border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent ${getVariableBorderClass(displayUrl)}`}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       handleRequest();
                     }
                   }}
                 />
                 <button
+                  onClick={handleSaveRequest}
+                  disabled={saving || (!url && !baseUrl)}
+                  className="px-4 py-2 border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs font-medium hover:bg-[var(--color-muted)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  title="Save request (Cmd/Ctrl+S)"
+                >
+                  {saving ? (
+                    <>
+                      <Icon name="RefreshCw" className="w-3.5 h-3.5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Save" className="w-3.5 h-3.5" />
+                      Save
+                    </>
+                  )}
+                </button>
+                <button
                   onClick={handleRequest}
                   disabled={loading || !url}
-                  className={`px-6 py-2 rounded-r border border-l-0 border-[var(--color-border)] bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${loading ? 'cursor-wait' : ''}`}
+                  className={`px-6 py-2 rounded-r border border-l-0 border-[var(--color-border)] bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${loading ? "cursor-wait" : ""}`}
                 >
                   {loading ? (
                     <>
@@ -2895,14 +3453,25 @@ export function ApiClient() {
             >
               {/* Request Tabs */}
               <div className="flex border-b border-[var(--color-border)] bg-[var(--color-sidebar)]">
-                {(['params', 'headers', 'body', 'auth', 'pre-request', 'tests', 'settings'] as RequestTab[]).map((tab) => (
+                {(
+                  [
+                    "params",
+                    "headers",
+                    "body",
+                    "auth",
+                    "pre-request",
+                    "tests",
+                    "settings",
+                  ] as RequestTab[]
+                ).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveRequestTab(tab)}
-                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${activeRequestTab === tab
-                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold'
-                      : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]'
-                      }`}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${
+                      activeRequestTab === tab
+                        ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold"
+                        : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]"
+                    }`}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
@@ -2910,36 +3479,48 @@ export function ApiClient() {
               </div>
 
               {/* Request Tab Content */}
-              <div className={`flex-1 overflow-auto bg-[var(--color-background)] ${activeRequestTab === 'body' ? '' : 'p-3'}`}>
-                {activeRequestTab === 'params' && (
+              <div
+                className={`flex-1 overflow-auto bg-[var(--color-background)] ${activeRequestTab === "body" ? "" : "p-3"}`}
+              >
+                {activeRequestTab === "params" && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Query Parameters</div>
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                      Query Parameters
+                    </div>
                     <div className="space-y-2">
                       {queryParams.map((param, index) => (
                         <div key={index} className="flex gap-2 items-center">
                           <input
                             type="checkbox"
                             checked={param.enabled}
-                            onChange={(e) => updateQueryParam(index, { enabled: e.target.checked })}
+                            onChange={(e) =>
+                              updateQueryParam(index, {
+                                enabled: e.target.checked,
+                              })
+                            }
                             className="w-4 h-4"
                           />
                           <input
                             type="text"
                             value={param.key}
-                            onChange={(e) => updateQueryParam(index, { key: e.target.value })}
+                            onChange={(e) =>
+                              updateQueryParam(index, { key: e.target.value })
+                            }
                             placeholder="Key"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(param.key)}`}
+                            className={`flex-1 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(param.key)}`}
                           />
                           <input
                             type="text"
                             value={param.value}
-                            onChange={(e) => updateQueryParam(index, { value: e.target.value })}
+                            onChange={(e) =>
+                              updateQueryParam(index, { value: e.target.value })
+                            }
                             placeholder="Value"
-                            className={`flex-1 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(param.value)}`}
+                            className={`flex-1 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(param.value)}`}
                           />
                           <button
                             onClick={() => removeQueryParam(index)}
-                            className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                            className="px-2 py-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)] "
                           >
                             <Icon name="X" className="w-4 h-4" />
                           </button>
@@ -2947,7 +3528,7 @@ export function ApiClient() {
                       ))}
                       <button
                         onClick={addQueryParam}
-                        className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-1"
+                        className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)] flex items-center gap-1"
                       >
                         <Icon name="Plus" className="w-4 h-4" />
                         Add Parameter
@@ -2956,49 +3537,68 @@ export function ApiClient() {
                   </div>
                 )}
 
-                {activeRequestTab === 'headers' && (
+                {activeRequestTab === "headers" && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Headers</div>
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                      Headers
+                    </div>
                     <div className="space-y-2">
                       {headersList.map((header, index) => (
                         <div key={index} className="flex gap-2 items-start">
                           <input
                             type="checkbox"
                             checked={header.enabled}
-                            onChange={(e) => updateHeader(index, { enabled: e.target.checked })}
+                            onChange={(e) =>
+                              updateHeader(index, { enabled: e.target.checked })
+                            }
                             className="w-4 h-4 mt-1.5 flex-shrink-0"
                           />
                           <input
                             type="text"
                             value={header.key}
-                            onChange={(e) => updateHeader(index, { key: e.target.value })}
+                            onChange={(e) =>
+                              updateHeader(index, { key: e.target.value })
+                            }
                             placeholder="Key"
-                            className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(header.key)}`}
+                            className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(header.key)}`}
                           />
                           {focusedHeaderIndex === index ? (
                             <textarea
                               value={header.value}
-                              onChange={(e) => updateHeader(index, { value: e.target.value })}
+                              onChange={(e) =>
+                                updateHeader(index, { value: e.target.value })
+                              }
                               onBlur={() => setFocusedHeaderIndex(null)}
                               placeholder="Value"
-                              rows={Math.min(Math.max(Math.ceil(header.value.length / 50), 1), 4)}
-                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs resize-none overflow-y-auto ${getVariableBorderClass(header.value)}`}
-                              style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                              rows={Math.min(
+                                Math.max(
+                                  Math.ceil(header.value.length / 50),
+                                  1,
+                                ),
+                                4,
+                              )}
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs resize-none overflow-y-auto ${getVariableBorderClass(header.value)}`}
+                              style={{
+                                wordBreak: "break-word",
+                                overflowWrap: "break-word",
+                              }}
                               autoFocus
                             />
                           ) : (
                             <input
                               type="text"
                               value={header.value}
-                              onChange={(e) => updateHeader(index, { value: e.target.value })}
+                              onChange={(e) =>
+                                updateHeader(index, { value: e.target.value })
+                              }
                               onFocus={() => setFocusedHeaderIndex(index)}
                               placeholder="Value"
-                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(header.value)}`}
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(header.value)}`}
                             />
                           )}
                           <button
                             onClick={() => removeHeader(index)}
-                            className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 flex-shrink-0 mt-0.5"
+                            className="px-2 py-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]  flex-shrink-0 mt-0.5"
                             title="Remove header"
                           >
                             <Icon name="X" className="w-4 h-4" />
@@ -3007,7 +3607,7 @@ export function ApiClient() {
                       ))}
                       <button
                         onClick={addHeader}
-                        className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-1"
+                        className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)] flex items-center gap-1"
                       >
                         <Icon name="Plus" className="w-4 h-4" />
                         Add Header
@@ -3016,67 +3616,88 @@ export function ApiClient() {
                   </div>
                 )}
 
-                {activeRequestTab === 'body' && (
+                {activeRequestTab === "body" && (
                   <div className="flex flex-col h-full">
                     <div className="flex items-center justify-between flex-shrink-0 px-3 py-2 border-b border-[var(--color-border)]">
-                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Body</div>
+                      <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                        Body
+                      </div>
                       <select
                         value={bodyType}
-                        onChange={(e) => setBodyType(e.target.value as BodyType)}
-                        className="w-[200px] px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs"
+                        onChange={(e) =>
+                          setBodyType(e.target.value as BodyType)
+                        }
+                        className="w-[200px] px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs"
                       >
                         <option value="none">None</option>
                         <option value="json">JSON</option>
                         <option value="raw">Raw</option>
                         <option value="form-data">Form Data</option>
-                        <option value="x-www-form-urlencoded">x-www-form-urlencoded</option>
+                        <option value="x-www-form-urlencoded">
+                          x-www-form-urlencoded
+                        </option>
                         <option value="binary">Binary</option>
                       </select>
                     </div>
 
-                    {bodyType === 'none' && (
-                      <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 text-xs">
+                    {bodyType === "none" && (
+                      <div className="flex-1 flex items-center justify-center text-[var(--color-text-tertiary)] text-xs">
                         This request does not have a body
                       </div>
                     )}
 
-                    {(bodyType === 'json' || bodyType === 'raw') && (
+                    {(bodyType === "json" || bodyType === "raw") && (
                       <div className="flex-1 min-h-0 overflow-hidden">
                         {renderBodyEditor()}
                       </div>
                     )}
 
-                    {(bodyType === 'form-data' || bodyType === 'x-www-form-urlencoded') && (
+                    {(bodyType === "form-data" ||
+                      bodyType === "x-www-form-urlencoded") && (
                       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
                         {formData.map((field, index) => (
                           <div key={index} className="flex gap-2 items-center">
                             <input
                               type="checkbox"
                               checked={field.enabled}
-                              onChange={(e) => updateFormDataField(index, { enabled: e.target.checked })}
+                              onChange={(e) =>
+                                updateFormDataField(index, {
+                                  enabled: e.target.checked,
+                                })
+                              }
                               className="w-4 h-4 flex-shrink-0"
                             />
                             <input
                               type="text"
                               value={field.key}
-                              onChange={(e) => updateFormDataField(index, { key: e.target.value })}
+                              onChange={(e) =>
+                                updateFormDataField(index, {
+                                  key: e.target.value,
+                                })
+                              }
                               placeholder="Key"
-                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(field.key)}`}
+                              className={`flex-1 min-w-0 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(field.key)}`}
                             />
-                            {bodyType === 'form-data' && (
+                            {bodyType === "form-data" && (
                               <select
                                 value={field.type}
                                 onChange={(e) => {
-                                  const newType = e.target.value as 'text' | 'file';
-                                  updateFormDataField(index, { type: newType, value: newType === 'file' ? '' : field.value });
+                                  const newType = e.target.value as
+                                    | "text"
+                                    | "file";
+                                  updateFormDataField(index, {
+                                    type: newType,
+                                    value:
+                                      newType === "file" ? "" : field.value,
+                                  });
                                 }}
-                                className="w-[100px] px-2 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs flex-shrink-0"
+                                className="w-[100px] px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs flex-shrink-0"
                               >
                                 <option value="text">Text</option>
                                 <option value="file">File</option>
                               </select>
                             )}
-                            {field.type === 'file' ? (
+                            {field.type === "file" ? (
                               <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <input
                                   type="file"
@@ -3085,7 +3706,7 @@ export function ApiClient() {
                                     if (file) {
                                       handleFileSelect(index, file);
                                       // Reset the input so the same file can be selected again
-                                      e.target.value = '';
+                                      e.target.value = "";
                                     }
                                   }}
                                   className="hidden"
@@ -3093,13 +3714,22 @@ export function ApiClient() {
                                 />
                                 <label
                                   htmlFor={`file-${index}`}
-                                  className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700 text-xs cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white flex-shrink-0 whitespace-nowrap"
+                                  className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-muted)] text-xs cursor-pointer hover:bg-[var(--color-muted)] text-[var(--color-text-primary)] flex-shrink-0 whitespace-nowrap"
                                 >
-                                  {field.value ? 'Change File' : 'Choose File'}
+                                  {field.value ? "Change File" : "Choose File"}
                                 </label>
                                 {field.value && (
-                                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1 min-w-0" title={field.value.includes('data:') ? 'File loaded' : 'File selected'}>
-                                    {field.value.includes('data:') ? 'File loaded' : 'File selected'}
+                                  <span
+                                    className="text-xs text-[var(--color-text-secondary)] truncate flex-1 min-w-0"
+                                    title={
+                                      field.value.includes("data:")
+                                        ? "File loaded"
+                                        : "File selected"
+                                    }
+                                  >
+                                    {field.value.includes("data:")
+                                      ? "File loaded"
+                                      : "File selected"}
                                   </span>
                                 )}
                               </div>
@@ -3107,14 +3737,18 @@ export function ApiClient() {
                               <input
                                 type="text"
                                 value={field.value}
-                                onChange={(e) => updateFormDataField(index, { value: e.target.value })}
+                                onChange={(e) =>
+                                  updateFormDataField(index, {
+                                    value: e.target.value,
+                                  })
+                                }
                                 placeholder="Value"
-                                className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(field.value)}`}
+                                className={`flex-1 min-w-0 px-2 py-1.5 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(field.value)}`}
                               />
                             )}
                             <button
                               onClick={() => removeFormDataField(index)}
-                              className="px-2 py-1 text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 flex-shrink-0"
+                              className="px-2 py-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]  flex-shrink-0"
                               title="Remove field"
                             >
                               <Icon name="X" className="w-4 h-4" />
@@ -3123,7 +3757,7 @@ export function ApiClient() {
                         ))}
                         <button
                           onClick={addFormDataField}
-                          className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-1"
+                          className="px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)] flex items-center gap-1"
                         >
                           <Icon name="Plus" className="w-4 h-4" />
                           Add Field
@@ -3131,7 +3765,7 @@ export function ApiClient() {
                       </div>
                     )}
 
-                    {bodyType === 'binary' && (
+                    {bodyType === "binary" && (
                       <div className="space-y-2">
                         <input
                           type="file"
@@ -3145,14 +3779,14 @@ export function ApiClient() {
                         />
                         <label
                           htmlFor="binary-file"
-                          className="inline-block px-4 py-2 rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700 text-sm cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white"
+                          className="inline-block px-4 py-2 rounded border border-[var(--color-border)] bg-[var(--color-muted)] text-sm cursor-pointer hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]"
                         >
-                          {binaryData ? 'Change File' : 'Choose File'}
+                          {binaryData ? "Change File" : "Choose File"}
                         </label>
                         {binaryData && (
                           <button
-                            onClick={() => setBinaryData('')}
-                            className="ml-2 px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs hover:bg-gray-50 dark:hover:bg-gray-700"
+                            onClick={() => setBinaryData("")}
+                            className="ml-2 px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)]"
                           >
                             Clear
                           </button>
@@ -3162,13 +3796,20 @@ export function ApiClient() {
                   </div>
                 )}
 
-                {activeRequestTab === 'auth' && (
+                {activeRequestTab === "auth" && (
                   <div className="space-y-4">
-                    <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Authorization</div>
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                      Authorization
+                    </div>
                     <select
                       value={authConfig.type}
-                      onChange={(e) => setAuthConfig({ ...authConfig, type: e.target.value as AuthType })}
-                      className="w-[200px] px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                      onChange={(e) =>
+                        setAuthConfig({
+                          ...authConfig,
+                          type: e.target.value as AuthType,
+                        })
+                      }
+                      className="w-[200px] px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-sm"
                     >
                       <option value="none">No Auth</option>
                       <option value="bearer">Bearer Token</option>
@@ -3177,72 +3818,116 @@ export function ApiClient() {
                       <option value="oauth2">OAuth 2.0</option>
                     </select>
 
-                    {authConfig.type === 'bearer' && (
+                    {authConfig.type === "bearer" && (
                       <div className="space-y-2">
-                        <label className="text-xs text-gray-600 dark:text-gray-400">Token</label>
+                        <label className="text-xs text-[var(--color-text-secondary)]">
+                          Token
+                        </label>
                         <input
                           type="text"
-                          value={authConfig.bearerToken || ''}
-                          onChange={(e) => setAuthConfig({ ...authConfig, bearerToken: e.target.value })}
+                          value={authConfig.bearerToken || ""}
+                          onChange={(e) =>
+                            setAuthConfig({
+                              ...authConfig,
+                              bearerToken: e.target.value,
+                            })
+                          }
                           placeholder="Enter bearer token"
-                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(authConfig.bearerToken || '')}`}
+                          className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(authConfig.bearerToken || "")}`}
                         />
                       </div>
                     )}
 
-                    {authConfig.type === 'basic' && (
+                    {authConfig.type === "basic" && (
                       <div className="space-y-2">
                         <div>
-                          <label className="text-xs text-gray-600 dark:text-gray-400">Username</label>
+                          <label className="text-xs text-[var(--color-text-secondary)]">
+                            Username
+                          </label>
                           <input
                             type="text"
-                            value={authConfig.basicUsername || ''}
-                            onChange={(e) => setAuthConfig({ ...authConfig, basicUsername: e.target.value })}
+                            value={authConfig.basicUsername || ""}
+                            onChange={(e) =>
+                              setAuthConfig({
+                                ...authConfig,
+                                basicUsername: e.target.value,
+                              })
+                            }
                             placeholder="Username"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.basicUsername || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1 ${getVariableBorderClass(authConfig.basicUsername || "")}`}
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-gray-600 dark:text-gray-400">Password</label>
+                          <label className="text-xs text-[var(--color-text-secondary)]">
+                            Password
+                          </label>
                           <input
                             type="password"
-                            value={authConfig.basicPassword || ''}
-                            onChange={(e) => setAuthConfig({ ...authConfig, basicPassword: e.target.value })}
+                            value={authConfig.basicPassword || ""}
+                            onChange={(e) =>
+                              setAuthConfig({
+                                ...authConfig,
+                                basicPassword: e.target.value,
+                              })
+                            }
                             placeholder="Password"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.basicPassword || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1 ${getVariableBorderClass(authConfig.basicPassword || "")}`}
                           />
                         </div>
                       </div>
                     )}
 
-                    {authConfig.type === 'apikey' && (
+                    {authConfig.type === "apikey" && (
                       <div className="space-y-2">
                         <div>
-                          <label className="text-xs text-gray-600 dark:text-gray-400">Key</label>
+                          <label className="text-xs text-[var(--color-text-secondary)]">
+                            Key
+                          </label>
                           <input
                             type="text"
-                            value={authConfig.apiKeyKey || ''}
-                            onChange={(e) => setAuthConfig({ ...authConfig, apiKeyKey: e.target.value })}
+                            value={authConfig.apiKeyKey || ""}
+                            onChange={(e) =>
+                              setAuthConfig({
+                                ...authConfig,
+                                apiKeyKey: e.target.value,
+                              })
+                            }
                             placeholder="API Key name"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyKey || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyKey || "")}`}
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-gray-600 dark:text-gray-400">Value</label>
+                          <label className="text-xs text-[var(--color-text-secondary)]">
+                            Value
+                          </label>
                           <input
                             type="text"
-                            value={authConfig.apiKeyValue || ''}
-                            onChange={(e) => setAuthConfig({ ...authConfig, apiKeyValue: e.target.value })}
+                            value={authConfig.apiKeyValue || ""}
+                            onChange={(e) =>
+                              setAuthConfig({
+                                ...authConfig,
+                                apiKeyValue: e.target.value,
+                              })
+                            }
                             placeholder="API Key value"
-                            className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyValue || '')}`}
+                            className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1 ${getVariableBorderClass(authConfig.apiKeyValue || "")}`}
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-gray-600 dark:text-gray-400">Add to</label>
+                          <label className="text-xs text-[var(--color-text-secondary)]">
+                            Add to
+                          </label>
                           <select
-                            value={authConfig.apiKeyLocation || 'header'}
-                            onChange={(e) => setAuthConfig({ ...authConfig, apiKeyLocation: e.target.value as 'header' | 'query' })}
-                            className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1"
+                            value={authConfig.apiKeyLocation || "header"}
+                            onChange={(e) =>
+                              setAuthConfig({
+                                ...authConfig,
+                                apiKeyLocation: e.target.value as
+                                  | "header"
+                                  | "query",
+                              })
+                            }
+                            className="w-full px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1"
                           >
                             <option value="header">Header</option>
                             <option value="query">Query Params</option>
@@ -3251,35 +3936,58 @@ export function ApiClient() {
                       </div>
                     )}
 
-                    {authConfig.type === 'oauth2' && (
+                    {authConfig.type === "oauth2" && (
                       <div className="space-y-2">
-                        <label className="text-xs text-gray-600 dark:text-gray-400">Access Token</label>
+                        <label className="text-xs text-[var(--color-text-secondary)]">
+                          Access Token
+                        </label>
                         <input
                           type="text"
-                          value={authConfig.oauth2Token || ''}
-                          onChange={(e) => setAuthConfig({ ...authConfig, oauth2Token: e.target.value })}
+                          value={authConfig.oauth2Token || ""}
+                          onChange={(e) =>
+                            setAuthConfig({
+                              ...authConfig,
+                              oauth2Token: e.target.value,
+                            })
+                          }
                           placeholder="Enter OAuth 2.0 access token"
-                          className={`w-full px-3 py-2 rounded border bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs ${getVariableBorderClass(authConfig.oauth2Token || '')}`}
+                          className={`w-full px-3 py-2 rounded border bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs ${getVariableBorderClass(authConfig.oauth2Token || "")}`}
                         />
                       </div>
                     )}
                   </div>
                 )}
 
-                {activeRequestTab === 'pre-request' && (
+                {activeRequestTab === "pre-request" && (
                   <div className="space-y-4 h-full flex flex-col">
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Pre-request Script</div>
+                      <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                        Pre-request Script
+                      </div>
                       <button
-                        onClick={() => setShowPreRequestExamples(!showPreRequestExamples)}
+                        onClick={() =>
+                          setShowPreRequestExamples(!showPreRequestExamples)
+                        }
                         className="px-2 py-1 text-[10px] rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors flex items-center gap-1"
                       >
-                        <Icon name={showPreRequestExamples ? "ChevronDown" : "ChevronRight"} className="w-3 h-3" />
-                        {showPreRequestExamples ? 'Hide' : 'Show'} Examples
+                        <Icon
+                          name={
+                            showPreRequestExamples
+                              ? "ChevronDown"
+                              : "ChevronRight"
+                          }
+                          className="w-3 h-3"
+                        />
+                        {showPreRequestExamples ? "Hide" : "Show"} Examples
                       </button>
                     </div>
                     <p className="text-xs text-[var(--color-text-secondary)]">
-                      Write JavaScript code that runs before the request is sent. Use <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">pm</code> object to access request data and set variables.
+                      Write JavaScript code that runs before the request is
+                      sent. Use{" "}
+                      <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">
+                        pm
+                      </code>{" "}
+                      object to access request data and set variables.
                     </p>
                     {showPreRequestExamples && (
                       <div className="p-2 bg-[var(--color-muted)] rounded text-[10px] font-mono">
@@ -3287,11 +3995,19 @@ export function ApiClient() {
                         <div className="space-y-1 opacity-90">
                           <div>// Set environment variable</div>
                           <div>pm.environment.set('token', 'abc123');</div>
-                          <div className="mt-2">// Use in URL: https://api.example.com/&#123;&#123;baseUrl&#125;&#125;/users</div>
+                          <div className="mt-2">
+                            // Use in URL:
+                            https://api.example.com/&#123;&#123;baseUrl&#125;&#125;/users
+                          </div>
                           <div className="mt-2">// Modify URL dynamically</div>
-                          <div>pm.request.url.update('https://api.example.com/v2/users');</div>
+                          <div>
+                            pm.request.url.update('https://api.example.com/v2/users');
+                          </div>
                           <div className="mt-2">// Set header</div>
-                          <div>pm.request.headers.set('Authorization', 'Bearer ' + pm.environment.get('token'));</div>
+                          <div>
+                            pm.request.headers.set('Authorization', 'Bearer ' +
+                            pm.environment.get('token'));
+                          </div>
                         </div>
                       </div>
                     )}
@@ -3306,36 +4022,56 @@ export function ApiClient() {
                   </div>
                 )}
 
-                {activeRequestTab === 'tests' && (
+                {activeRequestTab === "tests" && (
                   <div className="space-y-4 h-full flex flex-col">
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400">Test Script</div>
+                      <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                        Test Script
+                      </div>
                       <button
                         onClick={() => setShowTestExamples(!showTestExamples)}
                         className="px-2 py-1 text-[10px] rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors flex items-center gap-1"
                       >
-                        <Icon name={showTestExamples ? "ChevronDown" : "ChevronRight"} className="w-3 h-3" />
-                        {showTestExamples ? 'Hide' : 'Show'} Examples
+                        <Icon
+                          name={
+                            showTestExamples ? "ChevronDown" : "ChevronRight"
+                          }
+                          className="w-3 h-3"
+                        />
+                        {showTestExamples ? "Hide" : "Show"} Examples
                       </button>
                     </div>
                     <p className="text-xs text-[var(--color-text-secondary)]">
-                      Write JavaScript code that runs after the response is received. Use the <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">pm</code> object to access response data and write tests.
+                      Write JavaScript code that runs after the response is
+                      received. Use the{" "}
+                      <code className="px-1 py-0.5 bg-[var(--color-muted)] rounded">
+                        pm
+                      </code>{" "}
+                      object to access response data and write tests.
                     </p>
                     {showTestExamples && (
                       <div className="p-2 bg-[var(--color-muted)] rounded text-[10px] font-mono">
                         <div className="mb-1 font-semibold">Examples:</div>
                         <div className="space-y-1 opacity-90">
                           <div>// Test status code</div>
-                          <div>pm.test('Status is 200', () =&gt; {'{'}</div>
-                          <div className="ml-2">pm.expect(pm.response.code).to.equal(200);</div>
-                          <div>{'}'});</div>
-                          <div className="mt-2">// Save token from response</div>
+                          <div>pm.test('Status is 200', () =&gt; {"{"}</div>
+                          <div className="ml-2">
+                            pm.expect(pm.response.code).to.equal(200);
+                          </div>
+                          <div>{"}"});</div>
+                          <div className="mt-2">
+                            // Save token from response
+                          </div>
                           <div>const jsonData = pm.response.json();</div>
-                          <div>pm.environment.set('token', jsonData.token);</div>
+                          <div>
+                            pm.environment.set('token', jsonData.token);
+                          </div>
                           <div className="mt-2">// Test response body</div>
-                          <div>pm.test('Has user data', () =&gt; {'{'}</div>
-                          <div className="ml-2">pm.expect(pm.response.json()).to.have.property('user');</div>
-                          <div>{'}'});</div>
+                          <div>pm.test('Has user data', () =&gt; {"{"}</div>
+                          <div className="ml-2">
+                            pm.expect(pm.response.json()).to.have.property('user');
+                          </div>
+                          <div>{"}"});</div>
                         </div>
                       </div>
                     )}
@@ -3350,17 +4086,23 @@ export function ApiClient() {
                   </div>
                 )}
 
-                {activeRequestTab === 'settings' && (
+                {activeRequestTab === "settings" && (
                   <div className="space-y-4">
-                    <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Request Settings</div>
+                    <div className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                      Request Settings
+                    </div>
                     <div className="space-y-3">
                       <div>
-                        <label className="text-xs text-gray-600 dark:text-gray-400">Timeout (ms)</label>
+                        <label className="text-xs text-[var(--color-text-secondary)]">
+                          Timeout (ms)
+                        </label>
                         <input
                           type="number"
                           value={timeout}
-                          onChange={(e) => setRequestTimeout(Number(e.target.value) || 30000)}
-                          className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs mt-1"
+                          onChange={(e) =>
+                            setRequestTimeout(Number(e.target.value) || 30000)
+                          }
+                          className="w-full px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs mt-1"
                         />
                       </div>
                       <div className="flex items-center gap-2">
@@ -3370,7 +4112,9 @@ export function ApiClient() {
                           onChange={(e) => setFollowRedirects(e.target.checked)}
                           className="w-4 h-4"
                         />
-                        <label className="text-xs text-gray-900 dark:text-white">Follow redirects</label>
+                        <label className="text-xs text-[var(--color-text-primary)]">
+                          Follow redirects
+                        </label>
                       </div>
                       <div className="flex items-center gap-2">
                         <input
@@ -3379,7 +4123,9 @@ export function ApiClient() {
                           onChange={(e) => setSslVerification(e.target.checked)}
                           className="w-4 h-4"
                         />
-                        <label className="text-xs text-gray-900 dark:text-white">SSL certificate verification</label>
+                        <label className="text-xs text-[var(--color-text-primary)]">
+                          SSL certificate verification
+                        </label>
                       </div>
                     </div>
                   </div>
@@ -3394,7 +4140,7 @@ export function ApiClient() {
                 setIsResizingRequest(true);
               }}
               className="w-1 flex-shrink-0 bg-[var(--color-border)] hover:bg-[var(--color-primary)] cursor-col-resize transition-colors group"
-              style={{ cursor: 'col-resize' }}
+              style={{ cursor: "col-resize" }}
             >
               <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 <div className="w-0.5 h-8 bg-[var(--color-primary)] rounded" />
@@ -3407,14 +4153,15 @@ export function ApiClient() {
             >
               {/* Response Tabs */}
               <div className="flex border-b border-[var(--color-border)] bg-[var(--color-sidebar)]">
-                {(['preview', 'raw', 'headers'] as ResponseTab[]).map((tab) => (
+                {(["preview", "raw", "headers"] as ResponseTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveResponseTab(tab)}
-                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${activeResponseTab === tab
-                      ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold'
-                      : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]'
-                      }`}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-all duration-200 relative ${
+                      activeResponseTab === tab
+                        ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-background)] font-semibold"
+                        : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] hover:border-[var(--color-border)]"
+                    }`}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
@@ -3426,9 +4173,16 @@ export function ApiClient() {
                 {loading ? (
                   <div className="h-full flex flex-col items-center justify-center p-8">
                     <div className="flex flex-col items-center text-center">
-                      <Icon name="RefreshCw" className="w-12 h-12 text-blue-500 dark:text-blue-400 mb-3 animate-spin" />
-                      <p className="text-sm font-medium text-[var(--color-text-primary)]">Sending request...</p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">Please wait</p>
+                      <Icon
+                        name="RefreshCw"
+                        className="w-12 h-12 text-[var(--color-primary)] mb-3 animate-spin"
+                      />
+                      <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                        Sending request...
+                      </p>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                        Please wait
+                      </p>
                     </div>
                   </div>
                 ) : response ? (
@@ -3437,13 +4191,12 @@ export function ApiClient() {
                     <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-[var(--color-text-secondary)]">Status:</span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${response.status >= 200 && response.status < 300
-                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                            : response.status >= 400
-                              ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                              : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-                            }`}>
+                          <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                            Status:
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-semibold ${getHttpStatusBadgeClass(response.status)}`}
+                          >
                             {response.status} {response.statusText}
                           </span>
                         </div>
@@ -3455,7 +4208,7 @@ export function ApiClient() {
                           <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
                             <Icon name="FileText" className="w-3.5 h-3.5" />
                             <span>
-                              {typeof response.data === 'string'
+                              {typeof response.data === "string"
                                 ? `${response.data.length} bytes`
                                 : `${JSON.stringify(response.data).length} bytes`}
                             </span>
@@ -3464,16 +4217,20 @@ export function ApiClient() {
                       </div>
                       <button
                         onClick={async () => {
-                          const text = typeof response.data === 'string'
-                            ? response.data
-                            : JSON.stringify(response.data, null, 2);
+                          const text =
+                            typeof response.data === "string"
+                              ? response.data
+                              : JSON.stringify(response.data, null, 2);
                           try {
                             await navigator.clipboard.writeText(text);
                             if ((window as any).showToast) {
-                              (window as any).showToast('Response copied to clipboard', 'success');
+                              (window as any).showToast(
+                                "Response copied to clipboard",
+                                "success",
+                              );
                             }
                           } catch (err) {
-                            console.error('Failed to copy:', err);
+                            console.error("Failed to copy:", err);
                           }
                         }}
                         className="px-3 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] transition-colors flex items-center gap-1.5"
@@ -3483,14 +4240,23 @@ export function ApiClient() {
                         Copy
                       </button>
                     </div>
-                    {activeResponseTab === 'preview' && (
+                    {activeResponseTab === "preview" && (
                       <div className="flex-1 overflow-hidden">
                         {(() => {
-                          const data = typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2);
-                          const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'] || '';
+                          const data =
+                            typeof response.data === "string"
+                              ? response.data
+                              : JSON.stringify(response.data, null, 2);
+                          const contentType =
+                            response.headers?.["content-type"] ||
+                            response.headers?.["Content-Type"] ||
+                            "";
 
                           // Check if it's JSON
-                          if (data.trim().startsWith('{') || data.trim().startsWith('[')) {
+                          if (
+                            data.trim().startsWith("{") ||
+                            data.trim().startsWith("[")
+                          ) {
                             try {
                               const parsed = JSON.parse(data);
                               return (
@@ -3498,15 +4264,16 @@ export function ApiClient() {
                                   height="100%"
                                   defaultLanguage="json"
                                   value={JSON.stringify(parsed, null, 2)}
-                                  theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+                                  theme={getMonacoTheme()}
+                                  beforeMount={onMonacoBeforeMount}
                                   options={{
                                     readOnly: true,
                                     minimap: { enabled: false },
                                     fontSize: 12,
-                                    wordWrap: 'on',
+                                    wordWrap: "on",
                                     padding: { top: 0, bottom: 0 },
                                     automaticLayout: true,
-                                    lineNumbers: 'on',
+                                    lineNumbers: "on",
                                     scrollBeyondLastLine: false,
                                   }}
                                 />
@@ -3517,14 +4284,19 @@ export function ApiClient() {
                           }
 
                           // Check if it's HTML
-                          if (contentType.includes('text/html') || (data.trim().startsWith('<') && data.includes('</'))) {
+                          if (
+                            contentType.includes("text/html") ||
+                            (data.trim().startsWith("<") && data.includes("</"))
+                          ) {
                             // Sanitize HTML to prevent external resource loading
                             const sanitizedHtml = sanitizeHtmlForPreview(data);
-                            
+
                             return (
                               <div className="h-full flex flex-col">
                                 <div className="px-3 py-2 text-xs text-[var(--color-text-tertiary)] bg-[var(--color-muted)] border-b border-[var(--color-border)]">
-                                  <span className="text-yellow-500">⚠️</span> HTML preview (external resources blocked for security)
+                                  <span className="text-[var(--color-semantic-warning)]">⚠️</span>{" "}
+                                  HTML preview (external resources blocked for
+                                  security)
                                 </div>
                                 <iframe
                                   srcDoc={sanitizedHtml}
@@ -3543,15 +4315,16 @@ export function ApiClient() {
                               height="100%"
                               defaultLanguage="plaintext"
                               value={data}
-                              theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+                              theme={getMonacoTheme()}
+                              beforeMount={onMonacoBeforeMount}
                               options={{
                                 readOnly: true,
                                 minimap: { enabled: false },
                                 fontSize: 12,
-                                wordWrap: 'on',
+                                wordWrap: "on",
                                 padding: { top: 0, bottom: 0 },
                                 automaticLayout: true,
-                                lineNumbers: 'on',
+                                lineNumbers: "on",
                                 scrollBeyondLastLine: false,
                               }}
                             />
@@ -3559,47 +4332,80 @@ export function ApiClient() {
                         })()}
                       </div>
                     )}
-                    {activeResponseTab === 'raw' && (
+                    {activeResponseTab === "raw" && (
                       <div className="flex-1 overflow-hidden">
                         <Editor
                           height="100%"
                           defaultLanguage="plaintext"
-                          value={typeof response.data === 'string' ? response.data : JSON.stringify(response.data)}
-                          theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+                          value={
+                            typeof response.data === "string"
+                              ? response.data
+                              : JSON.stringify(response.data)
+                          }
+                          theme={getMonacoTheme()}
+                          beforeMount={onMonacoBeforeMount}
                           options={{
                             readOnly: true,
                             minimap: { enabled: false },
                             fontSize: 12,
-                            wordWrap: 'on',
+                            wordWrap: "on",
                             padding: { top: 0, bottom: 0 },
                             automaticLayout: true,
-                            lineNumbers: 'on',
+                            lineNumbers: "on",
                             scrollBeyondLastLine: false,
                           }}
                         />
                       </div>
                     )}
-                    {activeResponseTab === 'headers' && (
+                    {activeResponseTab === "headers" && (
                       <div className="flex-1 overflow-auto p-4">
                         <div className="space-y-1">
-                          {Object.entries(response.headers || {}).map(([key, value]) => (
-                            <div key={key} className="flex gap-4 py-2 border-b border-[var(--color-border)] last:border-0 text-xs">
-                              <div className="font-semibold text-[var(--color-text-primary)] min-w-[200px] break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{key}</div>
-                              <div className="text-[var(--color-text-secondary)] flex-1 break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{String(value)}</div>
-                            </div>
-                          ))}
+                          {Object.entries(response.headers || {}).map(
+                            ([key, value]) => (
+                              <div
+                                key={key}
+                                className="flex gap-4 py-2 border-b border-[var(--color-border)] last:border-0 text-xs"
+                              >
+                                <div
+                                  className="font-semibold text-[var(--color-text-primary)] min-w-[200px] break-words"
+                                  style={{
+                                    wordBreak: "break-word",
+                                    overflowWrap: "break-word",
+                                  }}
+                                >
+                                  {key}
+                                </div>
+                                <div
+                                  className="text-[var(--color-text-secondary)] flex-1 break-words"
+                                  style={{
+                                    wordBreak: "break-word",
+                                    overflowWrap: "break-word",
+                                  }}
+                                >
+                                  {String(value)}
+                                </div>
+                              </div>
+                            ),
+                          )}
                         </div>
                       </div>
                     )}
                   </div>
                 ) : error ? (
                   <div className="h-full flex flex-col items-center justify-center p-8">
-                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 max-w-2xl w-full">
+                    <div className="error-banner max-w-2xl w-full !text-left">
                       <div className="flex items-start gap-3">
-                        <Icon name="AlertCircle" className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                        <Icon
+                          name="AlertCircle"
+                          className="w-5 h-5 flex-shrink-0 mt-0.5"
+                        />
                         <div className="flex-1">
-                          <h3 className="text-sm font-semibold text-red-800 dark:text-red-400 mb-1">Request Failed</h3>
-                          <p className="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">{error}</p>
+                          <h3 className="text-sm font-semibold mb-1">
+                            Request Failed
+                          </h3>
+                          <p className="text-sm opacity-95 whitespace-pre-wrap break-words">
+                            {error}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -3607,9 +4413,16 @@ export function ApiClient() {
                 ) : (
                   <div className="h-full flex items-center justify-center p-8">
                     <div className="flex flex-col items-center text-center">
-                      <Icon name="Send" className="w-12 h-12 text-[var(--color-text-tertiary)] mb-3 opacity-50" />
-                      <p className="text-sm text-[var(--color-text-secondary)]">Response will appear here</p>
-                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">Click Send to make a request</p>
+                      <Icon
+                        name="Send"
+                        className="w-12 h-12 text-[var(--color-text-tertiary)] mb-3 opacity-50"
+                      />
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        Response will appear here
+                      </p>
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        Click Send to make a request
+                      </p>
                     </div>
                   </div>
                 )}

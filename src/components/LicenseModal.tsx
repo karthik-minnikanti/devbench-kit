@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { validateLicense } from '../services/license';
-import { useStore } from '../state/store';
+import { useState } from "react";
+import { validateLicense } from "../services/license";
+import { useStore } from "../state/store";
 
 interface LicenseModalProps {
   isOpen: boolean;
@@ -8,7 +8,7 @@ interface LicenseModalProps {
 }
 
 export function LicenseModal({ isOpen, onClose }: LicenseModalProps) {
-  const [licenseKey, setLicenseKey] = useState('');
+  const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
   const checkLicense = useStore((state) => state.checkLicense);
 
@@ -20,18 +20,18 @@ export function LicenseModal({ isOpen, onClose }: LicenseModalProps) {
       await validateLicense(licenseKey);
       await checkLicense();
       onClose();
-      setLicenseKey('');
+      setLicenseKey("");
     } catch (error) {
-      alert('Failed to validate license');
+      alert("Failed to validate license");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-      <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-96 shadow-soft-lg">
-        <h3 className="text-lg font-bold mb-4">License Activation</h3>
+    <div className="fixed inset-0 modal-overlay z-50 flex items-center justify-center">
+      <div className="modal-panel p-6 w-96">
+        <h3 className="title-md mb-4">License Activation</h3>
         <input
           type="text"
           value={licenseKey}
@@ -41,10 +41,7 @@ export function LicenseModal({ isOpen, onClose }: LicenseModalProps) {
           autoFocus
         />
         <div className="flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="btn-secondary text-sm"
-          >
+          <button onClick={onClose} className="btn-secondary text-sm">
             Cancel
           </button>
           <button
@@ -52,12 +49,10 @@ export function LicenseModal({ isOpen, onClose }: LicenseModalProps) {
             disabled={loading || !licenseKey.trim()}
             className="btn-primary text-sm disabled:opacity-50"
           >
-            {loading ? 'Validating...' : 'Activate'}
+            {loading ? "Validating..." : "Activate"}
           </button>
         </div>
       </div>
     </div>
   );
 }
-
-

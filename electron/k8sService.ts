@@ -340,6 +340,28 @@ export class K8sService {
     }
 
     /**
+     * Get DaemonSets
+     */
+    async getDaemonSets(namespace?: string): Promise<k8s.V1DaemonSet[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedDaemonSet({ namespace })
+            : await this.appsV1Api.listDaemonSetForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get ReplicaSets
+     */
+    async getReplicaSets(namespace?: string): Promise<k8s.V1ReplicaSet[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedReplicaSet({ namespace })
+            : await this.appsV1Api.listReplicaSetForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
      * Get events for a namespace or pod
      */
     async getEvents(namespace?: string, fieldSelector?: string): Promise<K8sEvent[]> {

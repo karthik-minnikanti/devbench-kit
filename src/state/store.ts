@@ -81,14 +81,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   loadConfig: async () => {
     const config = await getConfig();
-    // Always force light theme - reset if dark is cached
-    if (config.theme === 'dark') {
-      const newConfig = { ...config, theme: 'light' as const };
-      await setConfig(newConfig);
-      set({ config: newConfig });
-    } else {
-      set({ config });
-    }
+    set({ config });
   },
 
   checkLicense: async () => {
@@ -99,9 +92,8 @@ export const useStore = create<AppState>((set, get) => ({
   setCurrentProjectPath: (path: string | null) => set({ currentProjectPath: path }),
 
   setTheme: async (theme: Config['theme']) => {
-    // Always force light theme
     const { config } = get();
-    const newConfig: Config = { ...config, theme: 'light' };
+    const newConfig: Config = { ...(config ?? { theme: 'light' }), theme };
     await setConfig(newConfig);
     set({ config: newConfig });
   },

@@ -1,4 +1,5 @@
-import { Editor } from '@monaco-editor/react';
+import { Editor } from "@monaco-editor/react";
+import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
 
 interface ScriptEditorProps {
   value: string;
@@ -7,22 +8,31 @@ interface ScriptEditorProps {
   height?: string;
 }
 
-export function ScriptEditor({ value, onChange, placeholder = '// Write your script here...', height = '200px' }: ScriptEditorProps) {
+export function ScriptEditor({
+  value,
+  onChange,
+  placeholder = "// Write your script here...",
+  height = "200px",
+}: ScriptEditorProps) {
   return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden" style={{ height }}>
+    <div
+      className="border border-[var(--color-border)] rounded-lg overflow-hidden"
+      style={{ height }}
+    >
       <Editor
         height={height}
         defaultLanguage="javascript"
         value={value}
-        onChange={(val) => onChange(val || '')}
-        theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+        onChange={(val) => onChange(val || "")}
+        theme={getMonacoTheme()}
+          beforeMount={onMonacoBeforeMount}
         options={{
           minimap: { enabled: false },
           fontSize: 12,
-          wordWrap: 'on',
+          wordWrap: "on",
           padding: { top: 8, bottom: 8 },
           automaticLayout: true,
-          lineNumbers: 'on',
+          lineNumbers: "on",
           scrollBeyondLastLine: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: true,
@@ -32,4 +42,3 @@ export function ScriptEditor({ value, onChange, placeholder = '// Write your scr
     </div>
   );
 }
-
