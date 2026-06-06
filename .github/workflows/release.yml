@@ -17,10 +17,13 @@ jobs:
           # Build both mac arches in one job so latest-mac.yml lists all artifacts
           - os: macos-latest
             args: --mac dmg zip --x64 --arm64
+            metadata: release/latest-mac.yml
           - os: windows-latest
             args: --win nsis --x64
+            metadata: release/latest.yml
           - os: ubuntu-latest
             args: --linux AppImage --x64 --arm64
+            metadata: release/latest-linux.yml
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -40,17 +43,43 @@ jobs:
           NODE_ENV: production
           VITE_API_URL: https://dev-api.devbench.in
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Allow uploads when re-running a workflow for an existing release tag
+          EP_GH_IGNORE_TIME: true
 
-      - name: Verify update metadata was published
+      - name: Upload update metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          META="${{ matrix.metadata }}"
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ ! -f "$META" ]]; then
+            echo "Update metadata was not generated: $META"
+            ls -la release/ || true
+            exit 1
+          fi
+
+          echo "Uploading $META to release $TAG"
+          gh release upload "$TAG" "$META" --clobber
+
+      - name: Verify update metadata is downloadable
         shell: bash
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          BASE="https://github.com/karthik-minnikanti/devbench-kit/releases/download/${TAG}"
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            curl -fsSL "${BASE}/latest-mac.yml" | head -20
-          elif [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            curl -fsSL "${BASE}/latest.yml" | head -20
-          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            curl -fsSL "${BASE}/latest-linux.yml" | head -20
-          fi
+          FILE="$(basename "${{ matrix.metadata }}")"
+          URL="https://github.com/karthik-minnikanti/devbench-kit/releases/download/${TAG}/${FILE}"
+
+          for attempt in {1..12}; do
+            if curl -fsSL "$URL" | head -20; then
+              echo "Verified ${FILE} is available"
+              exit 0
+            fi
+            echo "Waiting for ${FILE} (attempt ${attempt}/12)..."
+            sleep 10
+          done
+
+          echo "Update metadata never became available: ${URL}"
+          exit 1
