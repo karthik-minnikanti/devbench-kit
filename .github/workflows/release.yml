@@ -64,6 +64,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:native
+        env:
+          CXXFLAGS: "-std=c++20"
+
       - name: Build and publish
         run: npm run build && npx electron-builder ${{ matrix.args }} --publish always
         env:
