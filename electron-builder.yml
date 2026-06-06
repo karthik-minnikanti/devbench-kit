@@ -18,6 +18,7 @@ publish:
   owner: karthik-minnikanti
   repo: devbench-kit
   releaseType: release
+afterPack: scripts/ad-hoc-sign-mac.js
 protocols:
   name: DevBench
   schemes:
@@ -44,8 +45,9 @@ mac:
       arch:
         - x64
         - arm64
-  # For development/testing without code signing:
-  identity: null
+  # Ad-hoc sign (free, no Apple Developer account). Avoids Gatekeeper's false
+  # "damaged/corrupted" error on Apple Silicon for fully unsigned builds.
+  identity: '-'
   hardenedRuntime: false
   gatekeeperAssess: false
   # For production with code signing, uncomment and set:

@@ -157,13 +157,16 @@ Create UML diagrams using Mermaid syntax:
 ## 📦 Installation
 
 ### macOS
-1. Download the latest `DevBench-*-x64.dmg` (Intel) or `DevBench-*-arm64.dmg` (Apple Silicon) from [GitHub Releases](https://github.com/karthik-minnikanti/devbench-kit/releases)
-2. Open the DMG file
-3. Drag DevBench to your Applications folder
-4. **Important**: Since the app is not code-signed, you'll need to allow Gatekeeper to install it:
-   - Right-click on DevBench in Applications and select "Open"
-   - Click "Open" in the security dialog that appears
-   - Alternatively, you can run: `xattr -cr /Applications/DevBench.app` in Terminal to remove quarantine attributes
+1. Download the latest `DevBench-*-arm64.dmg` (Apple Silicon) or `DevBench-*-x64.dmg` (Intel) from [GitHub Releases](https://github.com/karthik-minnikanti/devbench-kit/releases)
+2. Open the DMG file (it mounts as a disk image — that is normal)
+3. Drag **DevBench** to your **Applications** folder, then eject the disk
+4. **First launch** (unsigned developer app):
+   - **Right-click** DevBench in Applications → **Open** → **Open** again in the dialog  
+   - If macOS says the app is **"damaged" or "corrupted"**, that is a Gatekeeper quarantine message, not a bad download. Fix it with:
+     ```bash
+     xattr -cr /Applications/DevBench.app
+     ```
+     Then right-click → Open once more.
 5. Launch DevBench from Applications
 
 ### Windows
