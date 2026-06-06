@@ -12,10 +12,8 @@ export function SyncStatus() {
             setIsOnline(navigator.onLine);
         };
 
-        // Check status on mount
         updateStatus();
 
-        // Update when online/offline status changes
         const handleOnline = () => {
             setIsOnline(true);
             updateStatus();
@@ -28,7 +26,6 @@ export function SyncStatus() {
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
-        // Check periodically
         const interval = setInterval(updateStatus, 5000);
 
         return () => {
@@ -39,23 +36,24 @@ export function SyncStatus() {
     }, []);
 
     if (pendingCount === 0 && isOnline) {
-        return null; // Don't show anything if everything is synced and online
+        return null;
     }
 
     return (
         <div className="fixed bottom-4 right-4 z-50">
             {!isOnline ? (
-                <div className="bg-yellow-500 text-white px-3 py-2 rounded-lg shadow-lg text-xs font-medium flex items-center gap-2">
+                <div className="bg-[var(--color-timeline-done)] text-white px-3 py-2 rounded-md border border-[var(--color-border)] text-xs font-medium flex items-center gap-2">
                     <span>📴</span>
-                    <span>Offline - Changes will sync when online</span>
+                    <span>Offline — changes will sync when online</span>
                 </div>
             ) : pendingCount > 0 ? (
-                <div className="bg-blue-500 text-white px-3 py-2 rounded-lg shadow-lg text-xs font-medium flex items-center gap-2">
+                <div className="bg-[var(--color-primary)] text-white px-3 py-2 rounded-md border border-[var(--color-border)] text-xs font-medium flex items-center gap-2">
                     <span className="animate-spin">⏳</span>
-                    <span>Syncing {pendingCount} item{pendingCount !== 1 ? 's' : ''}...</span>
+                    <span>
+                        Syncing {pendingCount} item{pendingCount !== 1 ? 's' : ''}...
+                    </span>
                 </div>
             ) : null}
         </div>
     );
 }
-

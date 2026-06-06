@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Build both mac arches in one job so latest-mac.yml lists all artifacts
+          - os: macos-latest
+            args: --mac dmg zip --x64 --arm64
+          - os: windows-latest
+            args: --win nsis --x64
+          - os: ubuntu-latest
+            args: --linux AppImage --x64 --arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and publish
+        run: npm run build && npx electron-builder ${{ matrix.args }} --publish always
+        env:
+          NODE_ENV: production
+          VITE_API_URL: https://dev-api.devbench.in
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify update metadata was published
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          BASE="https://github.com/karthik-minnikanti/devbench-kit/releases/download/${TAG}"
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            curl -fsSL "${BASE}/latest-mac.yml" | head -20
+          elif [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            curl -fsSL "${BASE}/latest.yml" | head -20
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            curl -fsSL "${BASE}/latest-linux.yml" | head -20
+          fi

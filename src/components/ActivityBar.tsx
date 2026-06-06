@@ -24,7 +24,7 @@ const activities: Activity[] = [
 
 export function ActivityBar({ activeActivity, onActivityChange }: ActivityBarProps) {
     return (
-        <div className="w-14 bg-gray-100 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col items-center py-3 gap-2">
+        <div className="w-14 bg-[var(--color-background-soft)] border-r border-[var(--color-border)] flex flex-col items-center py-3 gap-2">
             {activities.map((activity) => {
                 const isActive = activeActivity === activity.id;
                 return (
@@ -33,22 +33,22 @@ export function ActivityBar({ activeActivity, onActivityChange }: ActivityBarPro
                         onClick={() => onActivityChange(activity.id)}
                         title={activity.tooltip}
                         className={`
-                            w-11 h-11 flex items-center justify-center rounded-lg transition-all duration-150
+                            w-11 h-11 flex items-center justify-center rounded-md transition-colors duration-150
                             relative group
-                            ${isActive 
-                                ? 'bg-blue-500 dark:bg-blue-600 text-white shadow-md' 
-                                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
+                            ${
+                                isActive
+                                    ? 'bg-[var(--color-primary)] text-white'
+                                    : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] hover:text-[var(--color-text-primary)]'
                             }
                         `}
                     >
                         <span className="text-xl">{activity.icon}</span>
                         {isActive && (
-                            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-500 dark:bg-blue-400 rounded-r" />
+                            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-[var(--color-primary)] rounded-r" />
                         )}
-                        {/* Tooltip */}
-                        <div className="absolute left-full ml-3 px-3 py-1.5 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                        <div className="absolute left-full ml-3 px-3 py-1.5 bg-[var(--color-text-primary)] text-[var(--color-background)] text-xs rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 border border-[var(--color-border)]">
                             {activity.tooltip}
-                            <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-4 border-t-transparent border-r-4 border-r-gray-900 dark:border-r-gray-700 border-b-4 border-b-transparent" />
+                            <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-4 border-t-transparent border-r-4 border-r-[var(--color-text-primary)] border-b-4 border-b-transparent" />
                         </div>
                     </button>
                 );
@@ -56,4 +56,3 @@ export function ActivityBar({ activeActivity, onActivityChange }: ActivityBarPro
         </div>
     );
 }
-

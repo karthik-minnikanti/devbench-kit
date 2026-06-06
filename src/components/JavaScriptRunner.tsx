@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
-import { Editor } from '@monaco-editor/react';
-import { runJavaScriptCodeInMainProcess } from '../utils/jsRunner';
-import { addHistoryEntry } from '../services/history';
-import { useStore } from '../state/store';
-import { getSnippets, saveSnippet, loadSnippet, deleteSnippet, Snippet } from '../services/snippets';
+import { useState, useEffect, useRef } from "react";
+import { Editor } from "@monaco-editor/react";
+import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
+import { runJavaScriptCodeInMainProcess } from "../utils/jsRunner";
+import { addHistoryEntry } from "../services/history";
+import { useStore } from "../state/store";
+import {
+  getSnippets,
+  saveSnippet,
+  loadSnippet,
+  deleteSnippet,
+  Snippet,
+} from "../services/snippets";
 
 export function JavaScriptRunner() {
   const loadHistory = useStore((state) => state.loadHistory);
@@ -18,7 +25,7 @@ console.log("Data:", JSON.stringify(data, null, 2));
 const result = 10 + 20;
 console.log("Result:", result);
 `);
-  const [output, setOutput] = useState('');
+  const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [executionTime, setExecutionTime] = useState(0);
@@ -30,9 +37,9 @@ console.log("Result:", result);
   const [currentSnippetId, setCurrentSnippetId] = useState<string | null>(null);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [showSnippetModal, setShowSnippetModal] = useState(false);
-  const [snippetName, setSnippetName] = useState<string>('');
+  const [snippetName, setSnippetName] = useState<string>("");
   const [installingPackage, setInstallingPackage] = useState(false);
-  const [packageName, setPackageName] = useState('');
+  const [packageName, setPackageName] = useState("");
   const [installedPackages, setInstalledPackages] = useState<string[]>([]);
 
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -70,12 +77,12 @@ console.log("Result:", result);
     // Wait for Electron API to be available
     let retries = 0;
     while (!window.electronAPI && retries < 10) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       retries++;
     }
 
     if (!window.electronAPI) {
-      console.error('Electron API not available after waiting');
+      console.error("Electron API not available after waiting");
       return;
     }
 
@@ -85,20 +92,23 @@ console.log("Result:", result);
         setInstalledPackages(result.packages || []);
       }
     } catch (err) {
-      console.error('Failed to load packages:', err);
+      console.error("Failed to load packages:", err);
     }
   };
 
   const handleAutoSave = async () => {
     if (currentSnippetId) {
-      await saveSnippet({ name: snippetName || 'Untitled', code }, currentSnippetId);
+      await saveSnippet(
+        { name: snippetName || "Untitled", code },
+        currentSnippetId,
+      );
     }
   };
 
   const handleRun = async () => {
     setLoading(true);
     setError(null);
-    setOutput('');
+    setOutput("");
 
     try {
       const result = await runJavaScriptCodeInMainProcess(code, timeoutMs);
@@ -108,10 +118,13 @@ console.log("Result:", result);
 
       if (saveOnRun && !result.error) {
         if (currentSnippetId) {
-          await saveSnippet({ name: snippetName || 'Untitled', code }, currentSnippetId);
+          await saveSnippet(
+            { name: snippetName || "Untitled", code },
+            currentSnippetId,
+          );
         } else {
           await addHistoryEntry({
-            type: 'js-snippet',
+            type: "js-snippet",
             code,
             output: result.output,
           });
@@ -121,15 +134,15 @@ console.log("Result:", result);
 
       if (!result.error && result.output) {
         await addHistoryEntry({
-          type: 'js-snippet',
+          type: "js-snippet",
           code,
           output: result.output,
         });
         await loadHistory();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Execution failed');
-      setOutput('');
+      setError(err instanceof Error ? err.message : "Execution failed");
+      setOutput("");
     } finally {
       setLoading(false);
     }
@@ -137,37 +150,40 @@ console.log("Result:", result);
 
   const handleSaveSnippet = async () => {
     if (!snippetName.trim()) {
-      alert('Please enter a snippet name');
+      alert("Please enter a snippet name");
       return;
     }
 
     try {
-      const result = await saveSnippet({ name: snippetName, code }, currentSnippetId || undefined);
+      const result = await saveSnippet(
+        { name: snippetName, code },
+        currentSnippetId || undefined,
+      );
       if (result.success && result.snippet) {
         setCurrentSnippetId(result.snippet.id);
         setShowSnippetModal(false);
         await loadSnippets();
       }
     } catch (err) {
-      alert('Failed to save snippet');
+      alert("Failed to save snippet");
     }
   };
 
   const handleLoadSnippet = async (snippetId: string) => {
     const snippet = await loadSnippet(snippetId);
     if (snippet) {
-      setCode(snippet.code || '');
-      setSnippetName(snippet.name || '');
+      setCode(snippet.code || "");
+      setSnippetName(snippet.name || "");
       setCurrentSnippetId(snippet.id);
     }
   };
 
   const handleDeleteSnippet = async (snippetId: string) => {
-    if (confirm('Delete this snippet?')) {
+    if (confirm("Delete this snippet?")) {
       await deleteSnippet(snippetId);
       if (currentSnippetId === snippetId) {
         setCurrentSnippetId(null);
-        setSnippetName('');
+        setSnippetName("");
       }
       await loadSnippets();
     }
@@ -181,61 +197,67 @@ console.log("Result:", result);
       // Wait for Electron API to be available
       let retries = 0;
       while (!window.electronAPI && retries < 10) {
-        await new Promise<void>(resolve => window.setTimeout(resolve, 100));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
         retries++;
       }
 
       if (!window.electronAPI) {
-        throw new Error('Electron API not available. Please restart the app or check the console for errors.');
+        throw new Error(
+          "Electron API not available. Please restart the app or check the console for errors.",
+        );
       }
 
       const result = await window.electronAPI.npm.install(packageName);
       if (result.success) {
         const installedName = packageName;
-        setPackageName('');
+        setPackageName("");
         await loadInstalledPackages();
         alert(`Package "${installedName}" installed successfully!`);
       } else {
         alert(`Failed to install package: ${result.error}`);
       }
     } catch (err) {
-      alert(`Failed to install package: ${err instanceof Error ? err.message : String(err)}`);
+      alert(
+        `Failed to install package: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setInstallingPackage(false);
     }
   };
 
   const handleClear = () => {
-    setCode('');
-    setOutput('');
+    setCode("");
+    setOutput("");
     setError(null);
     setCurrentSnippetId(null);
-    setSnippetName('');
+    setSnippetName("");
   };
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100/50 dark:border-gray-800/50 bg-gradient-to-r from-gray-50/30 to-transparent dark:from-gray-800/30 backdrop-blur-sm flex items-center justify-between flex-shrink-0">
-        <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2 tracking-tight">
+      <div className="tool-header">
+        <h2 className="title-sm flex items-center gap-2">
           <span className="text-lg">⚡</span>
           JavaScript Runner
         </h2>
         <div className="flex items-center gap-2">
           <select
-            value={currentSnippetId || ''}
+            value={currentSnippetId || ""}
             onChange={(e) => {
               if (e.target.value) {
                 handleLoadSnippet(e.target.value);
               } else {
                 setCurrentSnippetId(null);
-                setSnippetName('');
+                setSnippetName("");
               }
             }}
             className="input-field text-xs w-40"
           >
             <option value="">New Snippet</option>
-            {snippets.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+            {snippets.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
             ))}
           </select>
 
@@ -246,7 +268,7 @@ console.log("Result:", result);
             💾 Save
           </button>
 
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+          <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer">
             <input
               type="checkbox"
               checked={autoSaveEnabled}
@@ -269,7 +291,7 @@ console.log("Result:", result);
             />
           )}
 
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+          <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer">
             <input
               type="checkbox"
               checked={saveOnRun}
@@ -290,10 +312,7 @@ console.log("Result:", result);
             className="w-28 input-field text-xs"
             min="100"
           />
-          <button
-            onClick={handleClear}
-            className="btn-secondary text-xs"
-          >
+          <button onClick={handleClear} className="btn-secondary text-xs">
             🗑️ Clear
           </button>
           <button
@@ -301,70 +320,73 @@ console.log("Result:", result);
             disabled={loading}
             className="btn-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
-            {loading ? '⏳ Running...' : '▶️ Run Code'}
+            {loading ? "⏳ Running..." : "▶️ Run Code"}
           </button>
         </div>
       </div>
 
-      <div className="px-6 py-2 border-b border-gray-100/50 dark:border-gray-800/50 bg-gray-50/30 dark:bg-gray-800/30 flex items-center gap-2 flex-shrink-0">
-        <span className="text-xs font-medium text-gray-600 dark:text-gray-400">NPM:</span>
+      <div className="px-6 py-2 border-b border-[var(--color-border)] bg-[var(--color-muted)]/30 flex items-center gap-2 flex-shrink-0">
+        <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+          NPM:
+        </span>
         <input
           type="text"
-          value={packageName || ''}
-          onChange={(e) => setPackageName(e.target.value || '')}
+          value={packageName || ""}
+          onChange={(e) => setPackageName(e.target.value || "")}
           placeholder="Package name (e.g., lodash)"
           className="input-field text-xs flex-1 max-w-xs"
-          onKeyPress={(e) => e.key === 'Enter' && handleInstallPackage()}
+          onKeyPress={(e) => e.key === "Enter" && handleInstallPackage()}
         />
         <button
           onClick={handleInstallPackage}
           disabled={installingPackage || !packageName.trim()}
           className="btn-secondary text-xs disabled:opacity-50"
         >
-          {installingPackage ? '⏳ Installing...' : '📦 Install'}
+          {installingPackage ? "⏳ Installing..." : "📦 Install"}
         </button>
         {installedPackages.length > 0 && (
-          <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
             <span>Installed:</span>
-            <span className="font-mono">{installedPackages.join(', ')}</span>
+            <span className="font-mono">{installedPackages.join(", ")}</span>
           </div>
         )}
       </div>
 
       <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card shadow-soft overflow-hidden">
-          <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-transparent dark:from-gray-800/50 backdrop-blur-sm border-b border-gray-100 dark:border-gray-800">
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-primary-500 rounded-full"></span>
+        <div className="flex-1 flex flex-col card overflow-hidden">
+          <div className="px-4 py-2.5 editor-pane-header">
+            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
               JavaScript Code {currentSnippetId && `(${snippetName})`}
             </div>
           </div>
-          <div className="flex-1" style={{ backgroundColor: '#1e1e1e' }}>
+          <div className="flex-1" style={{ backgroundColor: "#1e1e1e" }}>
             <Editor
               height="100%"
               width="100%"
               defaultLanguage="javascript"
               value={code}
-              onChange={(value) => setCode(value || '')}
-              theme="vs-dark"
+              onChange={(value) => setCode(value || "")}
+              theme={getMonacoTheme()}
+              beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
-                wordWrap: 'on',
+                wordWrap: "on",
                 padding: { top: 16, bottom: 16 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card shadow-soft overflow-hidden">
-          <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-transparent dark:from-gray-800/50 backdrop-blur-sm border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+        <div className="flex-1 flex flex-col card overflow-hidden">
+          <div className="px-4 py-2.5 editor-pane-header flex items-center justify-between">
+            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
               Output
             </div>
             {executionTime > 0 && (
-              <span className="text-xs text-gray-500 dark:text-gray-400">
+              <span className="text-xs text-[var(--color-text-tertiary)]">
                 {executionTime}ms
               </span>
             )}
@@ -374,19 +396,25 @@ console.log("Result:", result);
               height="100%"
               width="100%"
               defaultLanguage="plaintext"
-              value={output || (error ? `Error: ${error}` : '// Output will appear here...\n// Use require() to import installed npm packages')}
-              theme={document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'}
+              value={
+                output ||
+                (error
+                  ? `Error: ${error}`
+                  : "// Output will appear here...\n// Use require() to import installed npm packages")
+              }
+              theme={getMonacoTheme()}
+          beforeMount={onMonacoBeforeMount}
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
                 fontSize: 14,
-                wordWrap: 'on',
+                wordWrap: "on",
                 padding: { top: 16, bottom: 16 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="absolute bottom-4 left-4 right-4 bg-red-500/95 dark:bg-red-600/95 backdrop-blur-sm border border-red-400/50 text-white px-4 py-3 rounded-xl shadow-soft-lg animate-slide-up">
+              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">⚠️</span>
                   <span className="font-medium">{error}</span>
@@ -398,13 +426,13 @@ console.log("Result:", result);
       </div>
 
       {showSnippetModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-96 shadow-soft-lg">
-            <h3 className="text-lg font-bold mb-4">Save Snippet</h3>
+        <div className="fixed inset-0 modal-overlay z-50 flex items-center justify-center">
+          <div className="modal-panel p-6 w-96">
+            <h3 className="title-md mb-4">Save Snippet</h3>
             <input
               type="text"
-              value={snippetName || ''}
-              onChange={(e) => setSnippetName(e.target.value || '')}
+              value={snippetName || ""}
+              onChange={(e) => setSnippetName(e.target.value || "")}
               placeholder="Snippet name"
               className="input-field w-full mb-4"
               autoFocus
@@ -413,7 +441,7 @@ console.log("Result:", result);
               <button
                 onClick={() => {
                   setShowSnippetModal(false);
-                  setSnippetName('');
+                  setSnippetName("");
                 }}
                 className="btn-secondary text-sm"
               >
@@ -432,5 +460,3 @@ console.log("Result:", result);
     </div>
   );
 }
-
-

@@ -59,10 +59,11 @@ export async function saveVariable(variableData: Omit<Variable, 'id' | 'createdA
     const variables = getStoredVariables();
     const existingIndex = variables.findIndex(v => v.id === variableData.id);
     
+    const existing = existingIndex >= 0 ? variables[existingIndex] : undefined;
     const variable: Variable = {
       ...variableData,
       id: variableData.id || Date.now().toString(),
-      createdAt: variableData.createdAt || new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     

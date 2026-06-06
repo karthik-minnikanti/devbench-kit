@@ -25,6 +25,17 @@ interface HTMLWebViewElement extends HTMLElement {
 }
 
 declare global {
+    interface K8sClusterProfile {
+        id: string;
+        name: string;
+        kubeconfigPath: string;
+        context: string;
+        defaultNamespace?: string;
+        sourceType: 'managed' | 'system';
+        createdAt: string;
+        lastUsedAt?: string;
+    }
+
     interface Window {
         electronAPI: {
             config: {
@@ -70,6 +81,16 @@ declare global {
                 shellStop: (containerId: string) => Promise<any>;
             };
             k8s: {
+                clusters: {
+                    list: () => Promise<{ success: boolean; clusters: K8sClusterProfile[]; activeClusterId: string | null; error?: string }>;
+                    getActive: () => Promise<{ success: boolean; cluster: K8sClusterProfile | null; error?: string }>;
+                    add: (payload: { name: string; configPath: string; context: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                    activate: (clusterId: string) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                    remove: (clusterId: string) => Promise<{ success: boolean; activeCluster?: K8sClusterProfile | null; error?: string }>;
+                    update: (payload: { id: string; name?: string; context?: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                };
+                pickKubeconfig: () => Promise<{ success: boolean; canceled?: boolean; filePath?: string; contexts?: string[]; defaultContext?: string; error?: string }>;
+                contextsFromFile: (configPath: string) => Promise<{ success: boolean; contexts?: string[]; defaultContext?: string; error?: string }>;
                 contexts: () => Promise<any>;
                 currentContext: () => Promise<any>;
                 useContext: (context: string) => Promise<any>;
@@ -85,6 +106,25 @@ declare global {
                 shellInput: (podName: string, namespace: string, input: string) => Promise<any>;
                 shellStop: (podName: string, namespace: string) => Promise<any>;
                 command: (command: string) => Promise<any>;
+                diagnose: (podName: string, namespace: string) => Promise<any>;
+                timeline: (namespace: string, podName?: string) => Promise<any>;
+                dependencyGraph: (namespace: string) => Promise<any>;
+                events: (namespace?: string, fieldSelector?: string) => Promise<any>;
+                search: (query: { image?: string; envVar?: string; labelSelector?: string; namespace?: string }) => Promise<any>;
+                scale: (name: string, namespace: string, replicas: number, environment?: string) => Promise<any>;
+                restartPod: (name: string, namespace: string, environment?: string) => Promise<any>;
+                rolloutRestart: (name: string, namespace: string, environment?: string) => Promise<any>;
+                deployments: (namespace?: string) => Promise<any>;
+                services: (namespace?: string) => Promise<any>;
+                configMaps: (namespace?: string) => Promise<any>;
+                secrets: (namespace?: string) => Promise<any>;
+                nodes: () => Promise<any>;
+                statefulSets: (namespace?: string) => Promise<any>;
+                jobs: (namespace?: string) => Promise<any>;
+                cronJobs: (namespace?: string) => Promise<any>;
+                ingresses: (namespace?: string) => Promise<any>;
+                daemonSets: (namespace?: string) => Promise<any>;
+                replicaSets: (namespace?: string) => Promise<any>;
             };
             notes: {
                 list: () => Promise<any>;
@@ -102,6 +142,64 @@ declare global {
                 minimize: () => Promise<void>;
                 maximize: () => Promise<void>;
                 close: () => Promise<void>;
+                openPlanner: () => Promise<void>;
+            };
+            planner: {
+                get: (date: string) => Promise<any>;
+                getEntries: (startDate?: string, endDate?: string) => Promise<any>;
+                save: (entry: any) => Promise<any>;
+                delete: (date: string) => Promise<any>;
+                broadcastUpdate: (date: string) => Promise<void>;
+                onUpdate: (callback: (date: string) => void) => void;
+            };
+            habits: {
+                getAll: () => Promise<any>;
+                get: (habitId: string) => Promise<any>;
+                save: (habit: any) => Promise<any>;
+                delete: (habitId: string) => Promise<any>;
+                getCompletions: (habitId: string, startDate?: string, endDate?: string) => Promise<any>;
+                getAllCompletions: (startDate?: string, endDate?: string) => Promise<any>;
+                setCompletion: (habitId: string, date: string, completed: boolean) => Promise<any>;
+            };
+            apiClient: {
+                request: (requestData: any) => Promise<any>;
+                get: () => Promise<any>;
+                getRequest: (id: string) => Promise<any>;
+                saveRequest: (request: any) => Promise<any>;
+                deleteRequest: (id: string) => Promise<any>;
+                save: (requests: any[]) => Promise<any>;
+                getHistory: () => Promise<any>;
+                saveHistory: (history: any[]) => Promise<any>;
+                getConsoleLogs: () => Promise<any>;
+                saveConsoleLogs: (logs: any[]) => Promise<any>;
+                getEnvironments: () => Promise<any>;
+                saveEnvironments: (data: { environments: any[]; activeEnvironmentId: string | null }) => Promise<any>;
+            };
+            folders: {
+                get: (parentId?: string | null) => Promise<any>;
+                save: (folder: any) => Promise<any>;
+                delete: (folderId: string) => Promise<any>;
+            };
+            git: {
+                getRepoPath: () => Promise<{ success: boolean; repoPath?: string; error?: string }>;
+                setRepoPath: (repoPath: string) => Promise<any>;
+                initRepo: (repoPath: string) => Promise<any>;
+                checkIfRepo: (repoPath: string) => Promise<any>;
+                sync: (filePaths?: string[], commitMessage?: string) => Promise<any>;
+                status: () => Promise<any>;
+                pull: () => Promise<any>;
+            };
+            updater: {
+                checkForUpdates: () => Promise<any>;
+                downloadUpdate: () => Promise<any>;
+                quitAndInstall: () => Promise<any>;
+                getAppVersion: () => Promise<any>;
+                onCheckingForUpdate: (callback: () => void) => void;
+                onUpdateAvailable: (callback: (info: any) => void) => void;
+                onUpdateNotAvailable: (callback: (info: any) => void) => void;
+                onUpdateError: (callback: (error: any) => void) => void;
+                onDownloadProgress: (callback: (progress: any) => void) => void;
+                onUpdateDownloaded: (callback: (info: any) => void) => void;
             };
             auth: {
                 openOAuth: (url: string) => Promise<string>;

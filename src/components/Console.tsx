@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { Icon } from './Icon';
+import { useEffect, useRef } from "react";
+import { Icon } from "./Icon";
 
 export interface ConsoleLog {
   id: string;
-  type: 'log' | 'error' | 'warn' | 'info' | 'request' | 'response';
+  type: "log" | "error" | "warn" | "info" | "request" | "response";
   message: string;
   timestamp: string;
   data?: any;
@@ -21,43 +21,70 @@ export function Console({ isOpen, onClose, logs, onClear }: ConsoleProps) {
 
   useEffect(() => {
     if (isOpen && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs, isOpen]);
 
   if (!isOpen) return null;
 
-  const getLogIcon = (type: ConsoleLog['type']) => {
+  const getLogIcon = (type: ConsoleLog["type"]) => {
     switch (type) {
-      case 'error':
-        return <Icon name="AlertCircle" className="w-4 h-4 text-red-500" />;
-      case 'warn':
-        return <Icon name="AlertTriangle" className="w-4 h-4 text-yellow-500" />;
-      case 'info':
-        return <Icon name="Info" className="w-4 h-4 text-blue-500" />;
-      case 'request':
-        return <Icon name="Send" className="w-4 h-4 text-[var(--color-primary)]" />;
-      case 'response':
-        return <Icon name="Check" className="w-4 h-4 text-green-500" />;
+      case "error":
+        return (
+          <Icon
+            name="AlertCircle"
+            className="w-4 h-4 text-[var(--color-semantic-error)]"
+          />
+        );
+      case "warn":
+        return (
+          <Icon
+            name="AlertTriangle"
+            className="w-4 h-4 text-[var(--color-semantic-warning)]"
+          />
+        );
+      case "info":
+        return (
+          <Icon
+            name="Info"
+            className="w-4 h-4 text-[var(--color-text-secondary)]"
+          />
+        );
+      case "request":
+        return (
+          <Icon name="Send" className="w-4 h-4 text-[var(--color-primary)]" />
+        );
+      case "response":
+        return (
+          <Icon
+            name="Check"
+            className="w-4 h-4 text-[var(--color-semantic-success)]"
+          />
+        );
       default:
-        return <Icon name="FileText" className="w-4 h-4 text-[var(--color-text-secondary)]" />;
+        return (
+          <Icon
+            name="FileText"
+            className="w-4 h-4 text-[var(--color-text-secondary)]"
+          />
+        );
     }
   };
 
-  const getLogColor = (type: ConsoleLog['type']) => {
+  const getLogColor = (type: ConsoleLog["type"]) => {
     switch (type) {
-      case 'error':
-        return 'text-red-500 bg-red-50 dark:bg-red-900/20';
-      case 'warn':
-        return 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20';
-      case 'info':
-        return 'text-blue-500 bg-blue-50 dark:bg-blue-900/20';
-      case 'request':
-        return 'text-[var(--color-primary)] bg-[var(--color-primary)]/10';
-      case 'response':
-        return 'text-green-500 bg-green-50 dark:bg-green-900/20';
+      case "error":
+        return "text-[var(--color-semantic-error)] bg-[var(--color-semantic-error)]/10";
+      case "warn":
+        return "text-[var(--color-semantic-warning)] bg-[var(--color-semantic-warning)]/10";
+      case "info":
+        return "text-[var(--color-text-secondary)] bg-[var(--color-muted)]";
+      case "request":
+        return "text-[var(--color-primary)] bg-[var(--color-primary)]/10";
+      case "response":
+        return "text-[var(--color-semantic-success)] bg-[var(--color-semantic-success)]/10";
       default:
-        return 'text-[var(--color-text-primary)]';
+        return "text-[var(--color-text-primary)]";
     }
   };
 
@@ -67,10 +94,18 @@ export function Console({ isOpen, onClose, logs, onClear }: ConsoleProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-[var(--color-background)] rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 modal-overlay flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-background)] rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">Console</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+            Console
+          </h2>
           <div className="flex items-center gap-2">
             {logs.length > 0 && (
               <button
@@ -95,8 +130,13 @@ export function Console({ isOpen, onClose, logs, onClear }: ConsoleProps) {
         <div className="flex-1 overflow-y-auto p-4 font-mono text-xs">
           {logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <Icon name="Terminal" className="w-16 h-16 text-[var(--color-text-tertiary)] mb-4 opacity-50" />
-              <p className="text-sm text-[var(--color-text-secondary)]">Console is empty</p>
+              <Icon
+                name="Terminal"
+                className="w-16 h-16 text-[var(--color-text-tertiary)] mb-4 opacity-50"
+              />
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Console is empty
+              </p>
               <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
                 Script logs and request details will appear here
               </p>
@@ -144,4 +184,3 @@ export function Console({ isOpen, onClose, logs, onClear }: ConsoleProps) {
     </div>
   );
 }
-

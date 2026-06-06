@@ -12,16 +12,15 @@ export function Sidebar({ isOpen, onClose, title, children, width = 300 }: Sideb
     if (!isOpen) return null;
 
     return (
-        <div 
-            className="bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col h-full shadow-lg"
+        <div
+            className="bg-[var(--color-card)] border-l border-[var(--color-border)] flex flex-col h-full"
             style={{ width: `${width}px` }}
         >
-            {/* Sidebar Header */}
-            <div className="h-12 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
-                <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{title}</h2>
+            <div className="h-12 flex items-center justify-between px-4 border-b border-[var(--color-border)] bg-[var(--color-background-soft)]">
+                <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h2>
                 <button
                     onClick={onClose}
-                    className="w-8 h-8 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+                    className="w-8 h-8 flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] rounded-md transition-colors"
                     title="Close sidebar"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -29,12 +28,8 @@ export function Sidebar({ isOpen, onClose, title, children, width = 300 }: Sideb
                     </svg>
                 </button>
             </div>
-            
-            {/* Sidebar Content */}
-            <div className="flex-1 overflow-auto">
-                {children}
-            </div>
+
+            <div className="flex-1 overflow-auto">{children}</div>
         </div>
     );
 }
-

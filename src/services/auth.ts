@@ -1,7 +1,5 @@
 import axios from 'axios';
-
-// Ensure API URL is always localhost:3001 for desktop app
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { API_URL, OAUTH_REDIRECT_URL } from '../config/api';
 
 export interface User {
     id: string;
@@ -16,7 +14,7 @@ export async function loginWithGoogle(): Promise<void> {
         try {
             // For Electron, use a special redirect URL that the OAuth window can catch
             // The backend will redirect to this URL with the token
-            const redirectUrl = 'http://localhost:5173/auth/callback';
+            const redirectUrl = OAUTH_REDIRECT_URL;
             const oauthUrl = `${API_URL}/api/auth/google?redirect=${encodeURIComponent(redirectUrl)}`;
             
             const token = await window.electronAPI.auth.openOAuth(oauthUrl);

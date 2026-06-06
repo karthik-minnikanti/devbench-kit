@@ -1,42 +1,55 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './state/store';
-import { JsonEditor } from './components/JsonEditor';
-import { OutputTabs } from './components/OutputTabs';
-import { SchemaOptions } from './components/SchemaOptions';
-import { HistoryPanel } from './components/HistoryPanel';
-import { JsonXmlConverter } from './components/JsonXmlConverter';
-import { EncoderDecoder } from './components/EncoderDecoder';
-import { ApiClient } from './components/ApiClient';
-import { Formatter } from './components/Formatter';
-import { JavaScriptRunner } from './components/JavaScriptRunner';
-import { DockerContainer } from './components/DockerContainer';
-import { Kubernetes } from './components/Kubernetes';
-import { Notes } from './components/Notes';
-import { ExcalidrawComponent } from './components/Excalidraw';
-import { UmlEditor } from './components/UmlEditor';
 import { TabType } from './components/CategorizedTabs';
-import { JsonDiff } from './components/JsonDiff';
-import { RegexTester } from './components/RegexTester';
-import { CsvYamlConverter } from './components/CsvYamlConverter';
-import { GlobalSearch } from './components/GlobalSearch';
-import { Profile } from './components/Profile';
-import { DailyPlanner } from './components/DailyPlanner';
-import { Home } from './components/Home';
 import { TopNavigationBar } from './components/TopNavigationBar';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
-import { Icons } from './components/Icons';
-import { BrandLogo } from './components/BrandLogo';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
 import { UpdateNotification } from './components/UpdateNotification';
+import { getElectronAPI } from './utils/electronAPI';
+import { appEvents, EVENTS, openTool as emitOpenTool } from './utils/appEvents';
+import { handleError } from './utils/errorHandler';
+
+// Lazy load heavy components for code splitting
+const JsonEditor = lazy(() => import('./components/JsonEditor').then(m => ({ default: m.JsonEditor })));
+const OutputTabs = lazy(() => import('./components/OutputTabs').then(m => ({ default: m.OutputTabs })));
+const SchemaOptions = lazy(() => import('./components/SchemaOptions').then(m => ({ default: m.SchemaOptions })));
+const HistoryPanel = lazy(() => import('./components/HistoryPanel').then(m => ({ default: m.HistoryPanel })));
+const JsonXmlConverter = lazy(() => import('./components/JsonXmlConverter').then(m => ({ default: m.JsonXmlConverter })));
+const EncoderDecoder = lazy(() => import('./components/EncoderDecoder').then(m => ({ default: m.EncoderDecoder })));
+const ApiClient = lazy(() => import('./components/ApiClient').then(m => ({ default: m.ApiClient })));
+const Formatter = lazy(() => import('./components/Formatter').then(m => ({ default: m.Formatter })));
+const JavaScriptRunner = lazy(() => import('./components/JavaScriptRunner').then(m => ({ default: m.JavaScriptRunner })));
+const DockerContainer = lazy(() => import('./components/DockerContainer').then(m => ({ default: m.DockerContainer })));
+const Kubernetes = lazy(() => import('./components/Kubernetes').then(m => ({ default: m.Kubernetes })));
+const Notes = lazy(() => import('./components/Notes').then(m => ({ default: m.Notes })));
+const ExcalidrawComponent = lazy(() => import('./components/Excalidraw').then(m => ({ default: m.ExcalidrawComponent })));
+const UmlEditor = lazy(() => import('./components/UmlEditor').then(m => ({ default: m.UmlEditor })));
+const JsonDiff = lazy(() => import('./components/JsonDiff').then(m => ({ default: m.JsonDiff })));
+const RegexTester = lazy(() => import('./components/RegexTester').then(m => ({ default: m.RegexTester })));
+const CsvYamlConverter = lazy(() => import('./components/CsvYamlConverter').then(m => ({ default: m.CsvYamlConverter })));
+const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(m => ({ default: m.GlobalSearch })));
+const Profile = lazy(() => import('./components/Profile').then(m => ({ default: m.Profile })));
+const DailyPlanner = lazy(() => import('./components/DailyPlanner').then(m => ({ default: m.DailyPlanner })));
+// Home is the default view, so import it directly (not lazy) to avoid loading delays
+import { Home } from './components/Home';
+
+// Loading component for suspense fallback
+const ComponentLoader = () => {
+    console.log('[App] ComponentLoader rendered (lazy loading in progress)');
+    return (
+        <div className="flex items-center justify-center h-full">
+            <div className="text-[var(--color-text-secondary)]">Loading...</div>
+        </div>
+    );
+};
 
 function App() {
     const loadConfig = useStore((state) => state.loadConfig);
     const loadHistory = useStore((state) => state.loadHistory);
-    const setTheme = useStore((state) => state.setTheme);
     const config = useStore((state) => state.config);
     const [activeTab, setActiveTab] = useState<TabType>('home');
     const [isMac, setIsMac] = useState(false);
@@ -47,9 +60,6 @@ function App() {
     const [gitRepoPath, setGitRepoPath] = useState<string | null>(null);
 
     useEffect(() => {
-        // Always remove dark class on mount
-        document.documentElement.classList.remove('dark');
-
         // Detect macOS for window controls spacing
         if (typeof window !== 'undefined' && window.navigator) {
             setIsMac(navigator.platform.toUpperCase().indexOf('MAC') >= 0 ||
@@ -59,8 +69,6 @@ function App() {
         loadConfig();
         loadHistory();
         checkGitSetup();
-
-        // Offline queue sync removed - using Git-based storage now
 
         // Keyboard shortcuts
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -77,10 +85,10 @@ function App() {
     }, [loadConfig, loadHistory]);
 
 
-    const checkGitSetup = async () => {
+    const checkGitSetup = useCallback(async () => {
         try {
-            const electronAPI = (window as any).electronAPI;
-            if (electronAPI) {
+            const electronAPI = getElectronAPI();
+            if (electronAPI?.git) {
                 const result = await electronAPI.git.getRepoPath();
                 if (result.success && result.repoPath) {
                     setGitRepoPath(result.repoPath);
@@ -91,28 +99,28 @@ function App() {
                 setShowGitSetup(true);
             }
         } catch (error) {
-            console.error('Failed to check Git setup:', error);
+            handleError(error, {
+                message: 'Failed to check Git setup',
+                showToast: false, // Don't show toast for setup checks
+                context: { component: 'App', action: 'checkGitSetup' },
+            });
             setShowGitSetup(true);
         }
-    };
+    }, []);
 
     const handleGitSetupComplete = () => {
         setShowGitSetup(false);
         checkGitSetup();
     };
 
+    // Apply saved theme to document root (Tailwind darkMode: 'class')
     useEffect(() => {
-        // Always use light theme - remove dark class if present
-        document.documentElement.classList.remove('dark');
+        const theme = config?.theme ?? 'light';
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+    }, [config?.theme]);
 
-        // If config has dark theme, reset it to light
-        if (config?.theme === 'dark') {
-            setTheme('light');
-        }
-    }, [config?.theme, setTheme]);
-
-    // Allowed tabs: api, planner, js-runner, notes, excalidraw, uml (plus home)
-    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml'];
+    // Allowed tabs visible in navigation
+    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s'];
 
     // Define all tabs array with icon components (keeping all code, but filtering for display)
     const allTabs = [
@@ -150,37 +158,28 @@ function App() {
         }
     }, []);
 
-    // Expose openTool globally for Home component
+    // Set up event listeners for tool navigation
     useEffect(() => {
-        (window as any).openTool = (toolId: string, options?: { itemId?: string; date?: string; addTask?: boolean }) => {
+        const unsubscribeOpenTool = appEvents.on(EVENTS.OPEN_TOOL, ({ toolId, options }) => {
             const toolType = toolId as TabType;
             handleTabChange(toolType);
-            // Store itemId for component to pick up
+            
             if (options?.itemId) {
-                (window as any).__pendingItemId = { toolType, itemId: options.itemId };
-                // Clear after a short delay
-                setTimeout(() => {
-                    delete (window as any).__pendingItemId;
-                }, 1000);
+                appEvents.emit(EVENTS.PENDING_ITEM_ID, { toolType, itemId: options.itemId });
             }
-            // Store date for planner to pick up
             if (options?.date) {
-                (window as any).__pendingPlannerDate = options.date;
-                // Clear after a short delay
-                setTimeout(() => {
-                    delete (window as any).__pendingPlannerDate;
-                }, 2000);
+                appEvents.emit(EVENTS.PENDING_PLANNER_DATE, options.date);
             }
-            // Store addTask flag for planner
             if (options?.addTask) {
-                (window as any).__pendingAddTask = true;
-                // Clear after a short delay
-                setTimeout(() => {
-                    delete (window as any).__pendingAddTask;
-                }, 2000);
+                appEvents.emit(EVENTS.PENDING_ADD_TASK, true);
             }
-        };
+        });
+
+        // Expose openTool globally for backward compatibility
+        (window as any).openTool = emitOpenTool;
+
         return () => {
+            unsubscribeOpenTool();
             delete (window as any).openTool;
         };
     }, [handleTabChange]);
@@ -193,43 +192,107 @@ function App() {
                 return (
                     <div className="flex-1 flex overflow-hidden h-full" style={{ minHeight: 0 }}>
                         <div className="flex-1 flex flex-col border-r border-[var(--color-border)]" style={{ minHeight: 0, minWidth: 0 }}>
-                            <JsonEditor />
+                            <Suspense fallback={<ComponentLoader />}>
+                                <JsonEditor />
+                            </Suspense>
                         </div>
                         <div className="flex-1 flex flex-col" style={{ minHeight: 0, minWidth: 0 }}>
-                            <OutputTabs />
+                            <Suspense fallback={<ComponentLoader />}>
+                                <OutputTabs />
+                            </Suspense>
                         </div>
                     </div>
                 );
             case 'json-xml':
-                return <JsonXmlConverter />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <JsonXmlConverter />
+                    </Suspense>
+                );
             case 'encoder':
-                return <EncoderDecoder />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <EncoderDecoder />
+                    </Suspense>
+                );
             case 'api':
-                return <ApiClient />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <ApiClient />
+                    </Suspense>
+                );
             case 'formatter':
-                return <Formatter />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <Formatter />
+                    </Suspense>
+                );
             case 'js-runner':
-                return <JavaScriptRunner />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <JavaScriptRunner />
+                    </Suspense>
+                );
             case 'docker':
-                return <DockerContainer />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <DockerContainer />
+                    </Suspense>
+                );
             case 'k8s':
-                return <Kubernetes />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <Kubernetes />
+                    </Suspense>
+                );
             case 'notes':
-                return <Notes />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <Notes />
+                    </Suspense>
+                );
             case 'planner':
-                return <DailyPlanner />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <DailyPlanner />
+                    </Suspense>
+                );
             case 'excalidraw':
-                return <ExcalidrawComponent />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <ExcalidrawComponent />
+                    </Suspense>
+                );
             case 'uml':
-                return <UmlEditor />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <UmlEditor />
+                    </Suspense>
+                );
             case 'json-diff':
-                return <JsonDiff />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <JsonDiff />
+                    </Suspense>
+                );
             case 'regex':
-                return <RegexTester />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <RegexTester />
+                    </Suspense>
+                );
             case 'csv-yaml':
-                return <CsvYamlConverter />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <CsvYamlConverter />
+                    </Suspense>
+                );
             case 'profile':
-                return <Profile />;
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <Profile />
+                    </Suspense>
+                );
             case 'git-settings':
                 return <GitSettings />;
             default:
@@ -255,12 +318,14 @@ function App() {
                     {activeTab === 'schema' && (
                         <div className="h-11 bg-[var(--color-card)] border-b border-[var(--color-border)] flex items-center justify-between px-4">
                             <div className="flex items-center gap-3 flex-1 min-w-0">
-                                <SchemaOptions />
+                                <Suspense fallback={null}>
+                                    <SchemaOptions />
+                                </Suspense>
                                 <button
                                     onClick={() => setShowHistory(!showHistory)}
-                                    className={`px-2.5 py-1 text-xs rounded transition-all flex items-center gap-1.5 ${showHistory
+                                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${showHistory
                                         ? 'bg-[var(--color-primary)] text-white'
-                                        : 'text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border)]'
+                                        : 'text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border-soft)]'
                                         }`}
                                 >
                                     <span>{showHistory ? 'Hide' : 'History'}</span>
@@ -275,14 +340,16 @@ function App() {
                 </div>
 
                 {/* Secondary Sidebar (History, etc.) */}
-                {activeTab === 'schema' && showHistory && (
+                    {activeTab === 'schema' && showHistory && (
                     <Sidebar
                         isOpen={showHistory}
                         onClose={() => setShowHistory(false)}
                         title="History"
                         width={320}
                     >
-                        <HistoryPanel />
+                        <Suspense fallback={<ComponentLoader />}>
+                            <HistoryPanel />
+                        </Suspense>
                     </Sidebar>
                 )}
             </div>
@@ -291,7 +358,9 @@ function App() {
             <StatusBar onShowShortcuts={() => setShowShortcuts(true)} />
 
             {/* Global Search */}
-            <GlobalSearch />
+            <Suspense fallback={null}>
+                <GlobalSearch />
+            </Suspense>
 
             {/* Welcome Screen Overlay */}
             {showWelcome && (

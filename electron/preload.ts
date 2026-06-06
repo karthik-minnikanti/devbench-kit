@@ -94,6 +94,18 @@ try {
             ipcRenderer.on('docker:exec:exit', (_event: any, data: any) => callback(data));
         },
         k8s: {
+            clusters: {
+                list: () => ipcRenderer.invoke('k8s:clusters:list'),
+                getActive: () => ipcRenderer.invoke('k8s:clusters:getActive'),
+                add: (payload: { name: string; configPath: string; context: string; defaultNamespace?: string }) =>
+                    ipcRenderer.invoke('k8s:clusters:add', payload),
+                activate: (clusterId: string) => ipcRenderer.invoke('k8s:clusters:activate', clusterId),
+                remove: (clusterId: string) => ipcRenderer.invoke('k8s:clusters:remove', clusterId),
+                update: (payload: { id: string; name?: string; context?: string; defaultNamespace?: string }) =>
+                    ipcRenderer.invoke('k8s:clusters:update', payload),
+            },
+            pickKubeconfig: () => ipcRenderer.invoke('k8s:pickKubeconfig'),
+            contextsFromFile: (configPath: string) => ipcRenderer.invoke('k8s:contextsFromFile', configPath),
             contexts: () => ipcRenderer.invoke('k8s:contexts'),
             currentContext: () => ipcRenderer.invoke('k8s:current-context'),
             useContext: (context: string) => ipcRenderer.invoke('k8s:use-context', context),
@@ -123,6 +135,13 @@ try {
             services: (namespace?: string) => ipcRenderer.invoke('k8s:services', namespace),
             configMaps: (namespace?: string) => ipcRenderer.invoke('k8s:configmaps', namespace),
             secrets: (namespace?: string) => ipcRenderer.invoke('k8s:secrets', namespace),
+            nodes: () => ipcRenderer.invoke('k8s:nodes'),
+            statefulSets: (namespace?: string) => ipcRenderer.invoke('k8s:statefulsets', namespace),
+            jobs: (namespace?: string) => ipcRenderer.invoke('k8s:jobs', namespace),
+            cronJobs: (namespace?: string) => ipcRenderer.invoke('k8s:cronjobs', namespace),
+            ingresses: (namespace?: string) => ipcRenderer.invoke('k8s:ingresses', namespace),
+            daemonSets: (namespace?: string) => ipcRenderer.invoke('k8s:daemonsets', namespace),
+            replicaSets: (namespace?: string) => ipcRenderer.invoke('k8s:replicasets', namespace),
         },
         onK8sLog: (callback: (data: any) => void) => {
             ipcRenderer.on('k8s:log', (_event: any, data: any) => callback(data));
@@ -297,6 +316,16 @@ declare global {
                 containerInfo: (containerId: string) => Promise<any>;
             };
             k8s: {
+                clusters: {
+                    list: () => Promise<any>;
+                    getActive: () => Promise<any>;
+                    add: (payload: { name: string; configPath: string; context: string; defaultNamespace?: string }) => Promise<any>;
+                    activate: (clusterId: string) => Promise<any>;
+                    remove: (clusterId: string) => Promise<any>;
+                    update: (payload: { id: string; name?: string; context?: string; defaultNamespace?: string }) => Promise<any>;
+                };
+                pickKubeconfig: () => Promise<any>;
+                contextsFromFile: (configPath: string) => Promise<any>;
                 contexts: () => Promise<any>;
                 currentContext: () => Promise<any>;
                 useContext: (context: string) => Promise<any>;

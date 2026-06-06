@@ -2,7 +2,7 @@ appId: com.devbench.app
 productName: DevBench
 electronVersion: 32.0.0
 directories:
-  buildResources: build
+  buildResources: public
   output: release
 files:
   - dist/**/*
@@ -13,15 +13,26 @@ publish:
   provider: github
   owner: karthik-minnikanti
   repo: devbench-kit
+  releaseType: release
+protocols:
+  name: DevBench
+  schemes:
+    - devbench
   # Auto-update will work for all platforms when releases are published to GitHub
   # Mac: Works with DMG (code signing recommended for best experience)
   # Windows: Works with NSIS installer and portable
   # Linux: Works with AppImage (deb/rpm have limited support)
 mac:
   category: public.app-category.developer-tools
-  icon: build/icon.icns
+  # PNG required — electron-builder cannot convert SVG to .icns
+  icon: icon.png
   target:
     - target: dmg
+      arch:
+        - x64
+        - arm64
+    # zip is required for latest-mac.yml / electron-updater (even when distributing dmg)
+    - target: zip
       arch:
         - x64
         - arm64
@@ -56,8 +67,7 @@ dmg:
   # Uncomment for notarization:
   # sign: true
 win:
-  # electron-builder will auto-convert PNG to ICO if .ico doesn't exist
-  icon: build/icon.png
+  icon: icon.png
   target:
     - target: nsis
       arch:
@@ -80,7 +90,7 @@ nsis:
   # Optional: Custom installer script
   # include: build/installer.nsh
 linux:
-  icon: build/icon.png
+  icon: icon.png
   target:
     - target: AppImage
       arch:

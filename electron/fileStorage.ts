@@ -374,6 +374,20 @@ class FileStorageService {
         }
     }
 
+    private static readonly API_CLIENT_RESERVED_FILES = new Set([
+        'history.json',
+        'console.json',
+        'environments.json',
+        'requests.json',
+    ]);
+
+    private isApiRequestFile(fileName: string): boolean {
+        return (
+            fileName.endsWith('.json') &&
+            !FileStorageService.API_CLIENT_RESERVED_FILES.has(fileName)
+        );
+    }
+
     // API Client
     async getApiRequests(): Promise<any[]> {
         try {
@@ -382,15 +396,30 @@ class FileStorageService {
             const requests: any[] = [];
             
             for (const file of files) {
-                if (file.endsWith('.json') && file !== 'requests.json') {
-                    try {
-                        const filePath = path.join(apiclientDir, file);
-                        const content = await fs.readFile(filePath, 'utf-8');
-                        const request = JSON.parse(content);
-                        requests.push(request);
-                    } catch (err) {
-                        console.error(`Failed to read API request file ${file}:`, err);
+                if (!this.isApiRequestFile(file)) {
+                    continue;
+                }
+
+                try {
+                    const filePath = path.join(apiclientDir, file);
+                    const content = await fs.readFile(filePath, 'utf-8');
+                    const request = JSON.parse(content);
+
+                    // Skip non-request JSON blobs (e.g. corrupted imports)
+                    if (!request || typeof request !== 'object' || Array.isArray(request)) {
+                        continue;
                     }
+                    if (!request.method) {
+                        continue;
+                    }
+
+                    if (!request.id) {
+                        request.id = file.replace(/\.json$/, '');
+                    }
+
+                    requests.push(request);
+                } catch (err) {
+                    console.error(`Failed to read API request file ${file}:`, err);
                 }
             }
             
@@ -452,27 +481,69 @@ class FileStorageService {
             await this.triggerSync(filePath, 'apiclient');
             return { success: true };
         } catch (error: any) {
+            if (error?.code === 'ENOENT') {
+                return { success: true };
+            }
             return { success: false, error: error.message || String(error) };
         }
     }
 
-    // Legacy method for backward compatibility - saves all requests individually
-    async saveApiRequests(requests: any[]): Promise<{ success: boolean; error?: string }> {
+    /** Save the current request list and remove orphaned request files on disk. */
+    async syncApiRequests(requests: any[]): Promise<{ success: boolean; error?: string }> {
         try {
+            const apiclientDir = this.getFilePath('apiclient');
+            const keepIds = new Set(
+                requests.filter((request) => request?.id).map((request) => String(request.id)),
+            );
             const errors: string[] = [];
+
             for (const request of requests) {
+                if (!request?.id) {
+                    continue;
+                }
                 const result = await this.saveApiRequest(request);
                 if (!result.success) {
-                    errors.push(result.error || 'Unknown error');
+                    errors.push(result.error || `Failed to save request ${request.id}`);
                 }
             }
-            if (errors.length > 0) {
-                return { success: false, error: `Failed to save some requests: ${errors.join(', ')}` };
+
+            const files = await fs.readdir(apiclientDir);
+            for (const file of files) {
+                if (!this.isApiRequestFile(file)) {
+                    continue;
+                }
+
+                const fileId = file.replace(/\.json$/, '');
+                if (keepIds.has(fileId)) {
+                    continue;
+                }
+
+                try {
+                    const filePath = path.join(apiclientDir, file);
+                    await fs.unlink(filePath);
+                    await this.triggerSync(filePath, 'apiclient');
+                } catch (error: any) {
+                    if (error?.code !== 'ENOENT') {
+                        errors.push(
+                            `Failed to delete orphaned request file ${file}: ${error.message || String(error)}`,
+                        );
+                    }
+                }
             }
+
+            if (errors.length > 0) {
+                return { success: false, error: errors.join('; ') };
+            }
+
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message || String(error) };
         }
+    }
+
+    // Legacy method for backward compatibility - syncs list and removes deleted files
+    async saveApiRequests(requests: any[]): Promise<{ success: boolean; error?: string }> {
+        return this.syncApiRequests(requests);
     }
 
     // API Client History

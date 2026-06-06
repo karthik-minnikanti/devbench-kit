@@ -1,12 +1,6 @@
 // IPC-based sync service - uses Electron file storage instead of backend API
 
-// Helper to get electronAPI
-function getElectronAPI() {
-    if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        return (window as any).electronAPI;
-    }
-    return null;
-}
+import { getElectronAPI } from '../utils/electronAPI';
 
 // ========== FOLDERS ==========
 export interface Folder {

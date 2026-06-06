@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Icon } from './Icon';
+import { useState } from "react";
+import { Icon } from "./Icon";
+import { getHttpMethodDisplay, getHttpMethodLabelClass, getHttpStatusTextClass } from "../utils/httpMethodColors";
 
 export interface HistoryEntry {
   id: string;
@@ -27,7 +28,7 @@ export function RequestHistory({
   onSelectRequest,
   onClearHistory,
 }: RequestHistoryProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
 
   if (!isOpen) return null;
 
@@ -43,10 +44,8 @@ export function RequestHistory({
   });
 
   const getStatusColor = (status?: number) => {
-    if (!status) return 'text-gray-500';
-    if (status >= 200 && status < 300) return 'text-green-500';
-    if (status >= 400) return 'text-red-500';
-    return 'text-yellow-500';
+    if (!status) return "text-[var(--color-text-tertiary)]";
+    return getHttpStatusTextClass(status);
   };
 
   const formatTime = (timestamp: string) => {
@@ -57,7 +56,7 @@ export function RequestHistory({
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
+    if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
@@ -65,20 +64,28 @@ export function RequestHistory({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-[var(--color-background)] rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 modal-overlay flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-background)] rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">Request History</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
+            Request History
+          </h2>
           <div className="flex items-center gap-2">
             {history.length > 0 && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm('Clear all history?')) {
+                  if (confirm("Clear all history?")) {
                     onClearHistory();
                   }
                 }}
-                className="px-3 py-1.5 rounded border border-red-500 text-red-500 text-xs hover:bg-red-500/10 transition-colors"
+                className="px-3 py-1.5 rounded border border-[var(--color-semantic-error)] text-[var(--color-semantic-error)] text-xs hover:bg-[var(--color-semantic-error)]/10 transition-colors"
               >
                 Clear All
               </button>
@@ -94,7 +101,10 @@ export function RequestHistory({
 
         <div className="p-4 border-b border-[var(--color-border)]">
           <div className="relative">
-            <Icon name="Search" className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--color-text-tertiary)]" />
+            <Icon
+              name="Search"
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--color-text-tertiary)]"
+            />
             <input
               type="text"
               value={searchQuery}
@@ -109,12 +119,17 @@ export function RequestHistory({
           {filteredHistory.length === 0 ? (
             <div className="flex items-center justify-center h-full p-8">
               <div className="text-center">
-                <Icon name="Clock" className="w-16 h-16 text-[var(--color-text-tertiary)] mx-auto mb-4 opacity-50" />
+                <Icon
+                  name="Clock"
+                  className="w-16 h-16 text-[var(--color-text-tertiary)] mx-auto mb-4 opacity-50"
+                />
                 <p className="text-sm text-[var(--color-text-secondary)] mb-2">
-                  {searchQuery ? 'No matching requests' : 'No history yet'}
+                  {searchQuery ? "No matching requests" : "No history yet"}
                 </p>
                 <p className="text-xs text-[var(--color-text-tertiary)]">
-                  {searchQuery ? 'Try a different search term' : 'Your request history will appear here'}
+                  {searchQuery
+                    ? "Try a different search term"
+                    : "Your request history will appear here"}
                 </p>
               </div>
             </div>
@@ -130,14 +145,8 @@ export function RequestHistory({
                   className="w-full px-6 py-4 text-left hover:bg-[var(--color-muted)] transition-colors group"
                 >
                   <div className="flex items-start gap-4">
-                    <div className={`px-2 py-1 rounded text-xs font-semibold ${
-                      entry.method === 'GET' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                      entry.method === 'POST' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
-                      entry.method === 'PUT' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                      entry.method === 'DELETE' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                      'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}>
-                      {entry.method}
+                    <div className={getHttpMethodLabelClass(entry.method)}>
+                      {getHttpMethodDisplay(entry.method)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
@@ -145,7 +154,9 @@ export function RequestHistory({
                           {entry.requestName || entry.url}
                         </p>
                         {entry.status && (
-                          <span className={`text-xs font-semibold ${getStatusColor(entry.status)}`}>
+                          <span
+                            className={`text-xs font-semibold ${getStatusColor(entry.status)}`}
+                          >
                             {entry.status} {entry.statusText}
                           </span>
                         )}
@@ -158,7 +169,10 @@ export function RequestHistory({
                         {entry.time && <span>{entry.time}ms</span>}
                       </div>
                     </div>
-                    <Icon name="ChevronRight" className="w-5 h-5 text-[var(--color-text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Icon
+                      name="ChevronRight"
+                      className="w-5 h-5 text-[var(--color-text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity"
+                    />
                   </div>
                 </button>
               ))}
@@ -169,4 +183,3 @@ export function RequestHistory({
     </div>
   );
 }
-

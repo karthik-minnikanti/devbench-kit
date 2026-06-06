@@ -57,12 +57,39 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   build: {
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
         planner: path.resolve(__dirname, 'planner.html'),
       },
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            // Do NOT split react/react-dom into a separate chunk from the rest of
+            // node_modules — shared deps (scheduler, use-sync-external-store, etc.)
+            // end up in one chunk while react is in another, creating circular imports
+            // and "Cannot read properties of undefined (reading 'useState')" at startup.
+            // Do NOT manually chunk lazy-loaded heavy libs (@excalidraw, @blocknote,
+            // @monaco-editor, mermaid). Vite hoists shared preload helpers into those
+            // chunks and the main entry imports them at startup, causing TDZ crashes
+            // like "Cannot access 'qe' before initialization" in production builds.
+            if (id.includes('@kubernetes/client-node')) return 'k8s-client';
+            if (id.includes('dockerode')) return 'docker';
+          }
+        },
+      },
+    },
+    // Optimize chunk size
+    chunkSizeWarningLimit: 1000,
+    // Enable source maps for debugging (disable in production for smaller builds)
+    sourcemap: false,
+    minify: 'esbuild',
+    esbuild: {
+      drop: process.env.NODE_ENV === 'production' ? ['debugger'] : [],
     },
   },
 });
