@@ -8,7 +8,9 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
-npmRebuild: false
+npmRebuild: true
+asarUnpack:
+  - node_modules/node-pty/**/*
 publish:
   provider: github
   owner: karthik-minnikanti

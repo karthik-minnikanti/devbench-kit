@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
+import { TerminalView } from "./TerminalView";
+import { CONTAINER_SHELL } from "../utils/terminalTheme";
+import { ToolToolbar, UnderlineTabs, ToolSidebar, ToolSidebarBody, toolSidebarItemClass } from "./ui/ToolChrome";
 import * as monaco from "monaco-editor";
 
 interface Container {
@@ -49,8 +52,9 @@ export function DockerContainer() {
   >("all");
   const [containerSearch, setContainerSearch] = useState<string>("");
   const [containerDetailTab, setContainerDetailTab] = useState<
-    "overview" | "logs" | "stats" | "files" | "inspect"
+    "overview" | "logs" | "terminal" | "stats" | "files" | "inspect"
   >("overview");
+  const [terminalKey, setTerminalKey] = useState(0);
   const [images, setImages] = useState<any[]>([]);
   const [volumes, setVolumes] = useState<any[]>([]);
   const [networks, setNetworks] = useState<any[]>([]);
@@ -571,67 +575,9 @@ export function DockerContainer() {
       className="flex-1 flex flex-col bg-[var(--color-background)] overflow-hidden"
       style={{ minHeight: 0 }}
     >
-      <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-4">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-              Docker
-            </div>
-            <div className="flex items-center gap-1 border border-[var(--color-border)] rounded-lg p-1">
-              <button
-                onClick={() => {
-                  setMainView("containers");
-                  setSelectedContainer(null);
-                }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  mainView === "containers"
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                }`}
-              >
-                Containers
-              </button>
-              <button
-                onClick={() => {
-                  setMainView("images");
-                  setSelectedContainer(null);
-                }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  mainView === "images"
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                }`}
-              >
-                Images
-              </button>
-              <button
-                onClick={() => {
-                  setMainView("volumes");
-                  setSelectedContainer(null);
-                }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  mainView === "volumes"
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                }`}
-              >
-                Volumes
-              </button>
-              <button
-                onClick={() => {
-                  setMainView("networks");
-                  setSelectedContainer(null);
-                }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  mainView === "networks"
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                }`}
-              >
-                Networks
-              </button>
-            </div>
-          </div>
+      <ToolToolbar
+        title="Docker"
+        actions={
           <button
             onClick={() => {
               if (mainView === "containers") loadContainers();
@@ -639,31 +585,36 @@ export function DockerContainer() {
               else if (mainView === "volumes") loadVolumes();
               else if (mainView === "networks") loadNetworks();
             }}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] transition-colors duration-200"
+            className="btn-secondary !h-7 !text-xs"
           >
             Refresh
           </button>
-        </div>
+        }
+      />
 
-        <div
-          className="flex-1 flex overflow-hidden"
-          style={{ minHeight: 0, height: 0 }}
-        >
+      <UnderlineTabs
+        className="px-3 bg-[var(--color-card)] flex-shrink-0"
+        tabs={[
+          { id: "containers", label: "Containers" },
+          { id: "images", label: "Images" },
+          { id: "volumes", label: "Volumes" },
+          { id: "networks", label: "Networks" },
+        ]}
+        active={mainView}
+        onChange={(id) => {
+          setMainView(id);
+          setSelectedContainer(null);
+        }}
+      />
+
+      <div
+        className="flex-1 flex overflow-hidden"
+        style={{ minHeight: 0, height: 0 }}
+      >
           {/* Container List / Sidebar */}
           {mainView === "containers" && (
-            <div
-              className="w-80 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] flex flex-col"
-              style={{ minHeight: 0, height: "100%", overflow: "hidden" }}
-            >
-              <div
-                className="flex-1 p-4"
-                style={{
-                  minHeight: 0,
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  WebkitOverflowScrolling: "touch",
-                }}
-              >
+            <ToolSidebar width="wide" aria-label="Containers" className="flex flex-col" style={{ minHeight: 0, height: "100%", overflow: "hidden" }}>
+              <ToolSidebarBody className="p-3">
                 <div className="space-y-3">
                   {/* Filter and Search */}
                   <div className="space-y-2">
@@ -724,11 +675,10 @@ export function DockerContainer() {
                     filteredContainers.map((container) => (
                       <div
                         key={container.ID}
-                        className={`p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
-                          selectedContainer === container.ID
-                            ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10"
-                            : "border-[var(--color-border)] hover:border-[var(--color-primary)]/50"
-                        }`}
+                        className={`${toolSidebarItemClass(
+                          selectedContainer === container.ID,
+                          "p-3 mb-1 cursor-pointer border border-[var(--color-border)]",
+                        )}`}
                         onClick={() => handleSelectContainer(container.ID)}
                       >
                         <div className="flex items-start justify-between mb-2">
@@ -850,8 +800,8 @@ export function DockerContainer() {
                     ))
                   )}
                 </div>
-              </div>
-            </div>
+              </ToolSidebarBody>
+            </ToolSidebar>
           )}
 
           {/* Images View */}
@@ -1174,16 +1124,16 @@ export function DockerContainer() {
             >
               {selectedContainer ? (
                 <>
-                  <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="text-xs font-medium font-mono text-[var(--color-text-primary)] truncate">
                           {containers.find((c) => c.ID === selectedContainer)
                             ?.Names || selectedContainer.substring(0, 12)}
                         </div>
                         {diagnostic && (
                           <div
-                            className={`px-2 py-1 rounded text-xs font-semibold ${
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
                               diagnostic.status === "healthy"
                                 ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
                                 : diagnostic.status === "warning"
@@ -1195,15 +1145,30 @@ export function DockerContainer() {
                           </div>
                         )}
                         {isStreaming && containerDetailTab === "logs" && (
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                            <span className="text-xs text-[var(--color-text-secondary)]">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                            <span className="text-[10px] text-[var(--color-text-secondary)]">
                               Live
                             </span>
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 border-b border-[var(--color-border)]">
+                      <button
+                        onClick={() => {
+                          if (isStreaming) stopLogs();
+                          if (isShellActive) handleStopShell();
+                          if (isExecActive) handleStopExec();
+                          setSelectedContainer(null);
+                          setLogs("");
+                          setShellOutput("");
+                          setExecOutput("");
+                        }}
+                        className="btn-secondary !h-7 !text-xs shrink-0"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1 border-b border-[var(--color-border)] -mb-px">
                         <button
                           onClick={() => {
                             setContainerDetailTab("overview");
@@ -1233,6 +1198,16 @@ export function DockerContainer() {
                           }`}
                         >
                           Logs
+                        </button>
+                        <button
+                          onClick={() => setContainerDetailTab("terminal")}
+                          className={`px-4 py-2 text-xs font-medium transition-colors border-b-2 ${
+                            containerDetailTab === "terminal"
+                              ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                              : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                          }`}
+                        >
+                          Terminal
                         </button>
                         <button
                           onClick={() => {
@@ -1279,22 +1254,7 @@ export function DockerContainer() {
                         >
                           Inspect
                         </button>
-                        <button
-                          onClick={() => {
-                            if (isStreaming) stopLogs();
-                            if (isShellActive) handleStopShell();
-                            if (isExecActive) handleStopExec();
-                            setSelectedContainer(null);
-                            setLogs("");
-                            setShellOutput("");
-                            setExecOutput("");
-                          }}
-                          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border)] transition-colors"
-                        >
-                          Close
-                        </button>
                       </div>
-                    </div>
                   </div>
 
                   {/* Overview Tab */}
@@ -1574,6 +1534,30 @@ export function DockerContainer() {
                             padding: { top: 16, bottom: 16 },
                             automaticLayout: true,
                             scrollBeyondLastLine: false,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {containerDetailTab === "terminal" && selectedContainer && (
+                    <div className="flex-1 min-h-0 flex flex-col">
+                      <div className="px-3 py-2 border-b border-[var(--color-border)] flex justify-end">
+                        <button
+                          onClick={() => setTerminalKey((key) => key + 1)}
+                          className="btn-secondary !h-7 !py-1 !px-2 !text-xs"
+                        >
+                          Reconnect
+                        </button>
+                      </div>
+                      <div className="flex-1 min-h-0">
+                        <TerminalView
+                          key={`${selectedContainer}-${terminalKey}`}
+                          active
+                          session={{
+                            kind: "docker",
+                            containerId: selectedContainer,
+                            shell: CONTAINER_SHELL,
                           }}
                         />
                       </div>
@@ -1890,7 +1874,6 @@ export function DockerContainer() {
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 }

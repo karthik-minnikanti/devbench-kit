@@ -187,11 +187,11 @@ export function ImportExportModal({
 
   return (
     <div
-      className="fixed inset-0 modal-overlay flex items-center justify-center z-50"
+      className="fixed inset-0 modal-overlay flex items-center justify-center z-[100]"
       onClick={onClose}
     >
       <div
-        className="modal-panel p-8 max-w-2xl w-full mx-4"
+        className="modal-panel p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
@@ -221,11 +221,11 @@ export function ImportExportModal({
                       e.target.value as "swagger" | "postman" | "curl",
                     )
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
+                  className="w-full px-3 py-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
                 >
-                  <option value="curl">cURL Command</option>
-                  <option value="swagger">Swagger/OpenAPI</option>
-                  <option value="postman">Postman Collection</option>
+                  <option value="curl" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">cURL Command</option>
+                  <option value="swagger" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">Swagger/OpenAPI</option>
+                  <option value="postman" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">Postman Collection</option>
                 </select>
               </div>
 
@@ -240,7 +240,7 @@ export function ImportExportModal({
                       value={importRequestName}
                       onChange={(e) => setImportRequestName(e.target.value)}
                       placeholder="My API Request"
-                      className="w-full px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
+                      className="w-full px-3 py-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
                     />
                   </div>
                   <div>
@@ -252,11 +252,11 @@ export function ImportExportModal({
                       onChange={(e) =>
                         setImportFolderId(e.target.value || null)
                       }
-                      className="w-full px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
+                      className="w-full px-3 py-2 bg-[var(--color-card)] border border-[var(--color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] text-[var(--color-text-primary)]"
                     >
-                      <option value="">Root</option>
+                      <option value="" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">Root</option>
                       {folders.map((folder) => (
-                        <option key={folder.id} value={folder.id}>
+                        <option key={folder.id} value={folder.id} className="bg-[var(--color-card)] text-[var(--color-text-primary)]">
                           {folder.name}
                         </option>
                       ))}
@@ -306,7 +306,7 @@ export function ImportExportModal({
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   rows={12}
-                  className="w-full px-4 py-3 rounded-lg border resize-none focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-all font-mono text-sm bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-text-primary)]"
+                  className="w-full px-4 py-3 rounded-lg border resize-y min-h-[220px] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] transition-all font-mono text-sm bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
                   placeholder={
                     importType === "curl"
                       ? `curl -X POST https://api.example.com/data -H 'Content-Type: application/json' -d '{"key":"value"}'`

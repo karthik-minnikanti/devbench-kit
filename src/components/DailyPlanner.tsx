@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Icon } from "./Icon";
+import { UnderlineTabs } from "./ui/ToolChrome";
 import {
   getPlannerEntry,
   getPlannerEntries,
@@ -23,7 +24,19 @@ import { getElectronAPI } from "../utils/electronAPI";
 type TaskFilter = "all" | "active" | "completed" | "blocked";
 type ViewMode = "day" | "week" | "analytics";
 
-export function DailyPlanner() {
+interface DailyPlannerProps {
+  pendingDate?: string;
+  pendingTaskId?: string;
+  pendingAddTask?: boolean;
+  onPendingHandled?: () => void;
+}
+
+export function DailyPlanner({
+  pendingDate,
+  pendingTaskId,
+  pendingAddTask,
+  onPendingHandled,
+}: DailyPlannerProps) {
   const [selectedDate, setSelectedDate] = useState<string>(formatDateLocal());
   // Daily Overview
   const [energyLevel, setEnergyLevel] = useState<
@@ -198,6 +211,7 @@ export function DailyPlanner() {
           );
         }
       } finally {
+        entryLoadedRef.current = true;
         if (showLoading) {
           setLoading(false);
         }
@@ -212,6 +226,7 @@ export function DailyPlanner() {
 
   // Track the date that tasks are currently loaded for
   const tasksDateRef = useRef<string>(selectedDate);
+  const entryLoadedRef = useRef(false);
 
   // Update tasksDateRef when tasks are loaded
   useEffect(() => {
@@ -741,15 +756,63 @@ export function DailyPlanner() {
     [selectedDate],
   );
 
-  // Listen for pending date and add task events
+  // Navigate to a pending date / task from Home (survives lazy mount)
   useEffect(() => {
-    let pendingDate: string | null = null;
-    let shouldAddTask = false;
+    if (!pendingDate && !pendingTaskId && !pendingAddTask) return;
+
+    if (pendingDate && pendingDate !== selectedDate) {
+      handleDateChange(pendingDate);
+      return;
+    }
+
+    if (loading || !entryLoadedRef.current) return;
+
+    if (pendingAddTask) {
+      handleAddTask();
+      onPendingHandled?.();
+      return;
+    }
+
+    if (pendingTaskId) {
+      const task = tasks.find((t) => String(t.id) === String(pendingTaskId));
+      if (task) {
+        setViewMode("day");
+        setTaskFilter("all");
+        setExpandedTaskId(task.id);
+        onPendingHandled?.();
+        window.setTimeout(() => {
+          document
+            .getElementById(`planner-task-${task.id}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 150);
+      } else {
+        onPendingHandled?.();
+      }
+      return;
+    }
+
+    if (pendingDate) {
+      onPendingHandled?.();
+    }
+  }, [
+    pendingDate,
+    pendingTaskId,
+    pendingAddTask,
+    selectedDate,
+    loading,
+    tasks,
+    handleDateChange,
+    handleAddTask,
+    onPendingHandled,
+  ]);
+
+  // Legacy event listeners (e.g. external openTool calls)
+  useEffect(() => {
+    if (pendingDate || pendingTaskId || pendingAddTask) return;
 
     const unsubscribeDate = appEvents.on(
       EVENTS.PENDING_PLANNER_DATE,
       (date: string) => {
-        pendingDate = date;
         if (date && date !== selectedDate) {
           handleDateChange(date);
         }
@@ -759,12 +822,10 @@ export function DailyPlanner() {
     const unsubscribeAddTask = appEvents.on(
       EVENTS.PENDING_ADD_TASK,
       (value: boolean) => {
-        shouldAddTask = value;
         if (value) {
-          // Wait for data to load, then add task
-          setTimeout(async () => {
+          window.setTimeout(async () => {
             await loadEntry(false);
-            setTimeout(() => {
+            window.setTimeout(() => {
               handleAddTask();
             }, 300);
           }, 500);
@@ -776,7 +837,15 @@ export function DailyPlanner() {
       unsubscribeDate();
       unsubscribeAddTask();
     };
-  }, [selectedDate, handleDateChange, loadEntry, handleAddTask]);
+  }, [
+    pendingDate,
+    pendingTaskId,
+    pendingAddTask,
+    selectedDate,
+    handleDateChange,
+    loadEntry,
+    handleAddTask,
+  ]);
 
   const navigateDate = useCallback(
     (direction: "prev" | "next") => {
@@ -889,7 +958,7 @@ export function DailyPlanner() {
     <div className="h-full flex flex-col bg-[var(--color-background)]">
       {/* Header */}
       <div
-        className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between flex-shrink-0"
+        className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center justify-between flex-shrink-0 gap-3"
         style={
           isPlannerWindow && isMac
             ? ({
@@ -929,7 +998,7 @@ export function DailyPlanner() {
               };
               input.click();
             }}
-            className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] rounded transition-colors"
+            className="px-2 py-1 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-muted)] rounded transition-colors"
             style={
               isPlannerWindow && isMac
                 ? ({
@@ -1001,24 +1070,16 @@ export function DailyPlanner() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
         <div className="max-w-4xl mx-auto space-y-4">
-          {/* View Mode Toggle */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2 bg-[var(--color-muted)] rounded-lg p-1">
-              {(["day", "week", "analytics"] as ViewMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setViewMode(mode)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                    viewMode === mode
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                  }`}
-                >
-                  {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
+          <UnderlineTabs
+            className="mb-4"
+            tabs={[
+              { id: "day", label: "Day" },
+              { id: "week", label: "Week" },
+              { id: "analytics", label: "Analytics" },
+            ]}
+            active={viewMode}
+            onChange={setViewMode}
+          />
 
           {/* Daily Overview Section - Redesigned */}
           {viewMode === "day" && (
@@ -1785,6 +1846,7 @@ export function DailyPlanner() {
                         return (
                           <div
                             key={task.id}
+                            id={`planner-task-${task.id}`}
                             className="bg-[var(--color-card)] border border-[var(--color-border)] rounded group transition-all"
                           >
                             <div className="flex items-center gap-3 p-3">

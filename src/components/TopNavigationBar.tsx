@@ -14,6 +14,7 @@ const ALLOWED_TABS: TabType[] = [
   "excalidraw",
   "uml",
   "k8s",
+  "terminal",
 ];
 
 const allCategories = [
@@ -52,7 +53,8 @@ const allCategories = [
     id: "devops",
     label: "DevOps",
     icon: "Container",
-    tabs: ["docker", "k8s"] as TabType[],
+    tabs: ["docker", "k8s", "terminal"] as TabType[],
+    alwaysShowDropdown: true,
   },
   {
     id: "profile",
@@ -87,7 +89,8 @@ const tabLabels: Record<TabType, string> = {
   planner: "Daily Planner",
   profile: "Profile",
   docker: "Docker",
-  k8s: "Kubernetes",
+  k8s: "Kube Lens",
+  terminal: "Terminal",
   "git-settings": "Git Settings",
 };
 
@@ -108,7 +111,8 @@ const tabIcons: Record<TabType, string> = {
   planner: "Calendar",
   profile: "User",
   docker: "Container",
-  k8s: "Container",
+  k8s: "Kubernetes",
+  terminal: "Terminal",
   "git-settings": "GitBranch",
 };
 
@@ -167,18 +171,19 @@ export function TopNavigationBar({
   };
 
   const handleCategoryClick = (category: (typeof categories)[0]) => {
-    // If category has only one tab, open it directly
-    if (category.tabs.length === 1) {
+    const showDropdown =
+      category.alwaysShowDropdown || category.tabs.length > 1;
+
+    if (!showDropdown) {
       handleTabClick(category.tabs[0]);
     } else {
-      // Otherwise, toggle dropdown
       toggleDropdown(category.id);
     }
   };
 
   return (
     <div
-      className="h-11 bg-[var(--color-background)] border-b border-[var(--color-border)] flex items-center justify-between px-3 flex-shrink-0 relative draggable"
+      className="h-[var(--app-header-height)] bg-[var(--color-background)] border-b border-[var(--color-border)] flex items-center justify-between px-3 flex-shrink-0 relative draggable"
       style={{ zIndex: 100 }}
     >
       <div
@@ -207,10 +212,10 @@ export function TopNavigationBar({
                 e.stopPropagation();
                 handleCategoryClick(category);
               }}
-              className={`px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1 whitespace-nowrap flex-shrink-0 ${
+              className={`px-2 py-1 transition-colors flex items-center gap-1 whitespace-nowrap flex-shrink-0 border-b-2 -mb-px ${
                 openDropdown === category.id
-                  ? "bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-                  : "hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  ? "border-[var(--color-primary)] text-[var(--color-text-primary)]"
+                  : "border-transparent hover:text-[var(--color-text-primary)] text-[var(--color-text-secondary)]"
               }`}
             >
               <Icon
@@ -218,7 +223,7 @@ export function TopNavigationBar({
                 className="w-3 h-3 flex-shrink-0"
               />
               <span className="text-xs leading-none">{category.label}</span>
-              {category.tabs.length > 1 && (
+              {category.alwaysShowDropdown || category.tabs.length > 1 ? (
                 <Icon
                   name={
                     openDropdown === category.id
@@ -227,7 +232,7 @@ export function TopNavigationBar({
                   }
                   className="w-3 h-3 flex-shrink-0"
                 />
-              )}
+              ) : null}
             </button>
 
             {openDropdown === category.id && (

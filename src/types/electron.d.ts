@@ -66,6 +66,63 @@ declare global {
             jsRunner: {
                 execute: (code: string, timeoutMs?: number) => Promise<any>;
             };
+            terminal: {
+                create: (options: {
+                    kind: 'local' | 'k8s' | 'docker';
+                    shell?: string;
+                    cwd?: string;
+                    podName?: string;
+                    namespace?: string;
+                    container?: string;
+                    containerId?: string;
+                    cols?: number;
+                    rows?: number;
+                }) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
+                write: (sessionId: string, data: string) => Promise<{ success: boolean; error?: string }>;
+                resize: (sessionId: string, cols: number, rows: number) => Promise<{ success: boolean; error?: string }>;
+                destroy: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+                addCommand: (scope: string, command: string) => Promise<{ success: boolean; error?: string }>;
+                getCommands: (
+                    scope: string,
+                    query?: string,
+                    limit?: number,
+                ) => Promise<{
+                    success: boolean;
+                    commands: { command: string; scope: string; timestamp: string }[];
+                    error?: string;
+                }>;
+                clearCommands: (scope?: string) => Promise<{ success: boolean; error?: string }>;
+                addSession: (session: {
+                    id: string;
+                    title: string;
+                    scope: string;
+                    kind: 'local' | 'k8s' | 'docker';
+                    config: Record<string, unknown>;
+                }) => Promise<{ success: boolean; session?: any; error?: string }>;
+                listSessions: (limit?: number) => Promise<{
+                    success: boolean;
+                    sessions: {
+                        id: string;
+                        title: string;
+                        scope: string;
+                        kind: 'local' | 'k8s' | 'docker';
+                        config: Record<string, unknown>;
+                        startedAt: string;
+                        lastActiveAt: string;
+                        closedAt?: string;
+                    }[];
+                    error?: string;
+                }>;
+                touchSession: (id: string) => Promise<{ success: boolean; session?: any; error?: string }>;
+                closeSession: (id: string) => Promise<{ success: boolean; session?: any; error?: string }>;
+                removeSession: (id: string) => Promise<{ success: boolean; error?: string }>;
+            };
+            onTerminalData: (
+                callback: (data: { sessionId: string; data: string }) => void,
+            ) => () => void;
+            onTerminalExit: (
+                callback: (data: { sessionId: string; exitCode: number }) => void,
+            ) => () => void;
             docker: {
                 list: () => Promise<any>;
                 logs: (containerId: string, tail?: number) => Promise<any>;
@@ -97,8 +154,17 @@ declare global {
                 importConfig: (configPath: string) => Promise<any>;
                 pods: (namespace?: string) => Promise<any>;
                 namespaces: () => Promise<any>;
-                logs: (podName: string, namespace: string, tail?: number) => Promise<any>;
+                logs: (podName: string, namespace: string, tail?: number, container?: string) => Promise<any>;
                 stopLogs: (podName: string, namespace: string) => Promise<any>;
+                portForward: (
+                    podName: string,
+                    namespace: string,
+                    localPort: number,
+                    remotePort: number,
+                    address?: string,
+                ) => Promise<{ success: boolean; forwardId?: string; localPort?: number; remotePort?: number; address?: string; error?: string }>;
+                stopPortForward: (forwardId: string) => Promise<{ success: boolean; error?: string }>;
+                stopPodPortForwards: (podName: string, namespace: string) => Promise<{ success: boolean; error?: string }>;
                 exec: (podName: string, namespace: string, command: string) => Promise<any>;
                 execInput: (podName: string, namespace: string, input: string) => Promise<any>;
                 execStop: (podName: string, namespace: string) => Promise<any>;
@@ -220,6 +286,12 @@ declare global {
             onK8sShellOutput: (callback: (data: any) => void) => void;
             onK8sExecOutput: (callback: (data: any) => void) => void;
             onK8sExecExit: (callback: (data: any) => void) => void;
+            onK8sPortForwardExit: (
+                callback: (data: { forwardId: string; exitCode?: number; error?: string }) => void,
+            ) => () => void;
+            onK8sPortForwardMessage: (
+                callback: (data: { forwardId: string; message: string }) => void,
+            ) => () => void;
         };
     }
 }

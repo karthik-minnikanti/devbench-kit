@@ -2,11 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { K8sClusterPanel } from "../K8sClusterPanel";
 import { K8sIntelligencePanel } from "./K8sIntelligencePanel";
 import { K8sNavigator } from "./K8sNavigator";
+import { K8sPodBottomPanel, PodDockTab } from "./K8sPodBottomPanel";
 import { K8sPodDetail } from "./K8sPodDetail";
 import { K8sResourceDetail } from "./K8sResourceDetail";
 import { K8sResourceTable } from "./K8sResourceTable";
 import { ALL_NAMESPACES, K8sResourceKind, K8sResourceRow } from "./types";
 import { isIntelligenceView, mapResources } from "./utils";
+
+interface PodDockTarget {
+  name: string;
+  namespace: string;
+}
+
+function podDockTargetId(target: PodDockTarget | null): string | null {
+  return target ? `${target.namespace}/${target.name}` : null;
+}
 
 interface Namespace {
   metadata: { name: string };
@@ -27,7 +37,9 @@ async function fetchResources(
       }
       case "pods": {
         const r = await window.electronAPI!.k8s.pods(ns);
-        return r.success ? mapResources(kind, r.pods || []) : [];
+        return r.success
+          ? mapResources(kind, r.pods || [], r.metrics || {}, ns)
+          : [];
       }
       case "deployments": {
         const r = await window.electronAPI!.k8s.deployments(ns);
@@ -106,13 +118,30 @@ export function K8sLensView() {
   const [searchEnv, setSearchEnv] = useState("");
   const [searchLabel, setSearchLabel] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
+  const [podDockTab, setPodDockTab] = useState<PodDockTab | null>(null);
+  const [podDockTarget, setPodDockTarget] = useState<PodDockTarget | null>(null);
+
+  const closePodDock = () => {
+    setPodDockTab(null);
+    setPodDockTarget(null);
+  };
+
+  const openPodDock = (target: PodDockTarget, tab: PodDockTab) => {
+    setPodDockTarget(target);
+    setPodDockTab(tab);
+  };
 
   const loadClusters = useCallback(async () => {
     if (!window.electronAPI) return;
     const result = await window.electronAPI.k8s.clusters.list();
     if (result.success) {
-      setClusters(result.clusters || []);
+      const clusterList = result.clusters || [];
+      setClusters(clusterList);
       setActiveClusterId(result.activeClusterId ?? null);
+      const active = clusterList.find((c) => c.id === result.activeClusterId);
+      if (active?.defaultNamespace) {
+        setSelectedNamespace(active.defaultNamespace);
+      }
     }
   }, []);
 
@@ -174,7 +203,18 @@ export function K8sLensView() {
   }, [loadClusters, loadContexts, loadCurrentContext, loadNamespaces]);
 
   useEffect(() => {
+    if (selectedNamespace === ALL_NAMESPACES || namespaces.length === 0) return;
+    const exists = namespaces.some(
+      (ns) => ns.metadata.name === selectedNamespace,
+    );
+    if (!exists) {
+      setSelectedNamespace("default");
+    }
+  }, [namespaces, selectedNamespace]);
+
+  useEffect(() => {
     setSelectedRow(null);
+    closePodDock();
     loadResources();
     if (!isIntelligenceView(activeKind)) {
       const interval = setInterval(loadResources, 8000);
@@ -188,10 +228,32 @@ export function K8sLensView() {
     if (result.success && result.cluster) {
       setActiveClusterId(clusterId);
       setCurrentContext(result.cluster.context);
-      if (result.cluster.defaultNamespace) setSelectedNamespace(result.cluster.defaultNamespace);
+      setSelectedNamespace(result.cluster.defaultNamespace ?? "default");
+      setClusters((prev) =>
+        prev.map((c) => (c.id === clusterId ? result.cluster! : c)),
+      );
       await loadContexts();
       await loadNamespaces();
       setSelectedRow(null);
+      closePodDock();
+    }
+  };
+
+  const handleNamespaceChange = async (namespace: string) => {
+    setSelectedNamespace(namespace);
+    setSelectedRow(null);
+    closePodDock();
+
+    if (!window.electronAPI || !activeClusterId) return;
+
+    const result = await window.electronAPI.k8s.clusters.update({
+      id: activeClusterId,
+      defaultNamespace: namespace,
+    });
+    if (result.success && result.cluster) {
+      setClusters((prev) =>
+        prev.map((c) => (c.id === activeClusterId ? result.cluster! : c)),
+      );
     }
   };
 
@@ -205,6 +267,7 @@ export function K8sLensView() {
       }
       await loadNamespaces();
       setSelectedRow(null);
+      closePodDock();
     }
   };
 
@@ -223,7 +286,61 @@ export function K8sLensView() {
   const handleNavSelect = (kind: K8sResourceKind) => {
     setActiveKind(kind);
     setSelectedRow(null);
+    closePodDock();
     setTableFilter("");
+  };
+
+  const handlePodRestarted = async (result: {
+    deletedPodName: string;
+    replacementPodName?: string;
+    message: string;
+  }) => {
+    const data = await fetchResources("pods", selectedNamespace);
+    setRows(data);
+    if (result.replacementPodName) {
+      const replacement = data.find(
+        (row) =>
+          row.kind === "pods" &&
+          row.name === result.replacementPodName &&
+          row.namespace === selectedRow?.namespace,
+      );
+      if (replacement) {
+        setSelectedRow(replacement);
+        setPodDockTarget((prev) =>
+          prev?.name === result.deletedPodName && prev.namespace === selectedRow?.namespace
+            ? { name: result.replacementPodName!, namespace: replacement.namespace! }
+            : prev,
+        );
+        return;
+      }
+    }
+    setSelectedRow(null);
+    setPodDockTarget((prev) => {
+      if (prev?.name === result.deletedPodName && prev.namespace === selectedRow?.namespace) {
+        setPodDockTab(null);
+        return null;
+      }
+      return prev;
+    });
+  };
+
+  const handleOpenPodDock = (tab: PodDockTab) => {
+    if (selectedRow?.kind === "pods" && selectedRow.namespace) {
+      openPodDock({ name: selectedRow.name, namespace: selectedRow.namespace }, tab);
+    }
+  };
+
+  const handlePodDockFromTable = (row: K8sResourceRow, tab: PodDockTab) => {
+    if (!row.namespace) return;
+    setSelectedRow(row);
+    openPodDock({ name: row.name, namespace: row.namespace }, tab);
+  };
+
+  const handleSelectRow = (row: K8sResourceRow) => {
+    setSelectedRow(row);
+    if (row.kind !== "pods") {
+      closePodDock();
+    }
   };
 
   if (!window.electronAPI) {
@@ -236,13 +353,13 @@ export function K8sLensView() {
 
   return (
     <div className="h-full flex flex-col bg-[var(--color-background)]">
-      {/* Lens-style top bar */}
-      <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center gap-3 flex-shrink-0 flex-wrap">
-        <span className="title-sm mr-1">☸ Cluster</span>
+      {/* Cluster toolbar */}
+      <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center gap-2 flex-shrink-0 flex-wrap text-xs">
         <select
           value={activeClusterId || ""}
           onChange={(e) => handleClusterChange(e.target.value)}
-          className="input-field !h-8 !py-1 !text-xs max-w-[180px]"
+          className="input-field !h-7 !py-0 !text-xs max-w-[140px]"
+          title="Cluster profile"
         >
           {clusters.length === 0 ? (
             <option value="">No clusters</option>
@@ -257,7 +374,8 @@ export function K8sLensView() {
         <select
           value={currentContext}
           onChange={(e) => handleContextChange(e.target.value)}
-          className="input-field !h-8 !py-1 !text-xs max-w-[180px]"
+          className="input-field !h-7 !py-0 !text-xs max-w-[160px]"
+          title="Kube context"
         >
           {contexts.map((ctx) => (
             <option key={ctx} value={ctx}>
@@ -267,10 +385,11 @@ export function K8sLensView() {
         </select>
         <select
           value={selectedNamespace}
-          onChange={(e) => setSelectedNamespace(e.target.value)}
-          className="input-field !h-8 !py-1 !text-xs max-w-[160px]"
+          onChange={(e) => handleNamespaceChange(e.target.value)}
+          className="input-field !h-7 !py-0 !text-xs max-w-[130px]"
+          title="Namespace"
         >
-          <option value={ALL_NAMESPACES}>All namespaces</option>
+          <option value={ALL_NAMESPACES}>All ns</option>
           {namespaces.map((ns) => (
             <option key={ns.metadata.name} value={ns.metadata.name}>
               {ns.metadata.name}
@@ -278,8 +397,12 @@ export function K8sLensView() {
           ))}
         </select>
         <div className="flex-1" />
-        <button onClick={() => setShowClusterPanel(true)} className="btn-secondary !h-8 !py-1 !px-3 !text-xs">
-          Manage Clusters
+        <button
+          onClick={() => setShowClusterPanel(true)}
+          className="btn-secondary !h-7 !py-0 !px-2 !text-xs"
+          title="Manage clusters"
+        >
+          Clusters
         </button>
       </div>
 
@@ -309,32 +432,55 @@ export function K8sLensView() {
             onSearch={handleSearch}
           />
         ) : (
-          <>
-            <K8sResourceTable
-              kind={activeKind}
-              rows={rows}
-              selectedId={selectedRow?.id ?? null}
-              loading={loading}
-              filter={tableFilter}
-              onFilterChange={setTableFilter}
-              onSelect={setSelectedRow}
-              onRefresh={loadResources}
-            />
-            {selectedRow?.kind === "pods" && selectedRow.namespace && (
-              <K8sPodDetail
-                name={selectedRow.name}
-                namespace={selectedRow.namespace}
-                onClose={() => setSelectedRow(null)}
-              />
-            )}
-            {selectedRow && selectedRow.kind !== "pods" && (
-              <K8sResourceDetail
-                row={selectedRow}
-                onClose={() => setSelectedRow(null)}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+            <div className="flex-1 flex min-h-0 overflow-hidden">
+              <K8sResourceTable
+                kind={activeKind}
+                rows={rows}
+                selectedId={selectedRow?.id ?? null}
+                loading={loading}
+                filter={tableFilter}
+                onFilterChange={setTableFilter}
+                onSelect={handleSelectRow}
                 onRefresh={loadResources}
+                onPodDockOpen={activeKind === "pods" ? handlePodDockFromTable : undefined}
+                activePodDockTab={podDockTab}
+                activePodDockTargetId={podDockTargetId(podDockTarget)}
+                hideNamespace={selectedNamespace !== ALL_NAMESPACES}
+              />
+              {selectedRow?.kind === "pods" && selectedRow.namespace && (
+                <K8sPodDetail
+                  name={selectedRow.name}
+                  namespace={selectedRow.namespace}
+                  onClose={() => setSelectedRow(null)}
+                  onPodRestarted={handlePodRestarted}
+                  onOpenDockPanel={handleOpenPodDock}
+                  activeDockTab={
+                    podDockTarget?.name === selectedRow.name &&
+                    podDockTarget?.namespace === selectedRow.namespace
+                      ? podDockTab
+                      : null
+                  }
+                />
+              )}
+              {selectedRow && selectedRow.kind !== "pods" && (
+                <K8sResourceDetail
+                  row={selectedRow}
+                  onClose={() => setSelectedRow(null)}
+                  onRefresh={loadResources}
+                />
+              )}
+            </div>
+            {activeKind === "pods" && podDockTab && podDockTarget && (
+              <K8sPodBottomPanel
+                name={podDockTarget.name}
+                namespace={podDockTarget.namespace}
+                activeTab={podDockTab}
+                onTabChange={setPodDockTab}
+                onClose={closePodDock}
               />
             )}
-          </>
+          </div>
         )}
       </div>
 

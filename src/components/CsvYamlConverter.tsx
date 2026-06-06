@@ -192,11 +192,9 @@ export function CsvYamlConverter() {
 
   return (
     <div className="h-full flex flex-col bg-[var(--color-card)]">
-      <div className="px-4 py-2 border-b border-[var(--color-border)] flex-shrink-0 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-            CSV/YAML Converter
-          </div>
+      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0 flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-medium shrink-0">CSV / YAML</span>
           <select
             value={conversionType}
             onChange={(e) => {
@@ -205,7 +203,7 @@ export function CsvYamlConverter() {
               setOutput("");
               setError(null);
             }}
-            className="input-field text-xs"
+            className="input-field !h-7 !text-xs"
           >
             <option value="json-csv">JSON → CSV</option>
             <option value="csv-json">CSV → JSON</option>
@@ -232,11 +230,11 @@ export function CsvYamlConverter() {
               setInput(getExampleInput());
               convert();
             }}
-            className="btn-secondary text-xs"
+            className="btn-secondary !h-7 !text-xs"
           >
             Example
           </button>
-          <button onClick={convert} className="btn-primary text-xs">
+          <button onClick={convert} className="btn-primary !h-7 !text-xs">
             Convert
           </button>
         </div>

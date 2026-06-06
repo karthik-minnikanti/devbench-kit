@@ -15,6 +15,8 @@ import { gitService } from './gitService';
 import { k8sService } from './k8sService';
 import { k8sClusterStore } from './k8sClusterStore';
 import { dockerService } from './dockerService';
+import { terminalService } from './terminalService';
+import { terminalHistoryStore } from './terminalHistoryStore';
 
 const execAsync = promisify(exec);
 
@@ -177,6 +179,12 @@ async function createWindow() {
     mainWindow.once('ready-to-show', () => {
         if (mainWindow) {
             mainWindow.show();
+        }
+    });
+
+    mainWindow.on('close', () => {
+        if (mainWindow) {
+            terminalService.destroyAllForWebContents(mainWindow.webContents);
         }
     });
 
@@ -1659,10 +1667,13 @@ ipcMain.handle('k8s:import-config', async (_event: any, configPath: string) => {
 ipcMain.handle('k8s:pods', async (_event: any, namespace?: string) => {
     try {
         await activateK8sFromStore();
-        const pods = await k8sService.getPods(namespace);
-        return { success: true, pods: pods.map(p => p) };
+        const [pods, metrics] = await Promise.all([
+            k8sService.getPods(namespace),
+            k8sService.getPodMetrics(namespace),
+        ]);
+        return { success: true, pods: pods.map(p => p), metrics };
     } catch (error: any) {
-        return { success: false, error: error.message || String(error), pods: [] };
+        return { success: false, error: error.message || String(error), pods: [], metrics: {} };
     }
 });
 
@@ -1673,6 +1684,118 @@ ipcMain.handle('k8s:namespaces', async () => {
         return { success: true, namespaces: namespaces.map(ns => ns) };
     } catch (error: any) {
         return { success: false, error: error.message || String(error), namespaces: [] };
+    }
+});
+
+// PTY terminal handlers (full interactive terminal via xterm + node-pty)
+ipcMain.handle('terminal:create', async (event, options) => {
+    try {
+        if (options?.kind === 'k8s') {
+            await activateK8sFromStore();
+            options.kubectlContextArgs = getKubectlContextArgs();
+        }
+        return terminalService.create(event.sender, options);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:write', async (_event, sessionId: string, data: string) => {
+    return terminalService.write(sessionId, data);
+});
+
+ipcMain.handle('terminal:resize', async (_event, sessionId: string, cols: number, rows: number) => {
+    return terminalService.resize(sessionId, cols, rows);
+});
+
+ipcMain.handle('terminal:destroy', async (_event, sessionId: string) => {
+    return terminalService.destroy(sessionId);
+});
+
+ipcMain.handle('terminal:history:addCommand', async (_event, scope: string, command: string) => {
+    try {
+        await terminalHistoryStore.addCommand(scope, command);
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:history:getCommands', async (_event, scope: string, query?: string, limit?: number) => {
+    try {
+        const commands = await terminalHistoryStore.getCommands(scope, query ?? '', limit ?? 100);
+        return { success: true, commands };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), commands: [] };
+    }
+});
+
+ipcMain.handle('terminal:history:clearCommands', async (_event, scope?: string) => {
+    try {
+        await terminalHistoryStore.clearCommands(scope);
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:history:addSession', async (_event, session: any) => {
+    try {
+        const now = new Date().toISOString();
+        await terminalHistoryStore.addSession({
+            id: session.id,
+            title: session.title,
+            scope: session.scope,
+            kind: session.kind,
+            config: session.config ?? {},
+            startedAt: now,
+            lastActiveAt: now,
+        });
+        const saved = (await terminalHistoryStore.listSessions(1)).find((s) => s.id === session.id);
+        return { success: true, session: saved ?? session };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:history:listSessions', async (_event, limit?: number) => {
+    try {
+        const sessions = await terminalHistoryStore.listSessions(limit ?? 30);
+        return { success: true, sessions };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), sessions: [] };
+    }
+});
+
+ipcMain.handle('terminal:history:touchSession', async (_event, id: string) => {
+    try {
+        const session = await terminalHistoryStore.updateSession(id, {
+            lastActiveAt: new Date().toISOString(),
+            closedAt: undefined,
+        });
+        return { success: true, session };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:history:closeSession', async (_event, id: string) => {
+    try {
+        const session = await terminalHistoryStore.updateSession(id, {
+            closedAt: new Date().toISOString(),
+        });
+        return { success: true, session };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('terminal:history:removeSession', async (_event, id: string) => {
+    try {
+        await terminalHistoryStore.removeSession(id);
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
     }
 });
 
@@ -1741,6 +1864,174 @@ ipcMain.handle('k8s:stop-logs', async (_event: any, podName: string, namespace: 
             return { success: true };
         }
         return { success: false, error: 'Log process not found' };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+function getK8sPortForwardMap(): Map<string, import('child_process').ChildProcess> {
+    if (!(global as any).k8sPortForwardProcesses) {
+        (global as any).k8sPortForwardProcesses = new Map();
+    }
+    return (global as any).k8sPortForwardProcesses;
+}
+
+function k8sPortForwardId(namespace: string, podName: string, localPort: number): string {
+    return `${namespace}/${podName}:${localPort}`;
+}
+
+ipcMain.handle(
+    'k8s:port-forward',
+    async (
+        _event: any,
+        podName: string,
+        namespace: string,
+        localPort: number,
+        remotePort: number,
+        address: string = '127.0.0.1',
+    ) => {
+        try {
+            await activateK8sFromStore();
+            const forwardId = k8sPortForwardId(namespace, podName, localPort);
+            const map = getK8sPortForwardMap();
+            if (map.has(forwardId)) {
+                return { success: false, error: 'Port forward already active for this local port' };
+            }
+
+            if (localPort > 0 && localPort < 1024) {
+                const suggested = localPort === 80 ? 8080 : localPort === 443 ? 8443 : localPort + 10000;
+                return {
+                    success: false,
+                    error: `Local port ${localPort} requires admin rights. Try ${suggested} instead (forwards to pod port ${remotePort}).`,
+                };
+            }
+
+            const pfArgs = [
+                ...getKubectlContextArgs(),
+                'port-forward',
+                '--address',
+                address,
+                `pod/${podName}`,
+                '-n',
+                namespace,
+                `${localPort}:${remotePort}`,
+            ];
+
+            return await new Promise<{
+                success: boolean;
+                forwardId?: string;
+                localPort?: number;
+                remotePort?: number;
+                address?: string;
+                error?: string;
+            }>((resolve) => {
+                const pfProcess = spawn('kubectl', pfArgs);
+                let settled = false;
+                let stderrBuf = '';
+
+                const finish = (result: {
+                    success: boolean;
+                    forwardId?: string;
+                    localPort?: number;
+                    remotePort?: number;
+                    address?: string;
+                    error?: string;
+                }) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(readyTimeout);
+                    resolve(result);
+                };
+
+                const readyTimeout = setTimeout(() => {
+                    if (pfProcess.exitCode !== null) return;
+                    map.set(forwardId, pfProcess);
+                    finish({ success: true, forwardId, localPort, remotePort, address });
+                }, 500);
+
+                pfProcess.stderr.on('data', (data) => {
+                    const message = data.toString();
+                    stderrBuf += message;
+                    const trimmed = message.trim();
+                    if (mainWindow && trimmed) {
+                        mainWindow.webContents.send('k8s:port-forward:message', { forwardId, message: trimmed });
+                    }
+                    if (
+                        trimmed.includes('Unable to listen') ||
+                        trimmed.includes('unable to forward') ||
+                        trimmed.includes('not found') ||
+                        trimmed.includes('error:') ||
+                        trimmed.includes('Error from server')
+                    ) {
+                        pfProcess.kill();
+                        map.delete(forwardId);
+                        finish({ success: false, error: trimmed });
+                    } else if (trimmed.includes('Forwarding from')) {
+                        map.set(forwardId, pfProcess);
+                        finish({ success: true, forwardId, localPort, remotePort, address });
+                    }
+                });
+
+                pfProcess.on('error', (error) => {
+                    map.delete(forwardId);
+                    finish({ success: false, error: error.message });
+                    if (mainWindow) {
+                        mainWindow.webContents.send('k8s:port-forward:exit', {
+                            forwardId,
+                            error: error.message,
+                        });
+                    }
+                });
+
+                pfProcess.on('exit', (code) => {
+                    map.delete(forwardId);
+                    const errorMessage =
+                        code !== 0 && code !== null
+                            ? stderrBuf.trim() || `Port forward exited with code ${code}`
+                            : undefined;
+                    if (!settled) {
+                        finish({ success: false, error: errorMessage || 'Port forward failed to start' });
+                    }
+                    if (mainWindow) {
+                        mainWindow.webContents.send('k8s:port-forward:exit', {
+                            forwardId,
+                            exitCode: code ?? undefined,
+                            error: errorMessage,
+                        });
+                    }
+                });
+            });
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+);
+
+ipcMain.handle('k8s:stop-port-forward', async (_event: any, forwardId: string) => {
+    try {
+        const map = getK8sPortForwardMap();
+        if (map.has(forwardId)) {
+            map.get(forwardId)!.kill();
+            map.delete(forwardId);
+            return { success: true };
+        }
+        return { success: false, error: 'Port forward not found' };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:stop-pod-port-forwards', async (_event: any, podName: string, namespace: string) => {
+    try {
+        const prefix = `${namespace}/${podName}:`;
+        const map = getK8sPortForwardMap();
+        for (const [id, proc] of map.entries()) {
+            if (id.startsWith(prefix)) {
+                proc.kill();
+                map.delete(id);
+            }
+        }
+        return { success: true };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }
@@ -1965,8 +2256,8 @@ ipcMain.handle('k8s:scale', async (_event: any, name: string, namespace: string,
 ipcMain.handle('k8s:restart-pod', async (_event: any, name: string, namespace: string, environment?: string) => {
     try {
         await activateK8sFromStore();
-        await k8sService.restartPod(name, namespace, environment);
-        return { success: true };
+        const result = await k8sService.restartPod(name, namespace, environment);
+        return { success: true, ...result };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }

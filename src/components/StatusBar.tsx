@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { SyncStatus } from "./SyncStatus";
 import { BrandLogo } from "./BrandLogo";
 
@@ -6,6 +7,16 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ onShowShortcuts }: StatusBarProps) {
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (window.electronAPI?.updater?.getAppVersion) {
+      window.electronAPI.updater.getAppVersion().then((result) => {
+        if (result?.version) setVersion(result.version);
+      });
+    }
+  }, []);
+
   return (
     <div className="h-7 bg-[var(--color-background-soft)] border-t border-[var(--color-border)] flex items-center justify-between px-4 text-[11px]">
       <div className="flex items-center gap-3">
@@ -26,9 +37,9 @@ export function StatusBar({ onShowShortcuts }: StatusBarProps) {
           </button>
         )}
         <BrandLogo size="sm" showText={false} />
-        <span className="font-medium text-[var(--color-text-tertiary)]">
-          v1.0
-        </span>
+        {version && (
+          <span className="font-medium text-[var(--color-text-tertiary)]">v{version}</span>
+        )}
       </div>
     </div>
   );

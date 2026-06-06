@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
 import { jsonToXml, xmlToJson } from "../utils/jsonXmlConverter";
+import { PaneLabel, ToolToolbar } from "./ui/ToolChrome";
 
 type ConversionType = "json-to-xml" | "xml-to-json";
 
@@ -27,34 +28,28 @@ export function JsonXmlConverter() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="tool-header">
-        <h2 className="title-sm flex items-center gap-2">
-          <span className="text-lg">🔄</span>
-          JSON ↔ XML Converter
-        </h2>
-        <div className="flex items-center gap-2">
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as ConversionType)}
-            className="input-field text-xs"
-          >
-            <option value="json-to-xml">JSON → XML</option>
-            <option value="xml-to-json">XML → JSON</option>
-          </select>
-          <button onClick={handleConvert} className="btn-primary text-xs">
-            ⚡ Convert
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              {type === "json-to-xml" ? "JSON" : "XML"}
-            </div>
-          </div>
-          <div className="flex-1">
+      <ToolToolbar
+        title="JSON ↔ XML"
+        actions={
+          <>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as ConversionType)}
+              className="input-field !h-7 !text-xs"
+            >
+              <option value="json-to-xml">JSON → XML</option>
+              <option value="xml-to-json">XML → JSON</option>
+            </select>
+            <button onClick={handleConvert} className="btn-primary !h-7 !text-xs">
+              Convert
+            </button>
+          </>
+        }
+      />
+      <div className="flex-1 flex overflow-hidden gap-px bg-[var(--color-border)]">
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>{type === "json-to-xml" ? "JSON" : "XML"}</PaneLabel>
+          <div className="flex-1 min-h-0">
             <Editor
               height="100%"
               width="100%"
@@ -62,51 +57,38 @@ export function JsonXmlConverter() {
               value={input}
               onChange={(value) => setInput(value || "")}
               theme={getMonacoTheme()}
-          beforeMount={onMonacoBeforeMount}
+              beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
-              {type === "json-to-xml" ? "XML" : "JSON"}
-            </div>
-          </div>
-          <div className="flex-1 relative">
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>{type === "json-to-xml" ? "XML" : "JSON"}</PaneLabel>
+          <div className="flex-1 min-h-0 relative">
             <Editor
               height="100%"
               width="100%"
               defaultLanguage={type === "json-to-xml" ? "xml" : "json"}
-              value={
-                output ||
-                (error ? `Error: ${error}` : "// Output will appear here...")
-              }
+              value={output || (error ? `Error: ${error}` : "// Output…")}
               theme={getMonacoTheme()}
-          beforeMount={onMonacoBeforeMount}
+              beforeMount={onMonacoBeforeMount}
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">⚠️</span>
-                  <span className="font-medium">{error}</span>
-                </div>
-              </div>
+              <div className="error-banner absolute bottom-3 left-3 right-3 text-xs">{error}</div>
             )}
           </div>
         </div>

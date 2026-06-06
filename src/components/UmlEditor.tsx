@@ -5,6 +5,12 @@ import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
 import { getFolders, saveFolder, deleteFolder, Folder } from "../utils/folders";
 import { groupByDate, DateGroup } from "../utils/dateGrouping";
 import { Icon } from "./Icon";
+import {
+  ToolSidebar,
+  ToolSidebarBody,
+  ToolSidebarSection,
+  toolSidebarItemClass,
+} from "./ui/ToolChrome";
 
 interface SavedDiagram {
   id: string;
@@ -35,9 +41,7 @@ export function UmlEditor() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedDiagram, setSelectedDiagram] = useState<string | null>(null);
   const [diagramName, setDiagramName] = useState<string>("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(["Today", "Yesterday", "This Week"]),
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(),
   );
@@ -50,11 +54,30 @@ export function UmlEditor() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [mermaidInitialized, setMermaidInitialized] = useState(false);
+  const sidebarDefaultsApplied = useRef(false);
 
   useEffect(() => {
     loadDiagrams();
     loadFolders();
   }, []);
+
+  useEffect(() => {
+    if (sidebarDefaultsApplied.current) return;
+    const rootDiagrams = diagrams.filter((diagram) => !diagram.folderId);
+    const groups = groupByDate(rootDiagrams);
+    if (groups.length === 0 && folders.length === 0) return;
+    sidebarDefaultsApplied.current = true;
+    if (groups.length > 0) {
+      setExpandedGroups(new Set(groups.map((group) => group.label)));
+    }
+    if (folders.length > 0) {
+      setExpandedFolders(
+        new Set(
+          folders.map((folder) => String(folder.id || "")).filter(Boolean),
+        ),
+      );
+    }
+  }, [diagrams, folders]);
 
   const loadDiagrams = () => {
     try {
@@ -603,50 +626,40 @@ export function UmlEditor() {
   return (
     <div className="h-full flex flex-col bg-[var(--color-background)]">
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] hover:text-[var(--color-text-primary)] text-xs transition-colors"
-            >
-              {showSidebar ? "←" : "→"}
-            </button>
-            <h2 className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-              UML Editor
-            </h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={diagramName}
-              onChange={(e) => setDiagramName(e.target.value)}
-              placeholder="Diagram name (optional)..."
-              className="px-3 py-1.5 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] transition-all"
-            />
-            <button
-              onClick={handleSaveDiagram}
-              className="px-3 py-1.5 text-xs rounded bg-[var(--color-primary)] text-white font-medium hover:opacity-90 transition-opacity"
-              title="Save Diagram"
-            >
-              Save
-            </button>
-            <button
-              onClick={handleCreateDiagram}
-              className="px-3 py-1.5 text-xs rounded bg-[var(--color-primary)] text-white font-medium hover:opacity-90 transition-opacity"
-            >
-              + New
-            </button>
-            <select
-              onChange={(e) => {
-                const example = examples.find(
-                  (ex) => ex.name === e.target.value,
-                );
-                if (example) loadExample(example.code);
-                e.target.value = "";
-              }}
-              className="px-3 py-1.5 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
-              defaultValue=""
+      <div className="tool-header flex-shrink-0 bg-[var(--color-card)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="p-1 rounded hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] text-xs"
+          >
+            {showSidebar ? "←" : "→"}
+          </button>
+          <span className="text-xs font-medium text-[var(--color-text-primary)] shrink-0">
+            UML Editor
+          </span>
+          <input
+            type="text"
+            value={diagramName}
+            onChange={(e) => setDiagramName(e.target.value)}
+            placeholder="Diagram name…"
+            className="input-field !h-7 !text-xs max-w-[200px]"
+          />
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={handleSaveDiagram} className="btn-primary !h-7 !text-xs" title="Save Diagram">
+            Save
+          </button>
+          <button onClick={handleCreateDiagram} className="btn-primary !h-7 !text-xs">
+            + New
+          </button>
+          <select
+            onChange={(e) => {
+              const example = examples.find((ex) => ex.name === e.target.value);
+              if (example) loadExample(example.code);
+              e.target.value = "";
+            }}
+            className="input-field !h-7 !text-xs max-w-[140px]"
+            defaultValue=""
             >
               <option value="" disabled>
                 Load Example...
@@ -657,16 +670,15 @@ export function UmlEditor() {
                 </option>
               ))}
             </select>
-          </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden" style={{ minHeight: 0 }}>
         {showSidebar && (
-          <div className="w-56 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto">
-            <div
-              className="p-2 flex-1"
+          <ToolSidebar aria-label="Diagrams">
+            <ToolSidebarBody
+              className="px-2"
               onDragOver={(e) => {
                 if (draggedDiagramId) {
                   e.preventDefault();
@@ -757,33 +769,20 @@ export function UmlEditor() {
                                         setDraggedDiagramId(null);
                                         setDragOverFolderId(null);
                                       }}
-                                      className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${
-                                        selectedDiagram === diagram.id
-                                          ? "bg-[var(--color-primary)] text-white"
-                                          : "bg-[var(--color-background)] hover:bg-[var(--color-hover)] text-[var(--color-text-primary)]"
-                                      } ${draggedDiagramId === diagram.id ? "opacity-50" : ""}`}
+                                      className={`${toolSidebarItemClass(
+                                        selectedDiagram === diagram.id,
+                                        "cursor-pointer group",
+                                      )} ${draggedDiagramId === diagram.id ? "opacity-50" : ""}`}
                                       onClick={() =>
                                         handleSelectDiagram(diagram.id)
                                       }
                                     >
                                       <div className="flex items-start justify-between">
                                         <div className="flex-1 min-w-0">
-                                          <div
-                                            className={`text-xs font-medium truncate ${
-                                              selectedDiagram === diagram.id
-                                                ? "text-white"
-                                                : "text-[var(--color-text-primary)]"
-                                            }`}
-                                          >
+                                          <div className="text-xs font-medium truncate text-[var(--color-text-primary)]">
                                             {diagram.name}
                                           </div>
-                                          <div
-                                            className={`text-[10px] mt-0.5 ${
-                                              selectedDiagram === diagram.id
-                                                ? "text-white/80"
-                                                : "text-[var(--color-text-secondary)]"
-                                            }`}
-                                          >
+                                          <div className="text-[10px] mt-0.5 text-[var(--color-text-secondary)]">
                                             {new Date(
                                               diagram.updatedAt,
                                             ).toLocaleTimeString([], {
@@ -797,11 +796,7 @@ export function UmlEditor() {
                                             e.stopPropagation();
                                             handleDeleteDiagram(diagram.id);
                                           }}
-                                          className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${
-                                            selectedDiagram === diagram.id
-                                              ? "text-white hover:text-red-200"
-                                              : "text-[var(--color-text-tertiary)] hover:text-red-500"
-                                          }`}
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
                                         >
                                           ×
                                         </button>
@@ -822,15 +817,12 @@ export function UmlEditor() {
                     <div className="space-y-2">
                       {rootDiagramsGrouped.map((group) => (
                         <div key={group.label} className="space-y-1">
-                          <button
-                            onClick={() => toggleGroup(group.label)}
-                            className="w-full flex items-center justify-between px-1.5 py-1 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider hover:text-[var(--color-text-primary)] transition-colors"
-                          >
-                            <span>{group.label}</span>
-                            <span className="text-[var(--color-text-tertiary)] text-[9px]">
-                              {expandedGroups.has(group.label) ? "−" : "+"}
-                            </span>
-                          </button>
+                          <ToolSidebarSection
+                            label={group.label}
+                            expanded={expandedGroups.has(group.label)}
+                            onToggle={() => toggleGroup(group.label)}
+                            count={group.items.length}
+                          />
                           {expandedGroups.has(group.label) && (
                             <div className="space-y-0.5">
                               {group.items.map((diagram) => (
@@ -845,33 +837,20 @@ export function UmlEditor() {
                                     setDraggedDiagramId(null);
                                     setDragOverFolderId(null);
                                   }}
-                                  className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${
-                                    selectedDiagram === diagram.id
-                                      ? "bg-[var(--color-primary)] text-white"
-                                      : "bg-[var(--color-background)] hover:bg-[var(--color-hover)] text-[var(--color-text-primary)]"
-                                  } ${draggedDiagramId === diagram.id ? "opacity-50" : ""}`}
+                                  className={`${toolSidebarItemClass(
+                                    selectedDiagram === diagram.id,
+                                    "cursor-pointer group",
+                                  )} ${draggedDiagramId === diagram.id ? "opacity-50" : ""}`}
                                   onClick={() =>
                                     handleSelectDiagram(diagram.id)
                                   }
                                 >
                                   <div className="flex items-start justify-between">
                                     <div className="flex-1 min-w-0">
-                                      <div
-                                        className={`text-xs font-medium truncate ${
-                                          selectedDiagram === diagram.id
-                                            ? "text-white"
-                                            : "text-[var(--color-text-primary)]"
-                                        }`}
-                                      >
+                                      <div className="text-xs font-medium truncate text-[var(--color-text-primary)]">
                                         {diagram.name}
                                       </div>
-                                      <div
-                                        className={`text-[10px] mt-0.5 ${
-                                          selectedDiagram === diagram.id
-                                            ? "text-white/80"
-                                            : "text-[var(--color-text-secondary)]"
-                                        }`}
-                                      >
+                                      <div className="text-[10px] mt-0.5 text-[var(--color-text-secondary)]">
                                         {new Date(
                                           diagram.updatedAt,
                                         ).toLocaleTimeString([], {
@@ -885,11 +864,7 @@ export function UmlEditor() {
                                         e.stopPropagation();
                                         handleDeleteDiagram(diagram.id);
                                       }}
-                                      className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${
-                                        selectedDiagram === diagram.id
-                                          ? "text-white hover:text-red-200"
-                                          : "text-[var(--color-text-tertiary)] hover:text-red-500"
-                                      }`}
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
                                     >
                                       ×
                                     </button>
@@ -951,8 +926,8 @@ export function UmlEditor() {
                   )}
                 </div>
               )}
-            </div>
-          </div>
+            </ToolSidebarBody>
+          </ToolSidebar>
         )}
         <div
           ref={containerRef}

@@ -4,7 +4,6 @@ import { TabType } from './components/CategorizedTabs';
 import { TopNavigationBar } from './components/TopNavigationBar';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
-import { WelcomeScreen } from './components/WelcomeScreen';
 import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
@@ -34,6 +33,7 @@ const CsvYamlConverter = lazy(() => import('./components/CsvYamlConverter').then
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(m => ({ default: m.GlobalSearch })));
 const Profile = lazy(() => import('./components/Profile').then(m => ({ default: m.Profile })));
 const DailyPlanner = lazy(() => import('./components/DailyPlanner').then(m => ({ default: m.DailyPlanner })));
+const LocalTerminal = lazy(() => import('./components/LocalTerminal').then(m => ({ default: m.LocalTerminal })));
 // Home is the default view, so import it directly (not lazy) to avoid loading delays
 import { Home } from './components/Home';
 
@@ -54,10 +54,18 @@ function App() {
     const [activeTab, setActiveTab] = useState<TabType>('home');
     const [isMac, setIsMac] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
-    const [showWelcome, setShowWelcome] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [showGitSetup, setShowGitSetup] = useState(false);
     const [gitRepoPath, setGitRepoPath] = useState<string | null>(null);
+    const [pendingItemNav, setPendingItemNav] = useState<{
+        toolType: TabType;
+        itemId: string;
+    } | null>(null);
+    const [pendingPlannerNav, setPendingPlannerNav] = useState<{
+        date?: string;
+        taskId?: string;
+        addTask?: boolean;
+    } | null>(null);
 
     useEffect(() => {
         // Detect macOS for window controls spacing
@@ -120,7 +128,7 @@ function App() {
     }, [config?.theme]);
 
     // Allowed tabs visible in navigation
-    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s'];
+    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s', 'terminal'];
 
     // Define all tabs array with icon components (keeping all code, but filtering for display)
     const allTabs = [
@@ -135,7 +143,8 @@ function App() {
         { id: 'regex' as TabType, label: 'Regex Tester', icon: 'Search', description: 'Test regular expressions' },
         { id: 'js-runner' as TabType, label: 'JavaScript Runner', icon: 'Zap', description: 'Run JavaScript code' },
         { id: 'docker' as TabType, label: 'Docker', icon: 'Container', description: 'Manage Docker containers' },
-        { id: 'k8s' as TabType, label: 'Kubernetes', icon: 'Kubernetes', description: 'Manage Kubernetes resources' },
+        { id: 'k8s' as TabType, label: 'Kube Lens', icon: 'Kubernetes', description: 'Browse and manage Kubernetes clusters' },
+        { id: 'terminal' as TabType, label: 'Terminal', icon: 'Terminal', description: 'System shell with zsh and Oh My Zsh' },
         { id: 'notes' as TabType, label: 'Notes', icon: 'FileText', description: 'Take and organize notes' },
         { id: 'planner' as TabType, label: 'Daily Planner', icon: 'Calendar', description: 'Plan your day with tasks and notes' },
         { id: 'excalidraw' as TabType, label: 'Excalidraw', icon: 'Pen', description: 'Create diagrams' },
@@ -150,22 +159,22 @@ function App() {
         setActiveTab(tabType);
     }, []);
 
-    // Check if user has seen welcome screen
-    useEffect(() => {
-        const hasSeenWelcome = localStorage.getItem('devbench_welcome_seen');
-        if (!hasSeenWelcome) {
-            setShowWelcome(true);
-        }
-    }, []);
-
     // Set up event listeners for tool navigation
     useEffect(() => {
         const unsubscribeOpenTool = appEvents.on(EVENTS.OPEN_TOOL, ({ toolId, options }) => {
             const toolType = toolId as TabType;
             handleTabChange(toolType);
-            
+
             if (options?.itemId) {
+                setPendingItemNav({ toolType, itemId: options.itemId });
                 appEvents.emit(EVENTS.PENDING_ITEM_ID, { toolType, itemId: options.itemId });
+            }
+            if (toolType === 'planner' && (options?.date || options?.taskId || options?.addTask)) {
+                setPendingPlannerNav({
+                    date: options.date,
+                    taskId: options.taskId,
+                    addTask: options.addTask,
+                });
             }
             if (options?.date) {
                 appEvents.emit(EVENTS.PENDING_PLANNER_DATE, options.date);
@@ -245,22 +254,47 @@ function App() {
                         <Kubernetes />
                     </Suspense>
                 );
+            case 'terminal':
+                return (
+                    <Suspense fallback={<ComponentLoader />}>
+                        <LocalTerminal />
+                    </Suspense>
+                );
             case 'notes':
                 return (
                     <Suspense fallback={<ComponentLoader />}>
-                        <Notes />
+                        <Notes
+                            pendingItemId={
+                                pendingItemNav?.toolType === 'notes'
+                                    ? pendingItemNav.itemId
+                                    : undefined
+                            }
+                            onPendingItemHandled={() => setPendingItemNav(null)}
+                        />
                     </Suspense>
                 );
             case 'planner':
                 return (
                     <Suspense fallback={<ComponentLoader />}>
-                        <DailyPlanner />
+                        <DailyPlanner
+                            pendingDate={pendingPlannerNav?.date}
+                            pendingTaskId={pendingPlannerNav?.taskId}
+                            pendingAddTask={pendingPlannerNav?.addTask}
+                            onPendingHandled={() => setPendingPlannerNav(null)}
+                        />
                     </Suspense>
                 );
             case 'excalidraw':
                 return (
                     <Suspense fallback={<ComponentLoader />}>
-                        <ExcalidrawComponent />
+                        <ExcalidrawComponent
+                            pendingItemId={
+                                pendingItemNav?.toolType === 'excalidraw'
+                                    ? pendingItemNav.itemId
+                                    : undefined
+                            }
+                            onPendingItemHandled={() => setPendingItemNav(null)}
+                        />
                     </Suspense>
                 );
             case 'uml':
@@ -316,19 +350,16 @@ function App() {
                 <div className="flex-1 flex flex-col overflow-hidden bg-[var(--color-background)]" style={{ minHeight: 0 }}>
                     {/* Toolbar for Schema */}
                     {activeTab === 'schema' && (
-                        <div className="h-11 bg-[var(--color-card)] border-b border-[var(--color-border)] flex items-center justify-between px-4">
+                        <div className="tool-header">
                             <div className="flex items-center gap-3 flex-1 min-w-0">
                                 <Suspense fallback={null}>
                                     <SchemaOptions />
                                 </Suspense>
                                 <button
                                     onClick={() => setShowHistory(!showHistory)}
-                                    className={`px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1.5 ${showHistory
-                                        ? 'bg-[var(--color-primary)] text-white'
-                                        : 'text-[var(--color-text-secondary)] bg-[var(--color-muted)] hover:bg-[var(--color-border-soft)]'
-                                        }`}
+                                    className={`btn-secondary !h-7 !text-xs ${showHistory ? '!bg-[var(--color-primary)] !text-white !border-transparent' : ''}`}
                                 >
-                                    <span>{showHistory ? 'Hide' : 'History'}</span>
+                                    {showHistory ? 'Hide history' : 'History'}
                                 </button>
                             </div>
                         </div>
@@ -361,24 +392,6 @@ function App() {
             <Suspense fallback={null}>
                 <GlobalSearch />
             </Suspense>
-
-            {/* Welcome Screen Overlay */}
-            {showWelcome && (
-                <div className="fixed inset-0 z-[9997]">
-                    <WelcomeScreen
-                        onDismiss={() => {
-                            setShowWelcome(false);
-                            localStorage.setItem('devbench_welcome_seen', 'true');
-                        }}
-                        onOpenTool={(tool) => {
-                            const toolType = tool as TabType;
-                            handleTabChange(toolType);
-                            setShowWelcome(false);
-                            localStorage.setItem('devbench_welcome_seen', 'true');
-                        }}
-                    />
-                </div>
-            )}
 
             {/* Keyboard Shortcuts */}
             <KeyboardShortcuts

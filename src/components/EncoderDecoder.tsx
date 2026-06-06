@@ -7,6 +7,7 @@ import {
   encodeUrl,
   decodeUrl,
 } from "../utils/encoders";
+import { PaneLabel, ToolToolbar } from "./ui/ToolChrome";
 
 type EncoderType =
   | "base64-encode"
@@ -45,35 +46,29 @@ export function EncoderDecoder() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="tool-header">
-        <h2 className="title-sm flex items-center gap-2">
-          <span className="text-lg">🔐</span>
-          Encoder / Decoder
-        </h2>
-        <div className="flex items-center gap-2">
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as EncoderType)}
-            className="input-field text-xs"
-          >
-            <option value="base64-encode">Base64 Encode</option>
-            <option value="base64-decode">Base64 Decode</option>
-            <option value="url-encode">URL Encode</option>
-            <option value="url-decode">URL Decode</option>
-          </select>
-          <button onClick={handleEncodeDecode} className="btn-primary text-xs">
-            {type.includes("encode") ? "⚡ Encode" : "🔓 Decode"}
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              Input
-            </div>
-          </div>
+      <ToolToolbar
+        title="Encoder / Decoder"
+        actions={
+          <>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as EncoderType)}
+              className="input-field !h-7 !text-xs"
+            >
+              <option value="base64-encode">Base64 Encode</option>
+              <option value="base64-decode">Base64 Decode</option>
+              <option value="url-encode">URL Encode</option>
+              <option value="url-decode">URL Decode</option>
+            </select>
+            <button onClick={handleEncodeDecode} className="btn-primary !h-7 !text-xs">
+              {type.includes("encode") ? "Encode" : "Decode"}
+            </button>
+          </>
+        }
+      />
+      <div className="flex-1 flex overflow-hidden gap-px bg-[var(--color-border)]">
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>Input</PaneLabel>
           <div className="flex-1">
             <Editor
               height="100%"
@@ -85,21 +80,16 @@ export function EncoderDecoder() {
           beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
-              Output
-            </div>
-          </div>
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>Output</PaneLabel>
           <div className="flex-1 relative">
             <Editor
               height="100%"
@@ -114,19 +104,14 @@ export function EncoderDecoder() {
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">⚠️</span>
-                  <span className="font-medium">{error}</span>
-                </div>
-              </div>
+              <div className="error-banner absolute bottom-3 left-3 right-3 text-xs">{error}</div>
             )}
           </div>
         </div>

@@ -35,7 +35,7 @@ export function K8sIntelligencePanel({
   if (kind === "timeline") {
     return (
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <h2 className="title-sm mb-4">Change Timeline · {namespace === "__all__" ? "All namespaces" : namespace}</h2>
+        <h2 className="text-xs font-medium mb-3">Change Timeline · {namespace === "__all__" ? "All namespaces" : namespace}</h2>
         {timeline.length === 0 ? (
           <div className="text-sm text-[var(--color-text-tertiary)]">No timeline events</div>
         ) : (
@@ -62,7 +62,7 @@ export function K8sIntelligencePanel({
   if (kind === "dependency-graph") {
     return (
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <h2 className="title-sm mb-4">Dependency Graph</h2>
+        <h2 className="text-xs font-medium mb-3">Dependency Graph</h2>
         {!graph ? (
           <div className="text-sm text-[var(--color-text-tertiary)]">Loading graph...</div>
         ) : (
@@ -99,14 +99,14 @@ export function K8sIntelligencePanel({
   if (kind === "events") {
     return (
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="px-6 py-4 border-b border-[var(--color-border)]">
-          <h2 className="title-sm">Cluster Events</h2>
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)]">
+          <h2 className="text-xs font-medium">Cluster Events</h2>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-xs tool-table">
           <thead className="sticky top-0 bg-[var(--color-background-soft)] border-b border-[var(--color-border)]">
             <tr>
               {["Type", "Reason", "Object", "Message", "Age"].map((h) => (
-                <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-[var(--color-text-tertiary)] uppercase">
+                <th key={h} className="text-left px-3 py-1.5 text-[10px] font-medium text-[var(--color-text-tertiary)] uppercase">
                   {h}
                 </th>
               ))}
@@ -115,11 +115,11 @@ export function K8sIntelligencePanel({
           <tbody>
             {events.map((event: any, idx: number) => (
               <tr key={idx} className="border-b border-[var(--color-border)]">
-                <td className="px-4 py-2">{event.type}</td>
-                <td className="px-4 py-2">{event.reason}</td>
-                <td className="px-4 py-2">{event.source}</td>
-                <td className="px-4 py-2 text-[var(--color-text-secondary)]">{event.message}</td>
-                <td className="px-4 py-2">{formatAge(event.timestamp?.toString?.() || event.timestamp)}</td>
+                <td className="px-3 py-1.5">{event.type}</td>
+                <td className="px-3 py-1.5">{event.reason}</td>
+                <td className="px-3 py-1.5 font-mono">{event.source}</td>
+                <td className="px-3 py-1.5 text-[var(--color-text-secondary)]">{event.message}</td>
+                <td className="px-3 py-1.5">{formatAge(event.timestamp?.toString?.() || event.timestamp)}</td>
               </tr>
             ))}
           </tbody>
@@ -130,7 +130,7 @@ export function K8sIntelligencePanel({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <h2 className="title-sm mb-4">Resource Search</h2>
+      <h2 className="text-xs font-medium mb-3">Resource Search</h2>
       <div className="grid grid-cols-3 gap-3 mb-4 max-w-3xl">
         <input
           value={searchImage}
@@ -151,7 +151,7 @@ export function K8sIntelligencePanel({
           className="input-field !text-sm"
         />
       </div>
-      <button onClick={onSearch} className="btn-primary !h-9 !text-sm mb-6">
+      <button onClick={onSearch} className="btn-primary !h-7 !text-xs mb-6">
         Search
       </button>
       {searchResults && (

@@ -18,7 +18,12 @@ import {
 import { Icon } from "./Icon";
 import { hasNoteChanged } from "../utils/sync";
 import { NoteItem } from "./memoized-list-items";
-import { appEvents, EVENTS } from "../utils/appEvents";
+import {
+  ToolSidebar,
+  ToolSidebarBody,
+  ToolSidebarHeader,
+  ToolSidebarSection,
+} from "./ui/ToolChrome";
 import {
   noteTemplates,
   getTemplatesByCategory,
@@ -36,16 +41,22 @@ interface Note {
   updatedAt: string;
 }
 
-export function Notes() {
+interface NotesProps {
+  pendingItemId?: string;
+  onPendingItemHandled?: () => void;
+}
+
+export function Notes({
+  pendingItemId,
+  onPendingItemHandled,
+}: NotesProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [dateGroups, setDateGroups] = useState<DateGroup[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(["Today", "Yesterday", "This Week"]),
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(),
   );
@@ -67,6 +78,8 @@ export function Notes() {
   const isSavingRef = useRef<boolean>(false);
   const creatingNoteRef = useRef<boolean>(false);
   const lastLoadedNoteIdRef = useRef<string | null>(null);
+  const notesLoadedRef = useRef(false);
+  const sidebarDefaultsApplied = useRef(false);
 
   useEffect(() => {
     loadNotes();
@@ -74,22 +87,20 @@ export function Notes() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = appEvents.on(
-      EVENTS.PENDING_ITEM_ID,
-      (data: { toolType: string; itemId: string }) => {
-        if (data && data.toolType === "notes" && data.itemId) {
-          setTimeout(() => {
-            const noteId = data.itemId;
-            const note = notes.find((n) => String(n.id) === String(noteId));
-            if (note) {
-              handleSelectNote(note.id);
-            }
-          }, 500);
-        }
-      },
-    );
-    return unsubscribe;
-  }, [notes]);
+    if (sidebarDefaultsApplied.current) return;
+    if (dateGroups.length === 0 && folders.length === 0) return;
+    sidebarDefaultsApplied.current = true;
+    if (dateGroups.length > 0) {
+      setExpandedGroups(new Set(dateGroups.map((group) => group.label)));
+    }
+    if (folders.length > 0) {
+      setExpandedFolders(
+        new Set(
+          folders.map((folder) => String(folder.id || "")).filter(Boolean),
+        ),
+      );
+    }
+  }, [dateGroups, folders]);
 
   const normalizeNoteId = (note: any): string => {
     return String(note.id || note._id || "");
@@ -150,6 +161,8 @@ export function Notes() {
       });
     } catch (err) {
       console.error("Failed to load notes:", err);
+    } finally {
+      notesLoadedRef.current = true;
     }
   };
 
@@ -638,6 +651,21 @@ export function Notes() {
     [selectedNote, notes, saveCurrentNote],
   );
 
+  useEffect(() => {
+    if (!pendingItemId || !notesLoadedRef.current) return;
+
+    const normalizedPendingId = String(pendingItemId);
+    const note = notes.find((n) => String(n.id) === normalizedPendingId);
+    if (!note) {
+      onPendingItemHandled?.();
+      return;
+    }
+
+    void handleSelectNote(note.id).then(() => {
+      onPendingItemHandled?.();
+    });
+  }, [pendingItemId, notes, handleSelectNote, onPendingItemHandled]);
+
   // Generate UUID v4
   const generateUUID = useCallback(() => {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -960,9 +988,20 @@ export function Notes() {
     <div className="h-full w-full flex flex-col bg-[var(--color-background)] overflow-hidden">
       <div className="flex-1 flex overflow-hidden h-full">
         {showSidebar && (
-          <div className="w-64 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col">
-            <div
-              className="flex-1"
+          <ToolSidebar width="wide" aria-label="Notes">
+            <ToolSidebarHeader
+              title="Notes"
+              actions={
+                <button
+                  onClick={() => setShowTemplateModal(true)}
+                  disabled={loading}
+                  className="px-2 py-0.5 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-muted)] rounded transition-colors disabled:opacity-50"
+                >
+                  New
+                </button>
+              }
+            />
+            <ToolSidebarBody
               onDragOver={(e) => {
                 if (draggedNoteId) {
                   e.preventDefault();
@@ -977,27 +1016,10 @@ export function Notes() {
                 }
               }}
             >
-              <div className="px-4 pt-4 pb-3 border-b border-[var(--color-border)]">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-xs font-medium text-[var(--color-text-primary)] tracking-wide">
-                    Notes
-                  </h2>
-                  <button
-                    onClick={() => setShowTemplateModal(true)}
-                    disabled={loading}
-                    className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary)]/80 hover:bg-[var(--color-muted)] rounded transition-colors duration-150 disabled:opacity-50"
-                  >
-                    New
-                  </button>
-                </div>
-              </div>
-
               {folders.length > 0 && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-                      Folders
-                    </span>
+                <div className="px-2 pb-2 border-b border-[var(--color-border)]">
+                  <div className="flex items-center justify-between mb-1 px-2">
+                    <span className="tool-sidebar-title">Folders</span>
                     <button
                       onClick={() => setShowNewFolderInput(!showNewFolderInput)}
                       className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] text-sm w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--color-muted)] transition-colors duration-150"
@@ -1096,7 +1118,7 @@ export function Notes() {
                 </div>
               )}
 
-              <div className="px-4 py-3">
+              <div className="px-2 py-2">
                 {dateGroups.map((group) => {
                   const rootNotes = group.items.filter(
                     (note) => !note.folderId,
@@ -1104,22 +1126,14 @@ export function Notes() {
                   if (rootNotes.length === 0) return null;
 
                   const isExpanded = expandedGroups.has(group.label);
-                  return (
-                    <div key={group.label} className="mb-0.5">
-                      <div
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md cursor-pointer hover:bg-[var(--color-muted)] transition-colors duration-150"
-                        onClick={() => toggleGroup(group.label)}
-                      >
-                        <span className="text-xs text-[var(--color-text-tertiary)] flex-shrink-0">
-                          {isExpanded ? "▼" : "▶"}
-                        </span>
-                        <span className="flex-1 text-sm font-medium text-[var(--color-text-secondary)]">
-                          {group.label}
-                        </span>
-                        <span className="text-xs text-[var(--color-text-tertiary)] px-1.5 py-0.5 rounded bg-[var(--color-muted)] min-w-[20px] text-center">
-                          {rootNotes.length}
-                        </span>
-                      </div>
+                    return (
+                      <div key={group.label} className="mb-0.5">
+                      <ToolSidebarSection
+                        label={group.label}
+                        expanded={isExpanded}
+                        onToggle={() => toggleGroup(group.label)}
+                        count={rootNotes.length}
+                      />
                       {isExpanded && (
                         <div className="mt-0">
                           {rootNotes.map((note) => (
@@ -1143,35 +1157,35 @@ export function Notes() {
                   );
                 })}
               </div>
-            </div>
-          </div>
+            </ToolSidebarBody>
+          </ToolSidebar>
         )}
 
         <div className="flex-1 flex flex-col overflow-hidden h-full w-full">
           {selectedNote ? (
             <>
-              <div className="border-b border-[var(--color-border)] bg-[var(--color-background)] px-6 py-3 flex-shrink-0">
+              <div className="border-b border-[var(--color-border)] bg-[var(--color-card)] px-3 py-1.5 flex-shrink-0">
                 <div className="flex items-center gap-2 max-w-4xl mx-auto">
                   <button
                     onClick={() => setShowSidebar(!showSidebar)}
-                    className="p-2 -ml-2 rounded-md hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                    className="p-1 rounded hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)]"
                     title={showSidebar ? "Hide sidebar" : "Show sidebar"}
                   >
-                    <Icon name="menu" size={18} />
+                    <Icon name="menu" size={16} />
                   </button>
                   <input
                     type="text"
                     value={noteTitle}
                     onChange={(e) => handleTitleChange(e.target.value)}
                     placeholder="Untitled"
-                    className="flex-1 text-xl font-medium text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)] focus:outline-none"
+                    className="flex-1 text-sm font-medium text-[var(--color-text-primary)] bg-transparent border-none outline-none placeholder-[var(--color-text-tertiary)]"
                   />
                   <button
                     onClick={handleExportPDF}
-                    className="p-2 rounded-md hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] transition-colors duration-150"
+                    className="p-1 rounded hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)]"
                     title="Export to PDF"
                   >
-                    <Icon name="Download" size={18} />
+                    <Icon name="Download" size={16} />
                   </button>
                 </div>
               </div>

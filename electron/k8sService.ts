@@ -1,8 +1,26 @@
 import * as k8s from '@kubernetes/client-node';
+import { execFile } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
+import { promisify } from 'util';
 
-/** Extract list items from client-node v1.x responses (direct or legacy .body wrapper). */
+const execFileAsync = promisify(execFile);
+
+function escapeJsonPatchPathSegment(key: string): string {
+    return key.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function jsonPatchAnnotation(
+    existingAnnotations: Record<string, string> | undefined,
+    key: string,
+    value: string,
+): Array<{ op: 'add' | 'replace'; path: string; value: unknown }> {
+    if (!existingAnnotations) {
+        return [{ op: 'add', path: '/metadata/annotations', value: { [key]: value } }];
+    }
+    const path = `/metadata/annotations/${escapeJsonPatchPathSegment(key)}`;
+    return [{ op: key in existingAnnotations ? 'replace' : 'add', path, value }];
+}
 function getListItems<T>(response: { items?: T[]; body?: { items?: T[] } }): T[] {
     if (Array.isArray(response.items)) {
         return response.items;
@@ -66,11 +84,23 @@ export interface K8sEvent {
     type: 'Normal' | 'Warning';
     reason: string;
     message: string;
-    timestamp: Date;
+    timestamp: string;
     source: string;
     count?: number;
-    firstTimestamp?: Date;
-    lastTimestamp?: Date;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
+}
+
+export interface PodMetrics {
+    cpu: string;
+    memory: string;
+}
+
+export interface RestartPodResult {
+    deletedPodName: string;
+    replacementPodName?: string;
+    ownerKind?: string;
+    message: string;
 }
 
 export interface TimelineEvent {
@@ -244,6 +274,43 @@ export class K8sService {
     }
 
     /**
+     * Pod CPU/memory usage via metrics-server (kubectl top).
+     * Returns map keyed by pod name (single ns) or "namespace/name" (all namespaces).
+     */
+    async getPodMetrics(namespace?: string): Promise<Record<string, PodMetrics>> {
+        this.ensureInitialized();
+        try {
+            const args = ['top', 'pods', '--no-headers'];
+            const context = this.getCurrentContext();
+            if (context) {
+                args.unshift('--context', context);
+            }
+            if (namespace) {
+                args.push('-n', namespace);
+            } else {
+                args.push('-A');
+            }
+
+            const { stdout } = await execFileAsync('kubectl', args);
+            const metrics: Record<string, PodMetrics> = {};
+            for (const line of stdout.trim().split('\n')) {
+                if (!line.trim()) continue;
+                const parts = line.trim().split(/\s+/);
+                if (namespace) {
+                    if (parts.length >= 3) {
+                        metrics[parts[0]] = { cpu: parts[1], memory: parts[2] };
+                    }
+                } else if (parts.length >= 4) {
+                    metrics[`${parts[0]}/${parts[1]}`] = { cpu: parts[2], memory: parts[3] };
+                }
+            }
+            return metrics;
+        } catch {
+            return {};
+        }
+    }
+
+    /**
      * Get deployments
      */
     async getDeployments(namespace?: string): Promise<k8s.V1Deployment[]> {
@@ -377,14 +444,20 @@ export class K8sService {
                 });
             
             return getListItems(response).map(event => ({
-                type: event.type || 'Normal',
+                type: (event.type === 'Warning' ? 'Warning' : 'Normal') as K8sEvent['type'],
                 reason: event.reason || '',
                 message: event.message || '',
-                timestamp: event.lastTimestamp ? new Date(event.lastTimestamp) : new Date(),
+                timestamp: event.lastTimestamp
+                    ? new Date(event.lastTimestamp).toISOString()
+                    : new Date().toISOString(),
                 source: event.source?.component || 'unknown',
                 count: event.count,
-                firstTimestamp: event.firstTimestamp ? new Date(event.firstTimestamp) : undefined,
-                lastTimestamp: event.lastTimestamp ? new Date(event.lastTimestamp) : undefined,
+                firstTimestamp: event.firstTimestamp
+                    ? new Date(event.firstTimestamp).toISOString()
+                    : undefined,
+                lastTimestamp: event.lastTimestamp
+                    ? new Date(event.lastTimestamp).toISOString()
+                    : undefined,
             }));
         } catch (error: any) {
             // If events API fails, return empty array
@@ -598,7 +671,7 @@ export class K8sService {
             }
             
             timeline.push({
-                timestamp: event.timestamp,
+                timestamp: new Date(event.timestamp),
                 type,
                 source: event.source,
                 resource: podName || 'unknown',
@@ -857,29 +930,111 @@ export class K8sService {
             throw new Error('Cannot scale in production without explicit confirmation');
         }
         
-        await this.appsV1Api.patchNamespacedDeployment(
-            {
-                name,
-                namespace,
-                body: { spec: { replicas } },
-            },
-            {
-                headers: { 'Content-Type': 'application/merge-patch+json' },
-            }
-        );
+        await this.appsV1Api.patchNamespacedDeployment({
+            name,
+            namespace,
+            body: [{ op: 'replace', path: '/spec/replicas', value: replicas }],
+        });
     }
 
     /**
-     * Safe actions - Restart pod
+     * Safe actions - Restart pod (delete + wait for controller replacement)
      */
-    async restartPod(name: string, namespace: string, environment?: string): Promise<void> {
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private async waitForReplacementPod(
+        namespace: string,
+        deletedName: string,
+        ownerKind: string,
+        ownerName: string,
+    ): Promise<string | undefined> {
+        const deadline = Date.now() + 20000;
+
+        while (Date.now() < deadline) {
+            if (ownerKind === 'StatefulSet') {
+                try {
+                    const pod = getResource(
+                        await this.k8sApi.readNamespacedPod({ name: deletedName, namespace }),
+                    );
+                    if (pod.metadata?.name && !pod.metadata?.deletionTimestamp) {
+                        return deletedName;
+                    }
+                } catch {
+                    // Pod not recreated yet
+                }
+            } else {
+                const pods = await this.getPods(namespace);
+                const replacement = pods.find((p) => {
+                    const podName = p.metadata?.name;
+                    if (!podName || podName === deletedName) return false;
+                    return (p.metadata?.ownerReferences || []).some(
+                        (ref) => ref.kind === ownerKind && ref.name === ownerName,
+                    );
+                });
+                if (replacement?.metadata?.name) {
+                    return replacement.metadata.name;
+                }
+            }
+
+            await this.delay(500);
+        }
+
+        return undefined;
+    }
+
+    async restartPod(name: string, namespace: string, environment?: string): Promise<RestartPodResult> {
         this.ensureInitialized();
-        
+
         if (environment === 'production' || namespace.includes('prod')) {
             throw new Error('Cannot restart pod in production without explicit confirmation');
         }
-        
+
+        const pod = getResource(await this.k8sApi.readNamespacedPod({ name, namespace }));
+        const owner = pod.metadata?.ownerReferences?.[0];
+
+        if (!owner) {
+            throw new Error(
+                'This pod is not managed by a controller. Deleting it would remove it permanently.',
+            );
+        }
+
+        if (owner.kind === 'Job') {
+            throw new Error('Job pods cannot be restarted this way. Run the Job again instead.');
+        }
+
+        const supportedOwners = ['ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController'];
+        if (!supportedOwners.includes(owner.kind)) {
+            throw new Error(`Restart is not supported for pods owned by ${owner.kind}.`);
+        }
+
         await this.k8sApi.deleteNamespacedPod({ name, namespace });
+
+        const replacementPodName = await this.waitForReplacementPod(
+            namespace,
+            name,
+            owner.kind,
+            owner.name,
+        );
+
+        let message: string;
+        if (replacementPodName) {
+            message =
+                replacementPodName === name
+                    ? `Pod ${name} is restarting.`
+                    : `Pod replaced by ${replacementPodName}.`;
+        } else {
+            message =
+                'Pod deleted. Its controller should create a replacement shortly — refresh if it does not appear.';
+        }
+
+        return {
+            deletedPodName: name,
+            replacementPodName,
+            ownerKind: owner.kind,
+            message,
+        };
     }
 
     /**
@@ -894,19 +1049,14 @@ export class K8sService {
         
         // Add annotation to trigger rollout restart
         const deployment = getResource(await this.appsV1Api.readNamespacedDeployment({ name, namespace }));
-        const annotations = deployment.metadata?.annotations || {};
-        annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
-        
-        await this.appsV1Api.patchNamespacedDeployment(
-            {
-                name,
-                namespace,
-                body: { metadata: { annotations } },
-            },
-            {
-                headers: { 'Content-Type': 'application/merge-patch+json' },
-            }
-        );
+        const restartedAt = new Date().toISOString();
+        const restartAnnotation = 'kubectl.kubernetes.io/restartedAt';
+
+        await this.appsV1Api.patchNamespacedDeployment({
+            name,
+            namespace,
+            body: jsonPatchAnnotation(deployment.metadata?.annotations, restartAnnotation, restartedAt),
+        });
     }
 
     private ensureInitialized(): void {

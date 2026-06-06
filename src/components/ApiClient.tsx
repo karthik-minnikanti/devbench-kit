@@ -8,11 +8,19 @@ import {
   FormDataField,
   parseRequestError,
 } from "../utils/apiClient";
-import { parseCurl } from "../utils/curlParser";
+import {
+  curlLooksComplete,
+  looksLikeCurl,
+  parseCurl,
+} from "../utils/curlParser";
 import { useStore } from "../state/store";
 import { getFolders, saveFolder, deleteFolder, Folder } from "../utils/folders";
 import { groupByDate, DateGroup } from "../utils/dateGrouping";
 import { Icon } from "./Icon";
+import {
+  ToolSidebarHeader,
+  toolSidebarItemClass,
+} from "./ui/ToolChrome";
 import { Icons } from "./Icons";
 import { ImportExportModal } from "./ImportExportModal";
 import { VariablesManager } from "./VariablesManager";
@@ -485,22 +493,6 @@ export function ApiClient() {
     }
   }, [queryParams, baseUrl, urlInput, url]);
 
-  // Handle URL input change - just update the input value, don't parse immediately
-  const handleUrlChange = (newUrl: string) => {
-    // Always set urlInput, even if empty - this is the source of truth
-    setUrlInput(newUrl);
-    // Clear any pending debounce timeout to restart the timer
-    if (urlDebounceTimeoutRef.current) {
-      clearTimeout(urlDebounceTimeoutRef.current);
-      urlDebounceTimeoutRef.current = null;
-    }
-    // If user clears the input, also clear the underlying state
-    if (newUrl === "") {
-      setBaseUrl("");
-      setUrl("");
-    }
-  };
-
   const [response, setResponse] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -520,9 +512,7 @@ export function ApiClient() {
   // Tab system - track open tabs (like Postman)
   const [openTabs, setOpenTabs] = useState<string[]>([]); // Array of request IDs
   const [activeTab, setActiveTab] = useState<string | null>(null); // Currently active tab
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(["Today", "Yesterday", "This Week"]),
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(),
   );
@@ -544,6 +534,10 @@ export function ApiClient() {
   const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(
     null,
   );
+  const environmentsRef = useRef(environments);
+  useEffect(() => {
+    environmentsRef.current = environments;
+  }, [environments]);
   const [showEnvironmentsManager, setShowEnvironmentsManager] = useState(false);
   const [requestHistory, setRequestHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -562,6 +556,25 @@ export function ApiClient() {
   const binaryFileInputRef = useRef<HTMLInputElement>(null);
   const sidebarResizeRef = useRef<HTMLDivElement>(null);
   const requestResizeRef = useRef<HTMLDivElement>(null);
+  const sidebarDefaultsApplied = useRef(false);
+
+  useEffect(() => {
+    if (sidebarDefaultsApplied.current) return;
+    const rootRequests = requests.filter((request) => !request.folderId);
+    const groups = groupByDate(rootRequests);
+    if (groups.length === 0 && folders.length === 0) return;
+    sidebarDefaultsApplied.current = true;
+    if (groups.length > 0) {
+      setExpandedGroups(new Set(groups.map((group) => group.label)));
+    }
+    if (folders.length > 0) {
+      setExpandedFolders(
+        new Set(
+          folders.map((folder) => String(folder.id || "")).filter(Boolean),
+        ),
+      );
+    }
+  }, [requests, folders]);
 
   // Load resize settings from localStorage
   const loadResizeSettings = () => {
@@ -652,7 +665,7 @@ export function ApiClient() {
   const handleSetActiveEnvironment = async (id: string | null) => {
     setActiveEnvironmentId(id);
     try {
-      await persistEnvironmentState(environments, id);
+      await persistEnvironmentState(environmentsRef.current, id);
     } catch (err) {
       console.error("Failed to save active environment:", err);
     }
@@ -660,30 +673,51 @@ export function ApiClient() {
 
   const loadEnvironments = async () => {
     try {
+      let diskEnvs: Environment[] = [];
+      let diskActiveId: string | null = null;
+
       if ((window as any).electronAPI?.apiClient?.getEnvironments) {
         const result = await (
           window as any
         ).electronAPI.apiClient.getEnvironments();
         if (result.success) {
-          setEnvironments(result.environments || []);
-          setActiveEnvironmentId(result.activeEnvironmentId || null);
-          return;
+          diskEnvs = result.environments || [];
+          diskActiveId = result.activeEnvironmentId || null;
         }
       }
-      // Fallback to localStorage for migration
-      const stored = localStorage.getItem("devbench-api-environments");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setEnvironments(parsed.environments || []);
-        setActiveEnvironmentId(parsed.activeEnvironmentId || null);
-        // Migrate to file system
-        if ((window as any).electronAPI?.apiClient?.saveEnvironments) {
-          await (window as any).electronAPI.apiClient.saveEnvironments({
-            environments: parsed.environments || [],
-            activeEnvironmentId: parsed.activeEnvironmentId || null,
-          });
+
+      if (diskEnvs.length === 0) {
+        const stored = localStorage.getItem("devbench-api-environments");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          diskEnvs = parsed.environments || [];
+          diskActiveId = parsed.activeEnvironmentId ?? diskActiveId;
+          if (
+            diskEnvs.length > 0 &&
+            (window as any).electronAPI?.apiClient?.saveEnvironments
+          ) {
+            await (window as any).electronAPI.apiClient.saveEnvironments({
+              environments: diskEnvs,
+              activeEnvironmentId: diskActiveId,
+            });
+          }
         }
       }
+
+      // Don't wipe in-memory environments if disk is still empty (load race).
+      setEnvironments((prev) => (diskEnvs.length > 0 ? diskEnvs : prev));
+      setActiveEnvironmentId((prev) => {
+        if (diskActiveId) {
+          return diskActiveId;
+        }
+        if (
+          prev &&
+          diskEnvs.some((env) => env.id === prev)
+        ) {
+          return prev;
+        }
+        return prev;
+      });
     } catch (err) {
       console.error("Failed to load environments:", err);
     }
@@ -694,22 +728,35 @@ export function ApiClient() {
     env: Omit<Environment, "createdAt" | "updatedAt">,
   ) => {
     try {
-      const existing = environments.find((e) => e.id === env.id);
-      const updated: Environment = existing
-        ? { ...existing, ...env, updatedAt: new Date().toISOString() }
-        : {
-            ...env,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
+      let updatedEnvs: Environment[] = [];
+      let nextActiveId = activeEnvironmentId;
 
-      const updatedEnvs = existing
-        ? environments.map((e) => (e.id === env.id ? updated : e))
-        : [...environments, updated];
+      setEnvironments((prev) => {
+        const existing = prev.find((e) => e.id === env.id);
+        const updated: Environment = existing
+          ? { ...existing, ...env, updatedAt: new Date().toISOString() }
+          : {
+              ...env,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
 
-      setEnvironments(updatedEnvs);
+        updatedEnvs = existing
+          ? prev.map((e) => (e.id === env.id ? updated : e))
+          : [...prev, updated];
 
-      await persistEnvironmentState(updatedEnvs, activeEnvironmentId);
+        if (!existing) {
+          nextActiveId = env.id;
+        }
+
+        return updatedEnvs;
+      });
+
+      if (nextActiveId !== activeEnvironmentId) {
+        setActiveEnvironmentId(nextActiveId);
+      }
+
+      await persistEnvironmentState(updatedEnvs, nextActiveId);
     } catch (err) {
       console.error("Failed to save environment:", err);
     }
@@ -718,11 +765,18 @@ export function ApiClient() {
   // Delete environment
   const deleteEnvironment = async (id: string) => {
     try {
-      const updated = environments.filter((e) => e.id !== id);
-      const newActiveId =
-        activeEnvironmentId === id ? null : activeEnvironmentId;
-      setEnvironments(updated);
-      setActiveEnvironmentId(newActiveId);
+      let updated: Environment[] = [];
+      let newActiveId: string | null = activeEnvironmentId;
+
+      setEnvironments((prev) => {
+        updated = prev.filter((e) => e.id !== id);
+        return updated;
+      });
+
+      setActiveEnvironmentId((prev) => {
+        newActiveId = prev === id ? null : prev;
+        return newActiveId;
+      });
 
       await persistEnvironmentState(updated, newActiveId);
     } catch (err) {
@@ -2016,6 +2070,58 @@ export function ApiClient() {
     }
   };
 
+  const applyParsedCurlToDraft = (
+    parsed: NonNullable<ReturnType<typeof parseCurl>>,
+    requestNameOverride?: string,
+  ) => {
+    const headersArray: Header[] = Object.entries(parsed.headers).map(
+      ([key, value]) => ({
+        key,
+        value: String(value),
+        enabled: true,
+      }),
+    );
+    const { base, params } = parseUrl(parsed.url);
+    const importedQueryParams =
+      parsed.queryParams && parsed.queryParams.length > 0
+        ? parsed.queryParams.map((qp) => ({ ...qp, enabled: true }))
+        : params.length > 0
+          ? params
+          : [{ key: "", value: "", enabled: true }];
+    const importedBodyType: BodyType = parsed.body ? "json" : "none";
+    const normalizedMethod = parsed.method as SavedApiRequest["method"];
+
+    let defaultName = `${parsed.method} Request`;
+    try {
+      const urlObj = new URL(parsed.url);
+      const pathParts = urlObj.pathname.split("/").filter((p) => p);
+      defaultName = `${parsed.method} ${pathParts[pathParts.length - 1] || "Request"}`;
+    } catch {
+      // keep default
+    }
+
+    setRequestName(requestNameOverride ?? defaultName);
+    setMethod(normalizedMethod);
+    setBaseUrl(base);
+    setUrl(parsed.url);
+    setUrlInput(parsed.url);
+    setHeadersList(
+      headersArray.length > 0
+        ? [...headersArray, { key: "", value: "", enabled: true }]
+        : [{ key: "", value: "", enabled: true }],
+    );
+    setQueryParams(importedQueryParams);
+    setBody(parsed.body || "");
+    setBodyType(importedBodyType);
+    setFormData([{ key: "", value: "", type: "text", enabled: true }]);
+    setBinaryData("");
+    setResponse(null);
+    setAuthConfig({ type: "none" });
+    setPreRequestScript("");
+    setTestScript("");
+    setError(null);
+  };
+
   const handleImportCurl = async (
     parsed: ReturnType<typeof parseCurl>,
     saveToFolder: boolean,
@@ -2027,10 +2133,8 @@ export function ApiClient() {
       return;
     }
 
-    setMethod(parsed.method as any);
-    setUrl(parsed.url);
-    setUrlInput(parsed.url); // Update input value
-    // Convert headers object to headersList
+    const { base } = parseUrl(parsed.url);
+    const normalizedMethod = parsed.method as SavedApiRequest["method"];
     const headersArray: Header[] = Object.entries(parsed.headers).map(
       ([key, value]) => ({
         key,
@@ -2038,38 +2142,26 @@ export function ApiClient() {
         enabled: true,
       }),
     );
-    if (headersArray.length > 0) {
-      setHeadersList([...headersArray, { key: "", value: "", enabled: true }]);
-    } else {
-      setHeadersList([{ key: "", value: "", enabled: true }]);
-    }
-    if (parsed.queryParams && parsed.queryParams.length > 0) {
-      setQueryParams(
-        parsed.queryParams.map((qp) => ({ ...qp, enabled: true })),
-      );
-    } else {
-      setQueryParams([{ key: "", value: "", enabled: true }]);
-    }
-    if (parsed.body) {
-      setBody(parsed.body);
-      setBodyType("json");
-    }
+    const importedQueryParams =
+      parsed.queryParams && parsed.queryParams.length > 0
+        ? parsed.queryParams.map((qp) => ({ ...qp, enabled: true }))
+        : [{ key: "", value: "", enabled: true }];
+    const importedBodyType: BodyType = parsed.body ? "json" : "none";
 
-    // If saveToFolder is true, save the request
     if (saveToFolder) {
       let defaultName = `${parsed.method} Request`;
       try {
         const urlObj = new URL(parsed.url);
         const pathParts = urlObj.pathname.split("/").filter((p) => p);
         defaultName = `${parsed.method} ${pathParts[pathParts.length - 1] || "Request"}`;
-      } catch (e) {
-        // If URL parsing fails, use default name
+      } catch {
+        // keep default
       }
       const finalRequestName = requestName.trim() || defaultName;
       const newRequest: SavedApiRequest = {
         id: Date.now().toString(),
         name: finalRequestName,
-        method: parsed.method as any,
+        method: normalizedMethod,
         url: parsed.url,
         headers: JSON.stringify(
           headersArray
@@ -2078,13 +2170,8 @@ export function ApiClient() {
           null,
           2,
         ),
-        queryParams:
-          parsed.queryParams?.map((qp) => ({
-            key: qp.key,
-            value: qp.value,
-            enabled: true,
-          })) || [],
-        bodyType: parsed.body ? "json" : "none",
+        queryParams: importedQueryParams.filter((qp) => qp.key),
+        bodyType: importedBodyType,
         body: parsed.body || "",
         formData: [],
         binaryData: "",
@@ -2093,13 +2180,70 @@ export function ApiClient() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const updatedRequests = [...requests, newRequest];
       await saveRequest(newRequest);
+      setOpenTabs((prev) =>
+        prev.includes(newRequest.id) ? prev : [...prev, newRequest.id],
+      );
+      setActiveTab(newRequest.id);
       setSelectedRequest(newRequest.id);
-      setRequestName(finalRequestName);
+      applyParsedCurlToDraft(parsed, finalRequestName);
+    } else {
+      const tempId = `temp-${Date.now()}`;
+      setOpenTabs((prev) => [...prev, tempId]);
+      setActiveTab(tempId);
+      setSelectedRequest(null);
+      applyParsedCurlToDraft(
+        parsed,
+        requestName.trim() || `${parsed.method} ${base.split("/").pop() || "Request"}`,
+      );
+    }
+  };
+
+  const handleUrlPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = e.clipboardData.getData("text");
+    if (!looksLikeCurl(pastedText)) {
+      return;
     }
 
-    setError(null);
+    const parsed = parseCurl(pastedText);
+    if (!parsed) {
+      return;
+    }
+
+    e.preventDefault();
+    if (urlDebounceTimeoutRef.current) {
+      clearTimeout(urlDebounceTimeoutRef.current);
+      urlDebounceTimeoutRef.current = null;
+    }
+    applyParsedCurlToDraft(parsed);
+  };
+
+  const handleUrlChange = (newUrl: string) => {
+    if (urlDebounceTimeoutRef.current) {
+      clearTimeout(urlDebounceTimeoutRef.current);
+      urlDebounceTimeoutRef.current = null;
+    }
+
+    if (newUrl === "") {
+      setUrlInput("");
+      setBaseUrl("");
+      setUrl("");
+      return;
+    }
+
+    if (looksLikeCurl(newUrl)) {
+      // <input> only receives the first line on paste; ignore truncated commands.
+      if (!curlLooksComplete(newUrl)) {
+        return;
+      }
+      const parsed = parseCurl(newUrl);
+      if (parsed) {
+        applyParsedCurlToDraft(parsed);
+        return;
+      }
+    }
+
+    setUrlInput(newUrl);
   };
 
   const generateCurlCommand = (): string => {
@@ -2683,103 +2827,106 @@ export function ApiClient() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-gradient-to-r from-[var(--color-muted)]/30 to-transparent backdrop-blur-sm flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] active:scale-95"
-              title={showSidebar ? "Hide sidebar" : "Show sidebar"}
-            >
-              <Icon
-                name={showSidebar ? "ChevronLeft" : "ChevronRight"}
-                className="w-4 h-4 transition-transform duration-200"
-              />
-            </button>
-            <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-              API Studio
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCreateRequest}
-              className="btn-secondary text-xs"
-            >
-              + New Request
-            </button>
-            <button
-              onClick={() => {
-                setImportExportMode("import");
-                setImportExportType(undefined);
-                setShowImportExport(true);
-              }}
-              className="btn-secondary text-xs flex items-center gap-1"
-            >
-              <Icons.FileDown />
-              Import
-            </button>
-            <div className="flex items-center gap-1">
-              <select
-                value={activeEnvironmentId || ""}
-                onChange={(e) =>
-                  handleSetActiveEnvironment(e.target.value || null)
+      <div className="tool-header flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="p-1 rounded hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+            title={showSidebar ? "Hide sidebar" : "Show sidebar"}
+          >
+            <Icon
+              name={showSidebar ? "ChevronLeft" : "ChevronRight"}
+              className="w-4 h-4"
+            />
+          </button>
+          <span className="text-xs font-medium text-[var(--color-text-primary)]">
+            API Studio
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            onClick={handleCreateRequest}
+            className="btn-secondary !h-7 !text-xs"
+          >
+            + New Request
+          </button>
+          <button
+            onClick={() => {
+              setImportExportMode("import");
+              setImportExportType(undefined);
+              setShowImportExport(true);
+            }}
+            className="btn-secondary !h-7 !text-xs flex items-center gap-1"
+          >
+            <Icons.FileDown />
+            Import
+          </button>
+          <div className="flex items-center gap-1">
+            <select
+              value={activeEnvironmentId || ""}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === "") {
+                  setShowEnvironmentsManager(true);
+                  return;
                 }
-                className="input-field !h-8 !py-1 !text-xs max-w-[180px]"
-                title="Active environment"
-              >
-                <option value="">No Environment</option>
-                {environments.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setShowEnvironmentsManager(true)}
-                className="btn-secondary !h-8 !w-8 !p-0 flex items-center justify-center"
-                title="Manage environments"
-              >
-                <Icon name="Settings" className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <button
-              onClick={() => setShowVariablesManager(true)}
-              className="btn-secondary text-xs flex items-center gap-1"
-              title="Manage Variables"
+                handleSetActiveEnvironment(value);
+              }}
+              className="input-field !h-7 !py-0 !leading-7 !text-xs min-w-[9rem] max-w-[14rem]"
+              title="Active environment"
             >
-              <Icon name="Key" />
-              Variables
-            </button>
+              <option value="">Add Environment</option>
+              {environments.map((env) => (
+                <option key={env.id} value={env.id}>
+                  {env.name}
+                </option>
+              ))}
+            </select>
             <button
-              onClick={() => setShowHistory(true)}
-              className="btn-secondary text-xs flex items-center gap-1"
-              title="Request History"
+              onClick={() => setShowEnvironmentsManager(true)}
+              className="btn-secondary !h-7 !w-7 !p-0 flex items-center justify-center"
+              title="Manage environments"
             >
-              <Icon name="Clock" />
-              History
-            </button>
-            <button
-              onClick={() => setShowConsole(true)}
-              className="btn-secondary text-xs flex items-center gap-1"
-              title="Console"
-            >
-              <Icon name="Terminal" />
-              Console
-              {consoleLogs.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded bg-[var(--color-primary)] text-white text-[10px]">
-                  {consoleLogs.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={handleCopyAsCurl}
-              className={`btn-secondary text-xs flex items-center gap-1 ${copySuccess ? "bg-[var(--color-semantic-success)]/10 border-[var(--color-semantic-success)]/30" : ""}`}
-              title="Copy as cURL"
-            >
-              <Icon name={copySuccess ? "Check" : "Copy"} className="w-4 h-4" />
-              {copySuccess ? "Copied!" : "Copy cURL"}
+              <Icon name="Settings" className="w-3.5 h-3.5" />
             </button>
           </div>
+          <button
+            onClick={() => setShowVariablesManager(true)}
+            className="btn-secondary !h-7 !text-xs flex items-center gap-1"
+            title="Manage Variables"
+          >
+            <Icon name="Key" />
+            Variables
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="btn-secondary !h-7 !text-xs flex items-center gap-1"
+            title="Request History"
+          >
+            <Icon name="Clock" />
+            History
+          </button>
+          <button
+            onClick={() => setShowConsole(true)}
+            className="btn-secondary !h-7 !text-xs flex items-center gap-1"
+            title="Console"
+          >
+            <Icon name="Terminal" />
+            Console
+            {consoleLogs.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded bg-[var(--color-primary)] text-white text-[10px]">
+                {consoleLogs.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={handleCopyAsCurl}
+            className={`btn-secondary !h-7 !text-xs flex items-center gap-1 ${copySuccess ? "bg-[var(--color-semantic-success)]/10 border-[var(--color-semantic-success)]/30" : ""}`}
+            title="Copy as cURL"
+          >
+            <Icon name={copySuccess ? "Check" : "Copy"} className="w-4 h-4" />
+            {copySuccess ? "Copied!" : "Copy cURL"}
+          </button>
         </div>
       </div>
 
@@ -2858,42 +3005,42 @@ export function ApiClient() {
           <>
             <div
               style={{ width: `${sidebarWidth}px` }}
-              className="flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-hidden flex flex-col transition-all duration-200 ease-in-out"
+              className="tool-sidebar overflow-hidden flex flex-col transition-all duration-200 ease-in-out custom-scrollbar"
             >
-              {/* Sidebar Header */}
-              <div className="px-3 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-background)] flex-shrink-0">
-                <div className="flex items-center gap-2 mb-2">
-                  <h3 className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider flex-1">
-                    Folders
-                  </h3>
-                  <button
-                    onClick={() => {
-                      if (showNewFolderInput && newFolderName.trim()) {
-                        handleCreateFolder();
-                      } else {
-                        setShowNewFolderInput(true);
-                      }
-                    }}
-                    className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${
-                      showNewFolderInput
-                        ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
-                        : "hover:bg-[var(--color-muted)]"
-                    }`}
-                    title="New Folder"
-                  >
-                    <Icon
-                      name="FolderPlus"
-                      className="w-3.5 h-3.5 transition-transform duration-200"
-                    />
-                  </button>
-                  <button
-                    onClick={handleCreateRequest}
-                    className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95"
-                    title="New Request"
-                  >
-                    <Icon name="Plus" className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              <ToolSidebarHeader
+                title="Folders"
+                actions={
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        if (showNewFolderInput && newFolderName.trim()) {
+                          handleCreateFolder();
+                        } else {
+                          setShowNewFolderInput(true);
+                        }
+                      }}
+                      className={`p-1.5 rounded transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95 ${
+                        showNewFolderInput
+                          ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
+                          : "hover:bg-[var(--color-muted)]"
+                      }`}
+                      title="New Folder"
+                    >
+                      <Icon
+                        name="FolderPlus"
+                        className="w-3.5 h-3.5 transition-transform duration-200"
+                      />
+                    </button>
+                    <button
+                      onClick={handleCreateRequest}
+                      className="p-1.5 rounded hover:bg-[var(--color-muted)] transition-all duration-200 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] active:scale-95"
+                      title="New Request"
+                    >
+                      <Icon name="Plus" className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                }
+              >
                 {/* New Folder Input */}
                 {showNewFolderInput && (
                   <div className="mb-2 transition-all duration-200 ease-in-out">
@@ -2961,7 +3108,7 @@ export function ApiClient() {
                     </button>
                   )}
                 </div>
-              </div>
+              </ToolSidebarHeader>
 
               {/* Sidebar Content */}
               <div
@@ -3085,11 +3232,10 @@ export function ApiClient() {
                                           setDraggedRequestId(null);
                                           setDragOverFolderId(null);
                                         }}
-                                        className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group relative ${
-                                          selectedRequest === request.id
-                                            ? "border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50"
-                                            : "border-l-[3px] border-transparent hover:bg-[var(--color-muted)]"
-                                        } ${draggedRequestId === request.id ? "opacity-50" : ""} active:scale-[0.98]`}
+                                        className={`${toolSidebarItemClass(
+                                          selectedRequest === request.id,
+                                          "cursor-pointer group relative",
+                                        )} ${draggedRequestId === request.id ? "opacity-50" : ""}`}
                                         onClick={() =>
                                           handleSelectRequest(request.id)
                                         }
@@ -3169,11 +3315,10 @@ export function ApiClient() {
                                       setDraggedRequestId(null);
                                       setDragOverFolderId(null);
                                     }}
-                                    className={`px-2 py-1 rounded cursor-pointer transition-all duration-200 group active:scale-[0.98] relative ${
-                                      selectedRequest === request.id
-                                        ? "border-l-[3px] border-[var(--color-primary)] bg-[var(--color-muted)]/50"
-                                        : "border-l-[3px] border-transparent hover:bg-[var(--color-muted)]"
-                                    } ${draggedRequestId === request.id ? "opacity-50" : ""}`}
+                                    className={`${toolSidebarItemClass(
+                                      selectedRequest === request.id,
+                                      "cursor-pointer group relative",
+                                    )} ${draggedRequestId === request.id ? "opacity-50" : ""}`}
                                     onClick={() =>
                                       handleSelectRequest(request.id)
                                     }
@@ -3384,21 +3529,22 @@ export function ApiClient() {
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className={`w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-sidebar)] text-xs font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer ${getHttpMethodTextClass(method)}`}
+                  className={`w-[110px] px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-xs font-semibold hover:bg-[var(--color-muted)] transition-colors cursor-pointer ${getHttpMethodTextClass(method)}`}
                 >
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                  <option value="DELETE">DELETE</option>
-                  <option value="PATCH">PATCH</option>
-                  <option value="OPTIONS">OPTIONS</option>
-                  <option value="HEAD">HEAD</option>
+                  <option value="GET" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">GET</option>
+                  <option value="POST" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">POST</option>
+                  <option value="PUT" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">PUT</option>
+                  <option value="DELETE" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">DELETE</option>
+                  <option value="PATCH" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">PATCH</option>
+                  <option value="OPTIONS" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">OPTIONS</option>
+                  <option value="HEAD" className="bg-[var(--color-card)] text-[var(--color-text-primary)]">HEAD</option>
                 </select>
                 <input
                   type="text"
                   value={displayUrl}
                   onChange={(e) => handleUrlChange(e.target.value)}
-                  placeholder="https://api.example.com/endpoint"
+                  onPaste={handleUrlPaste}
+                  placeholder="https://api.example.com/endpoint or paste a curl command"
                   className={`flex-1 px-3 py-2 rounded-l border border-[var(--color-border)] bg-[var(--color-sidebar)] text-[var(--color-text-primary)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent ${getVariableBorderClass(displayUrl)}`}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

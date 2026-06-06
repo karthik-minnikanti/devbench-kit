@@ -10,6 +10,7 @@ export type TabType =
   | "js-runner"
   | "docker"
   | "k8s"
+  | "terminal"
   | "notes"
   | "planner"
   | "excalidraw"
@@ -145,7 +146,7 @@ export function CategorizedTabs({
     {
       label: "DevOps",
       icon: "⚙️",
-      tabs: tabs.filter((t) => ["docker", "k8s"].includes(t.id)),
+      tabs: tabs.filter((t) => ["docker", "k8s", "terminal"].includes(t.id)),
     },
     {
       label: "Design",

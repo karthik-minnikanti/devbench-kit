@@ -18,6 +18,7 @@ export default defineConfig({
                 if (id === 'bufferutil' || id === 'utf-8-validate' || id === 'ws') return true;
                 // Externalize dockerode and its dependencies
                 if (id === 'dockerode') return true;
+                if (id === 'node-pty') return true;
                 if (id.startsWith('ssh2')) return true;
                 if (id.startsWith('@grpc/')) return true;
                 // Externalize all .node files (native modules)

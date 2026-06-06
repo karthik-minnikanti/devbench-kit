@@ -20,7 +20,12 @@ import {
 } from "../services/sync";
 import { Icon } from "./Icon";
 import { hasDrawingChanged } from "../utils/sync";
-import { DrawingItem } from "./memoized-list-items";
+import {
+  ToolSidebar,
+  ToolSidebarBody,
+  ToolSidebarSection,
+  toolSidebarItemClass,
+} from "./ui/ToolChrome";
 
 interface Drawing {
   id: string;
@@ -32,20 +37,26 @@ interface Drawing {
   updatedAt: string;
 }
 
-export function ExcalidrawComponent() {
+interface ExcalidrawComponentProps {
+  pendingItemId?: string;
+  onPendingItemHandled?: () => void;
+}
+
+export function ExcalidrawComponent({
+  pendingItemId,
+  onPendingItemHandled,
+}: ExcalidrawComponentProps) {
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [drawingTitle, setDrawingTitle] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [dateGroups, setDateGroups] = useState<DateGroup[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(["Today", "Yesterday", "This Week"]),
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(),
   );
-  const [showSidebar, setShowSidebar] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [draggedDrawingId, setDraggedDrawingId] = useState<string | null>(null);
@@ -66,6 +77,8 @@ export function ExcalidrawComponent() {
   const selectedDrawingRef = useRef<string | null>(null);
   const isLoadingContentRef = useRef<boolean>(false);
   const latestFilesRef = useRef<BinaryFiles>({});
+  const drawingsLoadedRef = useRef(false);
+  const sidebarDefaultsApplied = useRef(false);
 
   // Helper function to deep clone elements and files for storage in lastSyncedStateRef
   // This prevents mutation issues where Excalidraw mutates objects in place
@@ -81,29 +94,23 @@ export function ExcalidrawComponent() {
     loadFolders();
   }, []);
 
-  // Check for pending item ID from Home component
   useEffect(() => {
-    const pendingItem = (window as any).__pendingItemId;
-    if (
-      pendingItem &&
-      pendingItem.toolType === "excalidraw" &&
-      pendingItem.itemId
-    ) {
-      // Wait a bit for drawings to load
-      setTimeout(() => {
-        const drawingId = pendingItem.itemId;
-        const normalizedDrawingId = String(drawingId || "");
-        const drawing = drawings.find(
-          (d) => String(d.id || "") === normalizedDrawingId,
-        );
-        if (drawing && drawing.id) {
-          handleSelectDrawing(drawing.id);
-        }
-        delete (window as any).__pendingItemId;
-      }, 500);
+    if (sidebarDefaultsApplied.current) return;
+    if (dateGroups.length === 0 && folders.length === 0) return;
+    sidebarDefaultsApplied.current = true;
+    if (dateGroups.length > 0) {
+      setExpandedGroups(new Set(dateGroups.map((group) => group.label)));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawings]);
+    if (folders.length > 0) {
+      setExpandedFolders(
+        new Set(
+          folders
+            .map((folder) => String(folder.id || (folder as any)._id || ""))
+            .filter(Boolean),
+        ),
+      );
+    }
+  }, [dateGroups, folders]);
 
   // Helper function to normalize drawing IDs (handle MongoDB _id)
   const normalizeDrawingId = (drawing: any): string => {
@@ -158,6 +165,8 @@ export function ExcalidrawComponent() {
       });
     } catch (err) {
       console.error("Failed to load drawings:", err);
+    } finally {
+      drawingsLoadedRef.current = true;
     }
   };
 
@@ -557,6 +566,23 @@ export function ExcalidrawComponent() {
     [drawings, excalidrawAPI, selectedDrawing],
   );
 
+  useEffect(() => {
+    if (!pendingItemId || !drawingsLoadedRef.current) return;
+
+    const normalizedPendingId = String(pendingItemId);
+    const drawing = drawings.find(
+      (d) => String(d.id || "") === normalizedPendingId,
+    );
+    if (!drawing?.id) {
+      onPendingItemHandled?.();
+      return;
+    }
+
+    void handleSelectDrawing(drawing.id).then(() => {
+      onPendingItemHandled?.();
+    });
+  }, [pendingItemId, drawings, handleSelectDrawing, onPendingItemHandled]);
+
   const handleSaveDrawing = async (titleToSave?: string) => {
     // Use ref to get current selectedDrawing (avoids stale closure issues)
     const currentSelectedDrawing = selectedDrawingRef.current;
@@ -794,31 +820,28 @@ export function ExcalidrawComponent() {
 
   return (
     <div className="h-full flex flex-col bg-[var(--color-background)]">
-      <div className="px-4 py-2 border-b border-[var(--color-border)] flex-shrink-0 flex items-center justify-between">
+      <div className="tool-header flex-shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowSidebar(!showSidebar)}
-            className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] text-xs transition-colors"
+            className="p-1 rounded hover:bg-[var(--color-muted)] text-[var(--color-text-secondary)] text-xs"
           >
             {showSidebar ? "←" : "→"}
           </button>
-          <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
+          <span className="text-xs font-medium text-[var(--color-text-primary)]">
             Drawings
-          </div>
+          </span>
         </div>
         <div className="flex items-center gap-1.5">
           {selectedDrawing && (
-            <button
-              onClick={() => handleSaveDrawing()}
-              className="px-2.5 py-1 rounded bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity"
-            >
+            <button onClick={() => handleSaveDrawing()} className="btn-primary !h-7 !text-xs">
               Save
             </button>
           )}
           <button
             onClick={handleCreateDrawing}
             disabled={loading}
-            className="px-2.5 py-1 rounded bg-[var(--color-primary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="btn-primary !h-7 !text-xs disabled:opacity-50"
           >
             + New
           </button>
@@ -828,9 +851,9 @@ export function ExcalidrawComponent() {
       <div className="flex-1 flex overflow-hidden">
         {/* Drawings List - Collapsible */}
         {showSidebar && (
-          <div className="w-56 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto custom-scrollbar flex flex-col">
-            <div
-              className="p-2 flex-1"
+          <ToolSidebar aria-label="Drawings">
+            <ToolSidebarBody
+              className="px-0"
               onDragOver={(e) => {
                 if (draggedDrawingId) {
                   e.preventDefault();
@@ -930,38 +953,21 @@ export function ExcalidrawComponent() {
                                           setDraggedDrawingId(null);
                                           setDragOverFolderId(null);
                                         }}
-                                        className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${
+                                        className={`${toolSidebarItemClass(
                                           String(selectedDrawing || "") ===
-                                          String(drawing.id || "")
-                                            ? "bg-[var(--color-primary)] text-white"
-                                            : "bg-[var(--color-card)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-                                        } ${String(draggedDrawingId || "") === String(drawing.id || "") ? "opacity-50" : ""}`}
+                                            String(drawing.id || ""),
+                                          "cursor-pointer group",
+                                        )} ${String(draggedDrawingId || "") === String(drawing.id || "") ? "opacity-50" : ""}`}
                                         onClick={() =>
                                           handleSelectDrawing(drawing.id)
                                         }
                                       >
                                         <div className="flex items-start justify-between">
                                           <div className="flex-1 min-w-0">
-                                            <div
-                                              className={`text-xs font-medium truncate ${
-                                                String(
-                                                  selectedDrawing || "",
-                                                ) === String(drawing.id || "")
-                                                  ? "text-white"
-                                                  : "text-[var(--color-text-primary)]"
-                                              }`}
-                                            >
+                                            <div className="text-xs font-medium truncate text-[var(--color-text-primary)]">
                                               {drawing.title}
                                             </div>
-                                            <div
-                                              className={`text-[10px] mt-0.5 ${
-                                                String(
-                                                  selectedDrawing || "",
-                                                ) === String(drawing.id || "")
-                                                  ? "text-white/80"
-                                                  : "text-[var(--color-text-tertiary)]"
-                                              }`}
-                                            >
+                                            <div className="text-[10px] mt-0.5 text-[var(--color-text-tertiary)]">
                                               {new Date(
                                                 drawing.updatedAt,
                                               ).toLocaleTimeString([], {
@@ -975,12 +981,7 @@ export function ExcalidrawComponent() {
                                               e.stopPropagation();
                                               handleDeleteDrawing(drawing.id);
                                             }}
-                                            className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${
-                                              String(selectedDrawing || "") ===
-                                              String(drawing.id || "")
-                                                ? "text-white hover:text-red-200"
-                                                : "text-[var(--color-text-tertiary)] hover:text-red-500"
-                                            }`}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
                                           >
                                             ×
                                           </button>
@@ -1001,15 +1002,12 @@ export function ExcalidrawComponent() {
                       <div className="space-y-2">
                         {rootDrawingsGrouped.map((group) => (
                           <div key={group.label} className="space-y-1">
-                            <button
-                              onClick={() => toggleGroup(group.label)}
-                              className="w-full flex items-center justify-between px-1.5 py-1 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider hover:text-[var(--color-text-primary)] transition-colors"
-                            >
-                              <span>{group.label}</span>
-                              <span className="text-[var(--color-text-tertiary)] text-[9px]">
-                                {expandedGroups.has(group.label) ? "−" : "+"}
-                              </span>
-                            </button>
+                            <ToolSidebarSection
+                              label={group.label}
+                              expanded={expandedGroups.has(group.label)}
+                              onToggle={() => toggleGroup(group.label)}
+                              count={group.items.length}
+                            />
                             {expandedGroups.has(group.label) && (
                               <div className="space-y-0.5">
                                 {group.items.map((drawing) => (
@@ -1024,36 +1022,21 @@ export function ExcalidrawComponent() {
                                       setDraggedDrawingId(null);
                                       setDragOverFolderId(null);
                                     }}
-                                    className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${
+                                    className={`${toolSidebarItemClass(
                                       String(selectedDrawing || "") ===
-                                      String(drawing.id || "")
-                                        ? "bg-[var(--color-primary)] text-white"
-                                        : "bg-[var(--color-card)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-                                    } ${String(draggedDrawingId || "") === String(drawing.id || "") ? "opacity-50" : ""}`}
+                                        String(drawing.id || ""),
+                                      "cursor-pointer group",
+                                    )} ${String(draggedDrawingId || "") === String(drawing.id || "") ? "opacity-50" : ""}`}
                                     onClick={() =>
                                       handleSelectDrawing(drawing.id)
                                     }
                                   >
                                     <div className="flex items-start justify-between">
                                       <div className="flex-1 min-w-0">
-                                        <div
-                                          className={`text-xs font-medium truncate ${
-                                            String(selectedDrawing || "") ===
-                                            String(drawing.id || "")
-                                              ? "text-white"
-                                              : "text-[var(--color-text-primary)]"
-                                          }`}
-                                        >
+                                        <div className="text-xs font-medium truncate text-[var(--color-text-primary)]">
                                           {drawing.title}
                                         </div>
-                                        <div
-                                          className={`text-[10px] mt-0.5 ${
-                                            String(selectedDrawing || "") ===
-                                            String(drawing.id || "")
-                                              ? "text-white/80"
-                                              : "text-[var(--color-text-tertiary)]"
-                                          }`}
-                                        >
+                                        <div className="text-[10px] mt-0.5 text-[var(--color-text-tertiary)]">
                                           {new Date(
                                             drawing.updatedAt,
                                           ).toLocaleTimeString([], {
@@ -1067,12 +1050,7 @@ export function ExcalidrawComponent() {
                                           e.stopPropagation();
                                           handleDeleteDrawing(drawing.id);
                                         }}
-                                        className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${
-                                          String(selectedDrawing || "") ===
-                                          String(drawing.id || "")
-                                            ? "text-white hover:text-red-200"
-                                            : "text-[var(--color-text-tertiary)] hover:text-red-500"
-                                        }`}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
                                       >
                                         ×
                                       </button>
@@ -1088,9 +1066,8 @@ export function ExcalidrawComponent() {
                   </div>
                 );
               })()}
-            </div>
-            {/* New Folder Button - Fixed at bottom */}
-            <div className="p-2 border-t border-[var(--color-border)] bg-[var(--color-sidebar)] flex-shrink-0">
+            </ToolSidebarBody>
+            <div className="p-2 border-t border-[var(--color-border)] flex-shrink-0">
               {showNewFolderInput ? (
                 <div className="flex items-center gap-1">
                   <input
@@ -1126,7 +1103,7 @@ export function ExcalidrawComponent() {
                 </button>
               )}
             </div>
-          </div>
+          </ToolSidebar>
         )}
 
         {/* Editor - Compact */}

@@ -1,5 +1,6 @@
 import React, { memo } from "react";
 import { Icon } from "./Icon";
+import { toolSidebarItemClass } from "./ui/ToolChrome";
 
 interface NoteItemProps {
   note: {
@@ -38,29 +39,15 @@ export const NoteItem = memo<NoteItemProps>(
           onDragStart(e, note.id);
         }}
         onDragEnd={onDragEnd}
-        className={`px-2.5 py-1.5 rounded-md cursor-pointer transition-colors duration-150 group ${
-          isSelected
-            ? "bg-[var(--color-primary)] text-white"
-            : "hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-        } ${isDragged ? "opacity-50" : ""}`}
+        className={`${toolSidebarItemClass(isSelected, "cursor-pointer group")} ${isDragged ? "opacity-50" : ""}`}
         onClick={() => onSelect(note.id)}
       >
         <div className="flex items-start justify-between gap-1.5">
           <div className="flex-1 min-w-0">
-            <div
-              className={`text-sm font-medium truncate leading-snug ${
-                isSelected ? "text-white" : "text-[var(--color-text-primary)]"
-              }`}
-            >
+            <div className="text-sm font-medium truncate leading-snug text-[var(--color-text-primary)]">
               {note.title || "Untitled"}
             </div>
-            <div
-              className={`text-xs mt-0.5 ${
-                isSelected
-                  ? "text-white/70"
-                  : "text-[var(--color-text-tertiary)]"
-              }`}
-            >
+            <div className="text-xs mt-0.5 text-[var(--color-text-tertiary)]">
               {note.updatedAt
                 ? new Date(note.updatedAt).toLocaleDateString([], {
                     month: "short",
@@ -74,11 +61,7 @@ export const NoteItem = memo<NoteItemProps>(
               e.stopPropagation();
               onDelete(note.id);
             }}
-            className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-black/10 ${
-              isSelected
-                ? "text-white hover:text-red-200"
-                : "text-[var(--color-text-tertiary)] hover:text-red-500"
-            }`}
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-[var(--color-text-tertiary)] hover:text-red-500"
           >
             <Icon name="Trash2" className="w-3.5 h-3.5" />
           </button>
@@ -132,29 +115,15 @@ export const DrawingItem = memo<DrawingItemProps>(
           onDragStart(e, drawing.id);
         }}
         onDragEnd={onDragEnd}
-        className={`px-2 py-1.5 rounded cursor-pointer transition-all duration-150 group ${
-          isSelected
-            ? "bg-[var(--color-primary)] text-white"
-            : "bg-[var(--color-card)] hover:bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-        } ${isDragged ? "opacity-50" : ""}`}
+        className={`${toolSidebarItemClass(isSelected, "cursor-pointer group")} ${isDragged ? "opacity-50" : ""}`}
         onClick={() => onSelect(drawing.id)}
       >
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
-            <div
-              className={`text-xs font-medium truncate ${
-                isSelected ? "text-white" : "text-[var(--color-text-primary)]"
-              }`}
-            >
+            <div className="text-xs font-medium truncate text-[var(--color-text-primary)]">
               {drawing.title}
             </div>
-            <div
-              className={`text-[10px] mt-0.5 ${
-                isSelected
-                  ? "text-white/80"
-                  : "text-[var(--color-text-tertiary)]"
-              }`}
-            >
+            <div className="text-[10px] mt-0.5 text-[var(--color-text-tertiary)]">
               {new Date(drawing.updatedAt).toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -166,11 +135,7 @@ export const DrawingItem = memo<DrawingItemProps>(
               e.stopPropagation();
               onDelete(drawing.id);
             }}
-            className={`opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs ${
-              isSelected
-                ? "text-white hover:text-red-200"
-                : "text-[var(--color-text-tertiary)] hover:text-red-500"
-            }`}
+            className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-red-500"
           >
             <Icon name="Trash2" className="w-3 h-3" />
           </button>

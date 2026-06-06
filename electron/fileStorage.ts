@@ -615,7 +615,9 @@ class FileStorageService {
 
     async saveApiEnvironments(data: { environments: any[]; activeEnvironmentId: string | null }): Promise<{ success: boolean; error?: string }> {
         try {
-            const filePath = path.join(this.config.repoPath, 'apiclient', 'environments.json');
+            const dir = path.join(this.config.repoPath, 'apiclient');
+            await fs.mkdir(dir, { recursive: true });
+            const filePath = path.join(dir, 'environments.json');
             await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
             await this.triggerSync(filePath, 'apiclient');
             return { success: true };

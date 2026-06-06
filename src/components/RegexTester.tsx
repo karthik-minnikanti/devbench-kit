@@ -117,15 +117,11 @@ export function RegexTester() {
 
   return (
     <div className="h-full flex flex-col bg-[var(--color-card)]">
-      <div className="px-4 py-2 border-b border-[var(--color-border)] flex-shrink-0 flex items-center justify-between">
-        <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-          Regex Tester
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={testPattern} className="btn-primary text-xs">
-            Test
-          </button>
-        </div>
+      <div className="tool-header">
+        <span className="text-xs font-medium">Regex Tester</span>
+        <button onClick={testPattern} className="btn-primary !h-7 !text-xs">
+          Test
+        </button>
       </div>
 
       <div className="flex-1 flex overflow-hidden" style={{ minHeight: 0 }}>

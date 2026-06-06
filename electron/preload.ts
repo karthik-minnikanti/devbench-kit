@@ -75,6 +75,24 @@ try {
         jsRunner: {
             execute: (code: string, timeoutMs?: number) => ipcRenderer.invoke('jsRunner:execute', code, timeoutMs),
         },
+        terminal: {
+            create: (options: any) => ipcRenderer.invoke('terminal:create', options),
+            write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', sessionId, data),
+            resize: (sessionId: string, cols: number, rows: number) =>
+                ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
+            destroy: (sessionId: string) => ipcRenderer.invoke('terminal:destroy', sessionId),
+            addCommand: (scope: string, command: string) =>
+                ipcRenderer.invoke('terminal:history:addCommand', scope, command),
+            getCommands: (scope: string, query?: string, limit?: number) =>
+                ipcRenderer.invoke('terminal:history:getCommands', scope, query, limit),
+            clearCommands: (scope?: string) =>
+                ipcRenderer.invoke('terminal:history:clearCommands', scope),
+            addSession: (session: any) => ipcRenderer.invoke('terminal:history:addSession', session),
+            listSessions: (limit?: number) => ipcRenderer.invoke('terminal:history:listSessions', limit),
+            touchSession: (id: string) => ipcRenderer.invoke('terminal:history:touchSession', id),
+            closeSession: (id: string) => ipcRenderer.invoke('terminal:history:closeSession', id),
+            removeSession: (id: string) => ipcRenderer.invoke('terminal:history:removeSession', id),
+        },
         onLicenseValidated: (callback: (data: any) => void) => {
             ipcRenderer.on('license:validated', (_event: any, data: any) => callback(data));
         },
@@ -92,6 +110,16 @@ try {
         },
         onDockerExecExit: (callback: (data: any) => void) => {
             ipcRenderer.on('docker:exec:exit', (_event: any, data: any) => callback(data));
+        },
+        onTerminalData: (callback: (data: { sessionId: string; data: string }) => void) => {
+            const handler = (_event: any, data: { sessionId: string; data: string }) => callback(data);
+            ipcRenderer.on('terminal:data', handler);
+            return () => ipcRenderer.removeListener('terminal:data', handler);
+        },
+        onTerminalExit: (callback: (data: { sessionId: string; exitCode: number }) => void) => {
+            const handler = (_event: any, data: { sessionId: string; exitCode: number }) => callback(data);
+            ipcRenderer.on('terminal:exit', handler);
+            return () => ipcRenderer.removeListener('terminal:exit', handler);
         },
         k8s: {
             clusters: {
@@ -114,6 +142,11 @@ try {
             namespaces: () => ipcRenderer.invoke('k8s:namespaces'),
             logs: (podName: string, namespace: string, tail?: number, container?: string) => ipcRenderer.invoke('k8s:logs', podName, namespace, tail, container),
             stopLogs: (podName: string, namespace: string) => ipcRenderer.invoke('k8s:stop-logs', podName, namespace),
+            portForward: (podName: string, namespace: string, localPort: number, remotePort: number, address?: string) =>
+                ipcRenderer.invoke('k8s:port-forward', podName, namespace, localPort, remotePort, address),
+            stopPortForward: (forwardId: string) => ipcRenderer.invoke('k8s:stop-port-forward', forwardId),
+            stopPodPortForwards: (podName: string, namespace: string) =>
+                ipcRenderer.invoke('k8s:stop-pod-port-forwards', podName, namespace),
             previousLogs: (podName: string, namespace: string, container?: string, tail?: number) => ipcRenderer.invoke('k8s:previous-logs', podName, namespace, container, tail),
             exec: (podName: string, namespace: string, command: string) => ipcRenderer.invoke('k8s:exec', podName, namespace, command),
             execInput: (podName: string, namespace: string, input: string) => ipcRenderer.invoke('k8s:exec:input', podName, namespace, input),
@@ -154,6 +187,16 @@ try {
         },
         onK8sExecExit: (callback: (data: any) => void) => {
             ipcRenderer.on('k8s:exec:exit', (_event: any, data: any) => callback(data));
+        },
+        onK8sPortForwardExit: (callback: (data: { forwardId: string; exitCode?: number; error?: string }) => void) => {
+            const handler = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('k8s:port-forward:exit', handler);
+            return () => ipcRenderer.removeListener('k8s:port-forward:exit', handler);
+        },
+        onK8sPortForwardMessage: (callback: (data: { forwardId: string; message: string }) => void) => {
+            const handler = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('k8s:port-forward:message', handler);
+            return () => ipcRenderer.removeListener('k8s:port-forward:message', handler);
         },
         notes: {
             list: () => ipcRenderer.invoke('notes:list'),

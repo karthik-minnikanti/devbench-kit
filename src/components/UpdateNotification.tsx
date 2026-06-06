@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 
 interface UpdateInfo {
@@ -11,6 +12,16 @@ interface DownloadProgress {
   percent: number;
   transferred: number;
   total: number;
+}
+
+function toastClass(variant: "default" | "accent" | "error" = "default") {
+  return [
+    "update-toast animate-slide-in-right",
+    variant === "accent" ? "update-toast--accent" : "",
+    variant === "error" ? "update-toast--error" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function UpdateNotification() {
@@ -28,7 +39,6 @@ export function UpdateNotification() {
   const [currentVersion, setCurrentVersion] = useState<string>("");
 
   useEffect(() => {
-    // Get current version
     if (window.electronAPI?.updater?.getAppVersion) {
       window.electronAPI.updater.getAppVersion().then((result: any) => {
         if (result?.version) {
@@ -37,7 +47,6 @@ export function UpdateNotification() {
       });
     }
 
-    // Set up event listeners
     if (window.electronAPI?.updater) {
       const { updater } = window.electronAPI;
 
@@ -75,23 +84,6 @@ export function UpdateNotification() {
     }
   }, []);
 
-  const handleCheckForUpdates = async () => {
-    if (!window.electronAPI?.updater?.checkForUpdates) return;
-
-    setChecking(true);
-    setError(null);
-    try {
-      const result = await window.electronAPI.updater.checkForUpdates();
-      if (result?.error) {
-        setError(result.error);
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to check for updates");
-    } finally {
-      setChecking(false);
-    }
-  };
-
   const handleDownloadUpdate = async () => {
     if (!window.electronAPI?.updater?.downloadUpdate) return;
 
@@ -119,12 +111,14 @@ export function UpdateNotification() {
     setUpdateDownloaded(null);
     setError(null);
     setDownloadProgress(null);
+    setDownloading(false);
   };
 
-  // Show update downloaded notification
+  let content: React.ReactNode = null;
+
   if (updateDownloaded) {
-    return (
-      <div className="fixed top-4 right-4 z-50 max-w-md bg-[var(--color-background)] border border-[var(--color-primary)] rounded-lg  p-4 animate-slide-in-right">
+    content = (
+      <div className={toastClass("accent")} role="status" aria-live="polite">
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 mt-0.5">
             <Icon
@@ -158,18 +152,20 @@ export function UpdateNotification() {
           <button
             onClick={handleDismiss}
             className="flex-shrink-0 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+            aria-label="Dismiss"
           >
             <Icon name="X" className="w-4 h-4" />
           </button>
         </div>
       </div>
     );
-  }
+  } else if (downloading) {
+    const percent = downloadProgress?.percent ?? 0;
+    const transferred = downloadProgress?.transferred ?? 0;
+    const total = downloadProgress?.total ?? 0;
 
-  // Show downloading notification
-  if (downloading && downloadProgress) {
-    return (
-      <div className="fixed top-4 right-4 z-50 max-w-md bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg  p-4">
+    content = (
+      <div className={toastClass("accent")} role="status" aria-live="polite">
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 mt-0.5">
             <Icon
@@ -185,25 +181,21 @@ export function UpdateNotification() {
               <div className="w-full bg-[var(--color-muted)] rounded-full h-2">
                 <div
                   className="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${downloadProgress.percent}%` }}
+                  style={{ width: `${percent}%` }}
                 />
               </div>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                {Math.round(downloadProgress.percent)}% (
-                {formatBytes(downloadProgress.transferred)} /{" "}
-                {formatBytes(downloadProgress.total)})
+                {Math.round(percent)}% ({formatBytes(transferred)} /{" "}
+                {total > 0 ? formatBytes(total) : "…"})
               </p>
             </div>
           </div>
         </div>
       </div>
     );
-  }
-
-  // Show update available notification
-  if (updateAvailable) {
-    return (
-      <div className="fixed top-4 right-4 z-50 max-w-md bg-[var(--color-background)] border border-[var(--color-primary)] rounded-lg  p-4 animate-slide-in-right">
+  } else if (updateAvailable) {
+    content = (
+      <div className={toastClass("accent")} role="status" aria-live="polite">
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 mt-0.5">
             <Icon name="Bell" className="w-5 h-5 text-[var(--color-primary)]" />
@@ -228,7 +220,8 @@ export function UpdateNotification() {
             <div className="flex gap-2">
               <button
                 onClick={handleDownloadUpdate}
-                className="px-3 py-1.5 bg-[var(--color-primary)] text-white rounded text-xs font-medium hover:opacity-90 transition-opacity"
+                disabled={checking}
+                className="px-3 py-1.5 bg-[var(--color-primary)] text-white rounded text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 Download
               </button>
@@ -243,18 +236,16 @@ export function UpdateNotification() {
           <button
             onClick={handleDismiss}
             className="flex-shrink-0 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+            aria-label="Dismiss"
           >
             <Icon name="X" className="w-4 h-4" />
           </button>
         </div>
       </div>
     );
-  }
-
-  // Show error notification
-  if (error) {
-    return (
-      <div className="fixed top-4 right-4 z-50 max-w-md bg-[var(--color-background)] border border-red-500 rounded-lg  p-4 animate-slide-in-right-right">
+  } else if (error) {
+    content = (
+      <div className={toastClass("error")} role="alert">
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 mt-0.5">
             <Icon name="AlertCircle" className="w-5 h-5 text-red-500" />
@@ -276,6 +267,7 @@ export function UpdateNotification() {
           <button
             onClick={handleDismiss}
             className="flex-shrink-0 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+            aria-label="Dismiss"
           >
             <Icon name="X" className="w-4 h-4" />
           </button>
@@ -284,7 +276,11 @@ export function UpdateNotification() {
     );
   }
 
-  return null;
+  if (!content) {
+    return null;
+  }
+
+  return createPortal(content, document.body);
 }
 
 function formatBytes(bytes: number): string {

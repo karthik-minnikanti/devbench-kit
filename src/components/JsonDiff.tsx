@@ -76,24 +76,22 @@ export function JsonDiff() {
 
   return (
     <div className="h-full flex flex-col bg-[var(--color-card)]">
-      <div className="px-4 py-2 border-b border-[var(--color-border)] flex-shrink-0 flex items-center justify-between">
-        <div className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wider">
-          JSON Diff
-        </div>
+      <div className="px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0 flex items-center justify-between">
+        <span className="text-xs font-medium text-[var(--color-text-primary)]">JSON Diff</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => beautifyJson(leftJson, setLeftJson)}
-            className="btn-secondary text-xs"
+            className="btn-secondary !h-7 !text-xs"
           >
-            Beautify Left
+            Beautify left
           </button>
           <button
             onClick={() => beautifyJson(rightJson, setRightJson)}
-            className="btn-secondary text-xs"
+            className="btn-secondary !h-7 !text-xs"
           >
-            Beautify Right
+            Beautify right
           </button>
-          <button onClick={compareJson} className="btn-primary text-xs">
+          <button onClick={compareJson} className="btn-primary !h-7 !text-xs">
             Compare
           </button>
         </div>

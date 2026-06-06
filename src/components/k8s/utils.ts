@@ -47,7 +47,21 @@ function row(
   };
 }
 
-export function mapResources(kind: K8sResourceKind, items: any[]): K8sResourceRow[] {
+export function podMetricsKey(
+  podName: string,
+  podNamespace: string | undefined,
+  listNamespace?: string,
+): string {
+  if (listNamespace) return podName;
+  return podNamespace ? `${podNamespace}/${podName}` : podName;
+}
+
+export function mapResources(
+  kind: K8sResourceKind,
+  items: any[],
+  metrics: Record<string, { cpu: string; memory: string }> = {},
+  listNamespace?: string,
+): K8sResourceRow[] {
   switch (kind) {
     case "nodes":
       return items.map((n) =>
@@ -64,17 +78,29 @@ export function mapResources(kind: K8sResourceKind, items: any[]): K8sResourceRo
         ),
       );
     case "pods":
-      return items.map((p) =>
-        row(
-          kind,
-          p.metadata?.name || "unknown",
-          p.metadata?.namespace,
-          p.status?.phase || "Unknown",
-          p.metadata?.creationTimestamp,
-          p.spec?.containers?.[0]?.image || "",
-          p,
-        ),
-      );
+      return items.map((p) => {
+        const podName = p.metadata?.name || "unknown";
+        const podNamespace = p.metadata?.namespace;
+        const restarts = (p.status?.containerStatuses || []).reduce(
+          (sum: number, cs: { restartCount?: number }) => sum + (cs.restartCount || 0),
+          0,
+        );
+        const usage = metrics[podMetricsKey(podName, podNamespace, listNamespace)];
+        return {
+          ...row(
+            kind,
+            podName,
+            podNamespace,
+            p.status?.phase || "Unknown",
+            p.metadata?.creationTimestamp,
+            p.spec?.containers?.[0]?.image || "",
+            p,
+          ),
+          restarts,
+          cpu: usage?.cpu ?? "—",
+          memory: usage?.memory ?? "—",
+        };
+      });
     case "deployments":
       return items.map((d) =>
         row(
@@ -226,6 +252,9 @@ export const TABLE_COLUMNS: Record<
     { key: "name", label: "Name" },
     { key: "namespace", label: "Namespace" },
     { key: "status", label: "Status" },
+    { key: "restarts", label: "Restarts" },
+    { key: "cpu", label: "CPU" },
+    { key: "memory", label: "Memory" },
     { key: "info", label: "Image" },
     { key: "age", label: "Age" },
   ],

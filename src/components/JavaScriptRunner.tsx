@@ -11,6 +11,7 @@ import {
   deleteSnippet,
   Snippet,
 } from "../services/snippets";
+import { PaneLabel, ToolToolbar } from "./ui/ToolChrome";
 
 export function JavaScriptRunner() {
   const loadHistory = useStore((state) => state.loadHistory);
@@ -235,114 +236,109 @@ console.log("Result:", result);
 
   return (
     <div className="h-full flex flex-col">
-      <div className="tool-header">
-        <h2 className="title-sm flex items-center gap-2">
-          <span className="text-lg">⚡</span>
-          JavaScript Runner
-        </h2>
-        <div className="flex items-center gap-2">
-          <select
-            value={currentSnippetId || ""}
-            onChange={(e) => {
-              if (e.target.value) {
-                handleLoadSnippet(e.target.value);
-              } else {
-                setCurrentSnippetId(null);
-                setSnippetName("");
-              }
-            }}
-            className="input-field text-xs w-40"
-          >
-            <option value="">New Snippet</option>
-            {snippets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-
-          <button
-            onClick={() => setShowSnippetModal(true)}
-            className="btn-secondary text-xs"
-          >
-            💾 Save
-          </button>
-
-          <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoSaveEnabled}
-              onChange={(e) => setAutoSaveEnabled(e.target.checked)}
-              className="w-3 h-3"
-            />
-            <span>Auto</span>
-          </label>
-          {autoSaveEnabled && (
+      <ToolToolbar
+        title="JavaScript Runner"
+        actions={
+          <>
+            <select
+              value={currentSnippetId || ""}
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleLoadSnippet(e.target.value);
+                } else {
+                  setCurrentSnippetId(null);
+                  setSnippetName("");
+                }
+              }}
+              className="input-field !h-7 !py-0 !leading-7 !text-xs min-w-[9rem] max-w-[14rem]"
+            >
+              <option value="">New Snippet</option>
+              {snippets.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setShowSnippetModal(true)}
+              className="btn-secondary !h-7 !text-xs"
+            >
+              Save
+            </button>
+            <label className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoSaveEnabled}
+                onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+                className="w-3 h-3"
+              />
+              Auto
+            </label>
+            {autoSaveEnabled && (
+              <input
+                type="number"
+                value={autoSaveInterval > 0 ? autoSaveInterval / 1000 : 30}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setAutoSaveInterval(val > 0 ? val * 1000 : 30000);
+                }}
+                placeholder="s"
+                className="w-14 input-field !h-7 !text-xs"
+                min="1"
+              />
+            )}
+            <label className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={saveOnRun}
+                onChange={(e) => setSaveOnRun(e.target.checked)}
+                className="w-3 h-3"
+              />
+              Save on run
+            </label>
             <input
               type="number"
-              value={autoSaveInterval > 0 ? autoSaveInterval / 1000 : 30}
+              value={timeoutMs || 5000}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                setAutoSaveInterval(val > 0 ? val * 1000 : 30000);
+                setTimeoutMs(val > 0 ? val : 5000);
               }}
-              placeholder="Interval (s)"
-              className="w-20 input-field text-xs"
-              min="1"
+              placeholder="Timeout ms"
+              className="w-24 input-field !h-7 !text-xs"
+              min="100"
             />
-          )}
+            <button onClick={handleClear} className="btn-secondary !h-7 !text-xs">
+              Clear
+            </button>
+            <button
+              onClick={handleRun}
+              disabled={loading}
+              className="btn-primary !h-7 !text-xs disabled:opacity-50"
+            >
+              {loading ? "Running…" : "Run"}
+            </button>
+          </>
+        }
+      />
 
-          <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={saveOnRun}
-              onChange={(e) => setSaveOnRun(e.target.checked)}
-              className="w-3 h-3"
-            />
-            <span>Save on Run</span>
-          </label>
-
-          <input
-            type="number"
-            value={timeoutMs || 5000}
-            onChange={(e) => {
-              const val = Number(e.target.value);
-              setTimeoutMs(val > 0 ? val : 5000);
-            }}
-            placeholder="Timeout (ms)"
-            className="w-28 input-field text-xs"
-            min="100"
-          />
-          <button onClick={handleClear} className="btn-secondary text-xs">
-            🗑️ Clear
-          </button>
-          <button
-            onClick={handleRun}
-            disabled={loading}
-            className="btn-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-          >
-            {loading ? "⏳ Running..." : "▶️ Run Code"}
-          </button>
-        </div>
-      </div>
-
-      <div className="px-6 py-2 border-b border-[var(--color-border)] bg-[var(--color-muted)]/30 flex items-center gap-2 flex-shrink-0">
-        <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-          NPM:
+      <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center gap-2 flex-shrink-0">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)] shrink-0">
+          NPM
         </span>
         <input
           type="text"
           value={packageName || ""}
           onChange={(e) => setPackageName(e.target.value || "")}
           placeholder="Package name (e.g., lodash)"
-          className="input-field text-xs flex-1 max-w-xs"
+          className="input-field !h-7 !text-xs flex-1 max-w-xs"
           onKeyPress={(e) => e.key === "Enter" && handleInstallPackage()}
         />
         <button
           onClick={handleInstallPackage}
           disabled={installingPackage || !packageName.trim()}
-          className="btn-secondary text-xs disabled:opacity-50"
+          className="btn-secondary !h-7 !text-xs disabled:opacity-50"
         >
-          {installingPackage ? "⏳ Installing..." : "📦 Install"}
+          {installingPackage ? "Installing…" : "Install"}
         </button>
         {installedPackages.length > 0 && (
           <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
@@ -352,14 +348,11 @@ console.log("Result:", result);
         )}
       </div>
 
-      <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              JavaScript Code {currentSnippetId && `(${snippetName})`}
-            </div>
-          </div>
+      <div className="flex-1 flex overflow-hidden gap-px bg-[var(--color-border)]">
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>
+            Code{currentSnippetId ? ` · ${snippetName}` : ""}
+          </PaneLabel>
           <div className="flex-1" style={{ backgroundColor: "#1e1e1e" }}>
             <Editor
               height="100%"
@@ -371,22 +364,19 @@ console.log("Result:", result);
               beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header flex items-center justify-between">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
-              Output
-            </div>
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <div className="editor-pane-header flex items-center justify-between">
+            <PaneLabel>Output</PaneLabel>
             {executionTime > 0 && (
-              <span className="text-xs text-[var(--color-text-tertiary)]">
+              <span className="text-[10px] text-[var(--color-text-tertiary)] pr-3">
                 {executionTime}ms
               </span>
             )}
@@ -407,19 +397,14 @@ console.log("Result:", result);
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">⚠️</span>
-                  <span className="font-medium">{error}</span>
-                </div>
-              </div>
+              <div className="error-banner absolute bottom-3 left-3 right-3 text-xs">{error}</div>
             )}
           </div>
         </div>

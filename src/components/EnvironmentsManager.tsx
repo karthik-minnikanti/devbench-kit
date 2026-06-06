@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Icon } from "./Icon";
+import { ToolSidebar, ToolSidebarBody, ToolSidebarHeader, ToolSidebarItem } from "./ui/ToolChrome";
 
 export interface Environment {
   id: string;
@@ -37,14 +38,14 @@ export function EnvironmentsManager({
   const [newVarValue, setNewVarValue] = useState("");
 
   useEffect(() => {
-    if (isOpen && environments.length > 0 && !selectedEnv) {
+    if (isOpen && environments.length > 0 && !selectedEnv && !isCreating) {
       const active =
         environments.find((e) => e.id === activeEnvironmentId) ||
         environments[0];
       setSelectedEnv(active);
       setEditingEnv({ ...active });
     }
-  }, [isOpen, environments, activeEnvironmentId, selectedEnv]);
+  }, [isOpen, environments, activeEnvironmentId, selectedEnv, isCreating]);
 
   if (!isOpen) return null;
 
@@ -135,56 +136,47 @@ export function EnvironmentsManager({
 
         <div className="flex-1 flex overflow-hidden">
           {/* Sidebar */}
-          <div className="w-64 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] overflow-y-auto">
-            <div className="p-3">
+          <ToolSidebar width="wide" aria-label="Environments">
+            <ToolSidebarHeader title="Environments">
               <button
                 onClick={handleCreateNew}
-                className="w-full px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)] transition-colors flex items-center gap-2"
+                className="w-full mt-2 px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] text-xs hover:bg-[var(--color-muted)] transition-colors flex items-center gap-2"
               >
                 <Icon name="Plus" className="w-4 h-4" />
                 New Environment
               </button>
-            </div>
-            <div className="space-y-1 px-2">
-              <button
+            </ToolSidebarHeader>
+            <ToolSidebarBody className="px-2 space-y-0.5">
+              <ToolSidebarItem
+                active={activeEnvironmentId === null}
                 onClick={() => {
                   onSetActive(null);
                   setSelectedEnv(null);
                   setEditingEnv({});
                 }}
-                className={`w-full px-3 py-2 rounded text-left text-xs transition-colors ${
-                  activeEnvironmentId === null
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                }`}
               >
                 No Environment
-              </button>
+              </ToolSidebarItem>
               {environments.map((env) => (
-                <button
+                <ToolSidebarItem
                   key={env.id}
+                  active={activeEnvironmentId === env.id || selectedEnv?.id === env.id}
                   onClick={() => {
                     setSelectedEnv(env);
                     setEditingEnv({ ...env });
                     setIsCreating(false);
                     onSetActive(env.id);
                   }}
-                  className={`w-full px-3 py-2 rounded text-left text-xs transition-colors flex items-center justify-between ${
-                    activeEnvironmentId === env.id
-                      ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/30"
-                      : selectedEnv?.id === env.id
-                        ? "bg-[var(--color-muted)] text-[var(--color-text-primary)]"
-                        : "text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)]"
-                  }`}
+                  className="flex items-center justify-between gap-2"
                 >
                   <span className="truncate">{env.name}</span>
                   {activeEnvironmentId === env.id && (
                     <Icon name="Check" className="w-4 h-4 flex-shrink-0" />
                   )}
-                </button>
+                </ToolSidebarItem>
               ))}
-            </div>
-          </div>
+            </ToolSidebarBody>
+          </ToolSidebar>
 
           {/* Main Content */}
           <div className="flex-1 overflow-y-auto p-6">

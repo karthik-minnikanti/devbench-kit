@@ -26,6 +26,9 @@ export interface K8sResourceRow {
   age: string;
   info: string;
   raw: unknown;
+  restarts?: number;
+  cpu?: string;
+  memory?: string;
 }
 
 export interface K8sNavSection {

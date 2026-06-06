@@ -10,6 +10,7 @@ import {
   addQuotesToKeys,
   escapeJsonForPostman,
 } from "../utils/formatters";
+import { PaneLabel, ToolToolbar } from "./ui/ToolChrome";
 
 type FormatType =
   | "json-format"
@@ -60,38 +61,32 @@ export function Formatter() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="tool-header">
-        <h2 className="title-sm flex items-center gap-2">
-          <span className="text-lg">✨</span>
-          Formatter
-        </h2>
-        <div className="flex items-center gap-2">
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as FormatType)}
-            className="input-field text-xs"
-          >
-            <option value="json-format">JSON Format</option>
-            <option value="json-minify">JSON Minify</option>
-            <option value="xml-format">XML Format</option>
-            <option value="remove-newlines">Remove Newlines</option>
-            <option value="quotes-single">Single Quotes</option>
-            <option value="postman-keys">Add Quotes to Keys</option>
-            <option value="postman-escape">Escape for Postman</option>
-          </select>
-          <button onClick={handleFormat} className="btn-primary text-xs">
-            ⚡ Format
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 flex overflow-hidden gap-2 p-2">
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-primary)] rounded-full"></span>
-              Input
-            </div>
-          </div>
+      <ToolToolbar
+        title="Formatter"
+        actions={
+          <>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as FormatType)}
+              className="input-field !h-7 !text-xs max-w-[180px]"
+            >
+              <option value="json-format">JSON Format</option>
+              <option value="json-minify">JSON Minify</option>
+              <option value="xml-format">XML Format</option>
+              <option value="remove-newlines">Remove Newlines</option>
+              <option value="quotes-single">Single Quotes</option>
+              <option value="postman-keys">Add Quotes to Keys</option>
+              <option value="postman-escape">Escape for Postman</option>
+            </select>
+            <button onClick={handleFormat} className="btn-primary !h-7 !text-xs">
+              Format
+            </button>
+          </>
+        }
+      />
+      <div className="flex-1 flex overflow-hidden gap-px bg-[var(--color-border)]">
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>Input</PaneLabel>
           <div className="flex-1">
             <Editor
               height="100%"
@@ -103,21 +98,16 @@ export function Formatter() {
           beforeMount={onMonacoBeforeMount}
               options={{
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col card overflow-hidden">
-          <div className="px-4 py-2.5 editor-pane-header">
-            <div className="text-xs font-bold text-[var(--color-text-secondary)] flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-[var(--color-semantic-success)] rounded-full"></span>
-              Output
-            </div>
-          </div>
+        <div className="flex-1 flex flex-col bg-[var(--color-card)] overflow-hidden min-w-0">
+          <PaneLabel>Output</PaneLabel>
           <div className="flex-1 relative">
             <Editor
               height="100%"
@@ -132,19 +122,14 @@ export function Formatter() {
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
-                fontSize: 14,
+                fontSize: 12,
                 wordWrap: "on",
-                padding: { top: 16, bottom: 16 },
+                padding: { top: 8, bottom: 8 },
                 automaticLayout: true,
               }}
             />
             {error && (
-              <div className="error-banner absolute bottom-4 left-4 right-4 animate-slide-up">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">⚠️</span>
-                  <span className="font-medium">{error}</span>
-                </div>
-              </div>
+              <div className="error-banner absolute bottom-3 left-3 right-3 text-xs">{error}</div>
             )}
           </div>
         </div>

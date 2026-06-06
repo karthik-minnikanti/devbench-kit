@@ -6,6 +6,7 @@
 export interface OpenToolOptions {
     itemId?: string;
     date?: string;
+    taskId?: string;
     addTask?: boolean;
 }
 
