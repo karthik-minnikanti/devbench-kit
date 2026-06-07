@@ -3,118 +3,14 @@ import { TabType } from "./CategorizedTabs";
 import { Icon } from "./Icon";
 import { BrandLogo } from "./BrandLogo";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import {
+  getNavCategories,
+  NAV_ALLOWED_TABS,
+  TAB_ICONS,
+  TAB_LABELS,
+} from "../utils/toolCategories";
 
-// Allowed tabs visible in navigation
-const ALLOWED_TABS: TabType[] = [
-  "home",
-  "api",
-  "planner",
-  "js-runner",
-  "notes",
-  "excalidraw",
-  "uml",
-  "k8s",
-  "terminal",
-];
-
-const allCategories = [
-  { id: "home", label: "Home", icon: "Home", tabs: ["home"] as TabType[] },
-  {
-    id: "tools",
-    label: "Developer Tools",
-    icon: "Code",
-    tabs: ["api", "formatter", "regex", "js-runner"] as TabType[],
-  },
-  {
-    id: "converters",
-    label: "Converters",
-    icon: "Convert",
-    tabs: [
-      "schema",
-      "json-xml",
-      "json-diff",
-      "encoder",
-      "csv-yaml",
-    ] as TabType[],
-  },
-  {
-    id: "productivity",
-    label: "Productivity",
-    icon: "FileText",
-    tabs: ["notes", "planner"] as TabType[],
-  },
-  {
-    id: "design",
-    label: "Design",
-    icon: "Pen",
-    tabs: ["excalidraw", "uml"] as TabType[],
-  },
-  {
-    id: "devops",
-    label: "DevOps",
-    icon: "Container",
-    tabs: ["docker", "k8s", "terminal"] as TabType[],
-    alwaysShowDropdown: true,
-  },
-  {
-    id: "profile",
-    label: "Profile",
-    icon: "User",
-    tabs: ["profile"] as TabType[],
-  },
-];
-
-// Filter categories to only show allowed tabs
-const categories = allCategories
-  .map((cat) => ({
-    ...cat,
-    tabs: cat.tabs.filter((tab) => ALLOWED_TABS.includes(tab)),
-  }))
-  .filter((cat) => cat.tabs.length > 0); // Only show categories that have allowed tabs
-
-const tabLabels: Record<TabType, string> = {
-  home: "Home",
-  schema: "Schema Generator",
-  api: "API Studio",
-  notes: "Notes",
-  excalidraw: "Excalidraw",
-  uml: "UML Editor",
-  formatter: "Formatter",
-  "js-runner": "JS Runner",
-  "json-xml": "JSON/XML",
-  "csv-yaml": "CSV/YAML",
-  encoder: "Encoder/Decoder",
-  "json-diff": "JSON Diff",
-  regex: "Regex Tester",
-  planner: "Daily Planner",
-  profile: "Profile",
-  docker: "Docker",
-  k8s: "Kube Lens",
-  terminal: "Terminal",
-  "git-settings": "Git Settings",
-};
-
-const tabIcons: Record<TabType, string> = {
-  home: "Home",
-  schema: "Schema",
-  api: "Globe",
-  notes: "FileText",
-  excalidraw: "PenTool",
-  uml: "Chart",
-  formatter: "Code",
-  "js-runner": "Zap",
-  "json-xml": "Convert",
-  "csv-yaml": "File",
-  encoder: "Lock",
-  "json-diff": "Diff",
-  regex: "Search",
-  planner: "Calendar",
-  profile: "User",
-  docker: "Container",
-  k8s: "Kubernetes",
-  terminal: "Terminal",
-  "git-settings": "GitBranch",
-};
+const categories = getNavCategories(NAV_ALLOWED_TABS);
 
 interface TopNavigationBarProps {
   openTabs: Array<{ id: string; type: TabType; label: string; icon: string }>;
@@ -137,9 +33,7 @@ export function TopNavigationBar({
       if (openDropdown) {
         const dropdown = dropdownRefs.current[openDropdown];
         const target = event.target as Node;
-        // Check if click is outside both dropdown and its button
         if (dropdown && !dropdown.contains(target)) {
-          // Check if click is on the button that opened this dropdown
           const button = document.querySelector(
             `[data-category-id="${openDropdown}"]`,
           );
@@ -151,7 +45,6 @@ export function TopNavigationBar({
     };
 
     if (openDropdown) {
-      // Use a small delay to avoid immediate closure
       setTimeout(() => {
         document.addEventListener("mousedown", handleClickOutside);
       }, 0);
@@ -161,7 +54,6 @@ export function TopNavigationBar({
   }, [openDropdown]);
 
   const handleTabClick = (tabType: TabType) => {
-    // Directly change the active tab (no tabs system)
     onTabClick(tabType);
     setOpenDropdown(null);
   };
@@ -193,7 +85,6 @@ export function TopNavigationBar({
         <BrandLogo size="sm" showText={true} />
       </div>
 
-      {/* Navigation Categories */}
       <div className="flex items-center gap-0 text-xs font-medium text-[var(--color-text-secondary)] flex-1 justify-end min-w-0 overflow-visible">
         {categories.map((category, index) => (
           <div
@@ -219,7 +110,7 @@ export function TopNavigationBar({
               }`}
             >
               <Icon
-                name={category.icon as keyof typeof import("./Icons").Icons}
+                name={category.icon}
                 className="w-3 h-3 flex-shrink-0"
               />
               <span className="text-xs leading-none">{category.label}</span>
@@ -251,14 +142,10 @@ export function TopNavigationBar({
                     className="w-full px-3 py-2 flex items-center gap-2 text-left transition-colors hover:bg-[var(--color-muted)] text-xs text-[var(--color-text-primary)]"
                   >
                     <Icon
-                      name={
-                        (tabIcons[
-                          tab
-                        ] as keyof typeof import("./Icons").Icons) || "Code"
-                      }
+                      name={TAB_ICONS[tab]}
                       className="w-3.5 h-3.5 text-[var(--color-text-secondary)] flex-shrink-0"
                     />
-                    <span className="truncate">{tabLabels[tab]}</span>
+                    <span className="truncate">{TAB_LABELS[tab]}</span>
                   </button>
                 ))}
               </div>
@@ -267,7 +154,6 @@ export function TopNavigationBar({
         ))}
       </div>
 
-      {/* Right side - Theme Switcher */}
       <div className="flex items-center gap-1 flex-shrink-0">
         <ThemeSwitcher />
       </div>

@@ -11,6 +11,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import {
+    getTerminalBackgroundColor,
+    getTerminalFontSize,
     getTerminalTheme,
     subscribeToTerminalTheme,
     terminalFontFamily,
@@ -77,6 +79,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         const selectedSuggestionRef = useRef(0);
         const persistCommandRef = useRef<(command: string) => void>(() => {});
         const writeToTerminalRef = useRef<(data: string) => void>(() => {});
+        const onExitRef = useRef(onExit);
+        const onReadyRef = useRef(onReady);
+        const onLineChangeRef = useRef(onLineChange);
+        const onCommandSubmittedRef = useRef(onCommandSubmitted);
 
         const [error, setError] = useState<string | null>(null);
         const [lineBuffer, setLineBuffer] = useState("");
@@ -84,6 +90,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         const [selectedSuggestion, setSelectedSuggestion] = useState(0);
 
         const scope = useMemo(() => getTerminalScope(session), [session]);
+        const isRemoteSession = session.kind === "k8s" || session.kind === "docker";
 
         const loadHistory = useCallback(async () => {
             if (!window.electronAPI?.terminal?.getCommands) {
@@ -95,13 +102,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
         const persistCommand = useCallback(
             async (command: string) => {
-                onCommandSubmitted?.(command);
+                onCommandSubmittedRef.current?.(command);
                 if (window.electronAPI?.terminal?.addCommand) {
                     await window.electronAPI.terminal.addCommand(scope, command);
                 }
                 await loadHistory();
             },
-            [scope, onCommandSubmitted, loadHistory],
+            [scope, loadHistory],
         );
 
         const writeToTerminal = useCallback((data: string) => {
@@ -151,7 +158,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                 void persistCommand(command);
             };
             writeToTerminalRef.current = writeToTerminal;
-        }, [persistCommand, writeToTerminal]);
+            onExitRef.current = onExit;
+            onReadyRef.current = onReady;
+            onLineChangeRef.current = onLineChange;
+            onCommandSubmittedRef.current = onCommandSubmitted;
+        }, [persistCommand, writeToTerminal, onExit, onReady, onLineChange, onCommandSubmitted]);
 
         useEffect(() => {
             void loadHistory();
@@ -180,8 +191,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         }, [lineBuffer]);
 
         useEffect(() => {
-            onLineChange?.(lineBuffer);
-        }, [lineBuffer, onLineChange]);
+            onLineChangeRef.current?.(lineBuffer);
+        }, [lineBuffer]);
 
         useEffect(() => {
             if (!active || !containerRef.current || !window.electronAPI?.terminal) {
@@ -190,12 +201,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
             const term = new Terminal({
                 cursorBlink: true,
-                fontSize: 13,
-                lineHeight: 1.25,
+                fontSize: getTerminalFontSize(),
+                lineHeight: 1,
                 fontFamily: terminalFontFamily,
                 theme: getTerminalTheme(),
                 scrollback: 10000,
+                scrollOnUserInput: true,
                 allowProposedApi: true,
+                drawBoldTextInBrightColors: true,
             });
             const fitAddon = new FitAddon();
             term.loadAddon(fitAddon);
@@ -205,8 +218,23 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             trackerRef.current.reset();
 
             const applyTheme = () => {
-                term.options.theme = getTerminalTheme();
+                const theme = getTerminalTheme();
+                term.options.theme = theme;
+                term.options.fontSize = getTerminalFontSize();
+                term.options.lineHeight = 1;
+                const bg = theme.background || getTerminalBackgroundColor();
+                containerRef.current?.style.setProperty("--terminal-bg", bg);
+                containerRef.current?.parentElement?.style.setProperty(
+                    "--terminal-bg",
+                    bg,
+                );
+                fitAddon.fit();
+                const sessionId = sessionIdRef.current;
+                if (sessionId) {
+                    window.electronAPI?.terminal.resize(sessionId, term.cols, term.rows);
+                }
             };
+            applyTheme();
             const unsubscribeTheme = subscribeToTerminalTheme(applyTheme);
 
             let disposed = false;
@@ -215,11 +243,20 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             let removeExitListener: (() => void) | undefined;
 
             const syncSize = () => {
-                fitAddon.fit();
-                const sessionId = sessionIdRef.current;
-                if (sessionId) {
-                    window.electronAPI?.terminal.resize(sessionId, term.cols, term.rows);
-                }
+                if (!containerRef.current) return;
+                requestAnimationFrame(() => {
+                    if (disposed || !termRef.current) return;
+                    fitAddon.fit();
+                    const sessionId = sessionIdRef.current;
+                    if (sessionId) {
+                        window.electronAPI?.terminal.resize(
+                            sessionId,
+                            term.cols,
+                            term.rows,
+                        );
+                    }
+                    term.scrollToBottom();
+                });
             };
 
             const completeSuggestion = (command: string) => {
@@ -286,10 +323,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                 }
 
                 sessionIdRef.current = result.sessionId;
-                onReady?.();
+                onReadyRef.current?.();
 
                 if (sessionRecordId && window.electronAPI.terminal.touchSession) {
                     void window.electronAPI.terminal.touchSession(sessionRecordId);
+                }
+
+                if (isRemoteSession) {
+                    // Ensure kubectl/docker exec receives final terminal dimensions.
+                    syncSize();
+                    window.setTimeout(() => syncSize(), 150);
                 }
 
                 if (session.initialCommand?.trim()) {
@@ -304,9 +347,18 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
             removeDataListener = window.electronAPI.onTerminalData(
                 ({ sessionId, data }) => {
-                    if (sessionId === sessionIdRef.current) {
-                        term.write(data);
-                    }
+                    if (sessionId !== sessionIdRef.current) return;
+
+                    const buffer = term.buffer.active;
+                    const atBottom =
+                        buffer.baseY + buffer.cursorY >=
+                        buffer.viewportY + term.rows - 1;
+
+                    term.write(data, () => {
+                        if (atBottom) {
+                            term.scrollToBottom();
+                        }
+                    });
                 },
             );
 
@@ -316,10 +368,17 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                         term.writeln(
                             `\r\n\x1b[33m[Process exited with code ${exitCode}]\x1b[0m`,
                         );
+                        if (exitCode !== 0 && session.kind !== "local") {
+                            const hint =
+                                session.kind === "k8s"
+                                    ? "Check that the pod is Running, pick the correct container, and that it includes a shell (sh/bash)."
+                                    : "Check that the container is running and includes a shell (sh/bash).";
+                            term.writeln(`\x1b[90m${hint}\x1b[0m`);
+                        }
                         if (sessionRecordId && window.electronAPI.terminal.closeSession) {
                             void window.electronAPI.terminal.closeSession(sessionRecordId);
                         }
-                        onExit?.(exitCode);
+                        onExitRef.current?.(exitCode);
                     }
                 },
             );
@@ -355,8 +414,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             session.containerId,
             session.initialCommand,
             sessionRecordId,
-            onExit,
-            onReady,
+            isRemoteSession,
         ]);
 
         if (!window.electronAPI) {
@@ -369,21 +427,22 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
         return (
             <div
-                className={`h-full flex flex-col bg-[var(--color-sidebar)] ${className}`}
+                className={`terminal-shell h-full flex flex-col ${className}`}
+                style={{ backgroundColor: getTerminalBackgroundColor() }}
             >
                 {error && (
-                    <div className="px-3 py-2 text-xs text-[var(--color-semantic-error)] border-b border-[var(--color-border)]">
+                    <div className="px-3 py-2 text-xs text-[var(--color-semantic-error)] border-b border-[var(--color-border)] bg-[var(--color-card)]">
                         {error}
                     </div>
                 )}
                 <div
                     ref={containerRef}
-                    className="terminal-host flex-1 min-h-0 p-1"
+                    className="terminal-host flex-1 min-h-0"
                     onClick={() => termRef.current?.focus()}
                 />
                 <TerminalSuggestBar
-                    line={lineBuffer}
-                    suggestions={suggestions}
+                    line={isRemoteSession ? "" : lineBuffer}
+                    suggestions={isRemoteSession ? [] : suggestions}
                     selectedIndex={selectedSuggestion}
                     onSelect={replaceLine}
                     onHover={(index) => {

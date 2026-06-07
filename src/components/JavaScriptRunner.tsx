@@ -30,7 +30,7 @@ console.log("Result:", result);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [executionTime, setExecutionTime] = useState(0);
-  const [timeoutMs, setTimeoutMs] = useState(5000);
+  const [timeoutMs, setTimeoutMs] = useState(15000);
 
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const [autoSaveInterval, setAutoSaveInterval] = useState(30000);
@@ -298,14 +298,15 @@ console.log("Result:", result);
             </label>
             <input
               type="number"
-              value={timeoutMs || 5000}
+              value={timeoutMs || 15000}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                setTimeoutMs(val > 0 ? val : 5000);
+                setTimeoutMs(val > 0 ? val : 15000);
               }}
               placeholder="Timeout ms"
               className="w-24 input-field !h-7 !text-xs"
-              min="100"
+              min="1000"
+              title="Max wait time including async requests (ms)"
             />
             <button onClick={handleClear} className="btn-secondary !h-7 !text-xs">
               Clear

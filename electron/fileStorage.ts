@@ -198,7 +198,7 @@ class FileStorageService {
 
         try {
             const relativePath = path.relative(gitService.getRepoPath() || '', filePath);
-            await gitService.debouncedSync(relativePath, `Update ${type}`);
+            gitService.debouncedSync(relativePath, `Update ${type}`);
         } catch (error) {
             console.error('Failed to trigger sync:', error);
         }

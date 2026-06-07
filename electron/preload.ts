@@ -90,6 +90,8 @@ try {
             addSession: (session: any) => ipcRenderer.invoke('terminal:history:addSession', session),
             listSessions: (limit?: number) => ipcRenderer.invoke('terminal:history:listSessions', limit),
             touchSession: (id: string) => ipcRenderer.invoke('terminal:history:touchSession', id),
+            updateSession: (id: string, patch: { title?: string }) =>
+                ipcRenderer.invoke('terminal:history:updateSession', id, patch),
             closeSession: (id: string) => ipcRenderer.invoke('terminal:history:closeSession', id),
             removeSession: (id: string) => ipcRenderer.invoke('terminal:history:removeSession', id),
         },
@@ -267,12 +269,18 @@ try {
         },
         git: {
             getRepoPath: () => ipcRenderer.invoke('git:getRepoPath'),
+            pickRepoPath: () => ipcRenderer.invoke('git:pickRepoPath'),
             setRepoPath: (repoPath: string) => ipcRenderer.invoke('git:setRepoPath', repoPath),
             initRepo: (repoPath: string) => ipcRenderer.invoke('git:initRepo', repoPath),
             checkIfRepo: (repoPath: string) => ipcRenderer.invoke('git:checkIfRepo', repoPath),
             sync: (filePaths?: string[], commitMessage?: string) => ipcRenderer.invoke('git:sync', filePaths, commitMessage),
             status: () => ipcRenderer.invoke('git:status'),
             pull: () => ipcRenderer.invoke('git:pull'),
+            getSyncState: () => ipcRenderer.invoke('git:getSyncState'),
+            retryPendingSync: () => ipcRenderer.invoke('git:retryPendingSync'),
+            onSyncStateChange: (callback: (state: any) => void) => {
+                ipcRenderer.on('git:sync-state', (_event: any, state: any) => callback(state));
+            },
         },
         updater: {
             checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
@@ -443,12 +451,16 @@ declare global {
             };
             git: {
                 getRepoPath: () => Promise<any>;
+                pickRepoPath: () => Promise<any>;
                 setRepoPath: (repoPath: string) => Promise<any>;
                 initRepo: (repoPath: string) => Promise<any>;
                 checkIfRepo: (repoPath: string) => Promise<any>;
                 sync: (filePaths?: string[], commitMessage?: string) => Promise<any>;
                 status: () => Promise<any>;
                 pull: () => Promise<any>;
+                getSyncState: () => Promise<any>;
+                retryPendingSync: () => Promise<any>;
+                onSyncStateChange: (callback: (state: any) => void) => void;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;

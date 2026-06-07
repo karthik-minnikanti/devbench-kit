@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../../utils/theme";
 import * as monaco from "monaco-editor";
 import { Icon } from "../Icon";
-import { TerminalView } from "../TerminalView";
-import { K8S_POD_SHELL } from "../../utils/terminalTheme";
+import { openDevShell } from "../../utils/devShell";
 
 export type PodDockTab = "logs" | "terminal";
 
@@ -30,7 +29,7 @@ function scrollLogsToBottom(editor: monaco.editor.IStandaloneCodeEditor | null) 
 
 const DOCK_TABS: { id: PodDockTab; label: string; icon: React.ComponentProps<typeof Icon>["name"] }[] = [
   { id: "logs", label: "Logs", icon: "FileText" },
-  { id: "terminal", label: "Terminal", icon: "Terminal" },
+  { id: "terminal", label: "DevShell", icon: "Terminal" },
 ];
 
 export function K8sPodBottomPanel({
@@ -46,7 +45,7 @@ export function K8sPodBottomPanel({
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [logContainer, setLogContainer] = useState<string | undefined>(undefined);
-  const [terminalKey, setTerminalKey] = useState(0);
+  const [terminalContainer, setTerminalContainer] = useState<string | undefined>(undefined);
   const logsEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const previousLogLengthRef = useRef(0);
   const isStreamingRef = useRef(false);
@@ -57,12 +56,19 @@ export function K8sPodBottomPanel({
     (rawPod as { spec?: { containers?: { name: string }[] } })?.spec?.containers?.map((c) => c.name) ||
     [];
 
-  const terminalSession = {
-    kind: "k8s" as const,
-    podName: name,
-    namespace,
-    shell: K8S_POD_SHELL,
-  };
+  const shellSession = useMemo(
+    () => ({
+      kind: "k8s" as const,
+      podName: name,
+      namespace,
+      ...(terminalContainer ? { container: terminalContainer } : {}),
+    }),
+    [name, namespace, terminalContainer],
+  );
+
+  const launchDevShell = useCallback(() => {
+    openDevShell(shellSession);
+  }, [shellSession]);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -74,6 +80,12 @@ export function K8sPodBottomPanel({
       followLogsRef.current = true;
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "terminal") {
+      launchDevShell();
+    }
+  }, [activeTab, launchDevShell]);
 
   useEffect(() => {
     return () => {
@@ -134,11 +146,11 @@ export function K8sPodBottomPanel({
     setError(null);
     setIsStreaming(false);
     setLogContainer(undefined);
-    setTerminalKey((k) => k + 1);
+    setTerminalContainer(containerNames[0]);
     return () => {
       stopLogs();
     };
-  }, [name, namespace, stopLogs]);
+  }, [name, namespace, containerNames.join("|"), stopLogs]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -226,14 +238,18 @@ export function K8sPodBottomPanel({
               </span>
             </>
           )}
-          {activeTab === "terminal" && (
-            <button
-              onClick={() => setTerminalKey((k) => k + 1)}
-              className="btn-secondary !h-7 !py-1 !px-2 !text-xs inline-flex items-center gap-1"
+          {activeTab === "terminal" && containerNames.length > 0 && (
+            <select
+              value={terminalContainer ?? containerNames[0] ?? ""}
+              onChange={(e) => setTerminalContainer(e.target.value)}
+              className="h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-background)] text-xs"
             >
-              <Icon name="RefreshCw" className="w-3 h-3" />
-              Reconnect
-            </button>
+              {containerNames.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           )}
           <button
             onClick={onClose}
@@ -280,7 +296,22 @@ export function K8sPodBottomPanel({
             }}
           />
         ) : (
-          <TerminalView key={terminalKey} active session={terminalSession} />
+          <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <div className="w-10 h-10 rounded-full bg-[var(--color-muted)] flex items-center justify-center">
+              <Icon name="Terminal" className="w-5 h-5 text-[var(--color-primary)]" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                Pod shell opened in DevShell
+              </p>
+              <p className="text-xs text-[var(--color-text-tertiary)] mt-1 max-w-sm">
+                Switch containers above or focus DevShell to keep working across local, K8s, and Docker sessions.
+              </p>
+            </div>
+            <button type="button" onClick={launchDevShell} className="btn-primary !h-8 !text-xs">
+              Focus DevShell
+            </button>
+          </div>
         )}
       </div>
     </div>

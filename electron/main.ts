@@ -10,6 +10,7 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { createRequire } from 'module';
+import vm from 'node:vm';
 import { fileStorage } from './fileStorage';
 import { gitService } from './gitService';
 import { k8sService } from './k8sService';
@@ -141,6 +142,12 @@ async function createWindow() {
         },
         titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
         icon: path.join(__dirname, '../public/logo.svg'),
+    });
+
+    gitService.setStateChangeListener((state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('git:sync-state', state);
+        }
     });
 
     // Listen for preload errors
@@ -865,6 +872,145 @@ ipcMain.handle('npm:list', async () => {
 });
 
 // JavaScript execution handler
+function formatJsRunnerArg(value: unknown): string {
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+        return String(value);
+    }
+    if (typeof value === 'symbol') return value.toString();
+    if (typeof value === 'function') return value.toString();
+    if (typeof value === 'object') {
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch {
+            try {
+                const nodeRequire = createRequire(import.meta.url);
+                const util = nodeRequire('util') as typeof import('util');
+                return util.inspect(value, { depth: 5, colors: false, breakLength: 120 });
+            } catch {
+                return Object.prototype.toString.call(value);
+            }
+        }
+    }
+    return String(value);
+}
+
+function createJsRunnerConsole(consoleOutput: string[]) {
+    const write = (prefix: string, args: unknown[]) => {
+        const line = args.map(formatJsRunnerArg).join(' ');
+        consoleOutput.push(prefix ? `${prefix}${line}` : line);
+    };
+
+    return {
+        log: (...args: unknown[]) => write('', args),
+        info: (...args: unknown[]) => write('INFO: ', args),
+        warn: (...args: unknown[]) => write('WARN: ', args),
+        error: (...args: unknown[]) => write('ERROR: ', args),
+        debug: (...args: unknown[]) => write('DEBUG: ', args),
+    };
+}
+
+function createJsRunnerSandboxPromise(
+    nativePromise: PromiseConstructor,
+    pending: Set<Promise<unknown>>,
+): PromiseConstructor {
+    let suppressTracking = false;
+
+    const track = <T>(promise: Promise<T>): Promise<T> => {
+        pending.add(promise as Promise<unknown>);
+        suppressTracking = true;
+        try {
+            nativePromise.prototype.then.call(
+                promise,
+                () => {
+                    pending.delete(promise as Promise<unknown>);
+                },
+                () => {
+                    pending.delete(promise as Promise<unknown>);
+                },
+            );
+        } finally {
+            suppressTracking = false;
+        }
+        return promise;
+    };
+
+    class TrackedPromise extends nativePromise<unknown> {
+        constructor(
+            executor: (
+                resolve: (value: unknown) => void,
+                reject: (reason?: unknown) => void,
+            ) => void,
+        ) {
+            super(executor);
+            if (!suppressTracking) {
+                track(this);
+            }
+        }
+    }
+
+    TrackedPromise.all = ((...args: Parameters<typeof nativePromise.all>) =>
+        track(nativePromise.all(...args))) as typeof Promise.all;
+    TrackedPromise.race = ((...args: Parameters<typeof nativePromise.race>) =>
+        track(nativePromise.race(...args))) as typeof Promise.race;
+    TrackedPromise.allSettled = ((...args: Parameters<typeof nativePromise.allSettled>) =>
+        track(nativePromise.allSettled(...args))) as typeof Promise.allSettled;
+    TrackedPromise.resolve = ((value?: unknown) =>
+        track(nativePromise.resolve(value))) as typeof Promise.resolve;
+    TrackedPromise.reject = ((reason?: unknown) =>
+        track(nativePromise.reject(reason))) as typeof Promise.reject;
+    const nativeAny = (nativePromise as PromiseConstructor & { any?: typeof Promise.all }).any;
+    if (typeof nativeAny === 'function') {
+        (TrackedPromise as PromiseConstructor & { any?: typeof Promise.all }).any = ((
+            ...args: Parameters<typeof nativeAny>
+        ) => track(nativeAny(...args))) as typeof Promise.all;
+    }
+
+    return TrackedPromise as typeof Promise;
+}
+
+async function waitForJsRunnerPendingPromises(
+    pending: Set<Promise<unknown>>,
+    deadlineAt: number,
+    nativePromise: PromiseConstructor,
+    timeoutMs: number,
+) {
+    if (pending.size === 0) {
+        return;
+    }
+
+    const remainingMs = () => Math.max(0, deadlineAt - Date.now());
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+        await nativePromise.race([
+            nativePromise.allSettled([...pending]),
+            new nativePromise<void>((_, reject) => {
+                const scheduleTimeout = () => {
+                    const ms = remainingMs();
+                    if (ms <= 0) {
+                        reject(
+                            new Error(
+                                `Execution timeout after ${timeoutMs}ms while waiting for async work to finish`,
+                            ),
+                        );
+                        return;
+                    }
+                    timeoutId = setTimeout(scheduleTimeout, Math.min(ms, 50));
+                };
+                scheduleTimeout();
+            }),
+        ]);
+    } finally {
+        if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+        }
+        pending.clear();
+    }
+}
+
 ipcMain.handle('jsRunner:execute', async (_event: any, code: string, timeoutMs: number = 5000) => {
     const startTime = Date.now();
     let output = '';
@@ -875,29 +1021,9 @@ ipcMain.handle('jsRunner:execute', async (_event: any, code: string, timeoutMs: 
         const userNodeModulesPath = path.join(userDataDir, 'node_modules');
 
         const consoleOutput: string[] = [];
+        const pendingPromises = new Set<Promise<unknown>>();
 
-        const customConsole = {
-            log: (...args: any[]) => {
-                consoleOutput.push(args.map(arg =>
-                    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-                ).join(' '));
-            },
-            error: (...args: any[]) => {
-                consoleOutput.push('ERROR: ' + args.map(arg =>
-                    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-                ).join(' '));
-            },
-            warn: (...args: any[]) => {
-                consoleOutput.push('WARN: ' + args.map(arg =>
-                    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-                ).join(' '));
-            },
-            info: (...args: any[]) => {
-                consoleOutput.push('INFO: ' + args.map(arg =>
-                    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-                ).join(' '));
-            },
-        };
+        const customConsole = createJsRunnerConsole(consoleOutput);
 
         // Create a require function for ES module context
         // Use a dummy file path in userData to create require relative to that directory
@@ -931,22 +1057,86 @@ ipcMain.handle('jsRunner:execute', async (_event: any, code: string, timeoutMs: 
             }
         };
 
-        const executePromise = new Promise<void>((resolve, reject) => {
-            try {
-                const executeCode = new Function('console', 'require', code);
-                executeCode(customConsole, customRequire);
-                resolve();
-            } catch (err) {
-                reject(err);
+        const previousConsole = global.console;
+        const previousStdoutWrite = process.stdout.write.bind(process.stdout);
+        const previousStderrWrite = process.stderr.write.bind(process.stderr);
+
+        const captureStreamWrite = (chunk: unknown) => {
+            const text =
+                typeof chunk === 'string'
+                    ? chunk
+                    : Buffer.isBuffer(chunk)
+                      ? chunk.toString('utf8')
+                      : String(chunk);
+            if (text.trim()) {
+                for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+                    if (line.trim()) {
+                        consoleOutput.push(line);
+                    }
+                }
             }
+            return true;
+        };
+
+        const sandbox: vm.Context = {
+            console: customConsole,
+            require: customRequire,
+            setTimeout,
+            clearTimeout,
+            setInterval,
+            clearInterval,
+            setImmediate,
+            clearImmediate,
+            Buffer,
+            process,
+            URL,
+            URLSearchParams,
+            TextEncoder,
+            TextDecoder,
+        };
+        sandbox.Promise = createJsRunnerSandboxPromise(Promise, pendingPromises);
+        sandbox.global = sandbox;
+
+        const wrappedCode = `"use strict";\n(async () => {\n${code}\n})();`;
+        const script = new vm.Script(wrappedCode, {
+            filename: path.join(userDataDir, 'js-runner.js'),
         });
+
+        const executePromise = (async () => {
+            global.console = customConsole as unknown as Console;
+            process.stdout.write = captureStreamWrite as typeof process.stdout.write;
+            process.stderr.write = captureStreamWrite as typeof process.stderr.write;
+
+            try {
+                const returnValue = await script.runInNewContext(sandbox, {
+                    timeout: timeoutMs,
+                });
+                if (returnValue !== undefined) {
+                    consoleOutput.push(formatJsRunnerArg(returnValue));
+                }
+
+                await waitForJsRunnerPendingPromises(
+                    pendingPromises,
+                    startTime + timeoutMs,
+                    Promise,
+                    timeoutMs,
+                );
+            } finally {
+                global.console = previousConsole;
+                process.stdout.write = previousStdoutWrite;
+                process.stderr.write = previousStderrWrite;
+            }
+        })();
 
         const timeoutPromise = new Promise<void>((_, reject) => {
             setTimeout(() => reject(new Error(`Execution timeout after ${timeoutMs}ms`)), timeoutMs);
         });
 
         await Promise.race([executePromise, timeoutPromise]);
-        output = consoleOutput.join('\n') || 'Code executed successfully (no output)';
+        output = consoleOutput.join('\n').trim();
+        if (!output && !error) {
+            output = 'Code executed successfully (no output)';
+        }
     } catch (err) {
         error = err instanceof Error ? err.message : String(err);
     }
@@ -1462,13 +1652,20 @@ ipcMain.handle('docker:listFiles', async (_event: any, containerId: string, path
 // Initialize K8s service on startup (will retry on first use if it fails)
 let k8sInitialized = false;
 
-function getKubectlContextArgs(): string[] {
-    try {
-        const context = k8sService.getCurrentContext();
-        return context ? ['--context', context] : [];
-    } catch {
-        return [];
+function getKubectlContextArgs(active?: { kubeconfigPath?: string; context?: string } | null): string[] {
+    const args: string[] = [];
+    if (active?.kubeconfigPath) {
+        args.push('--kubeconfig', active.kubeconfigPath);
     }
+    try {
+        const context = active?.context || k8sService.getCurrentContext();
+        if (context) {
+            args.push('--context', context);
+        }
+    } catch {
+        /* ignore */
+    }
+    return args;
 }
 
 async function activateK8sFromStore(clusterId?: string) {
@@ -1691,8 +1888,11 @@ ipcMain.handle('k8s:namespaces', async () => {
 ipcMain.handle('terminal:create', async (event, options) => {
     try {
         if (options?.kind === 'k8s') {
-            await activateK8sFromStore();
-            options.kubectlContextArgs = getKubectlContextArgs();
+            const active = await activateK8sFromStore();
+            options.kubectlContextArgs = getKubectlContextArgs(active);
+            if (active?.kubeconfigPath) {
+                options.kubeconfigPath = active.kubeconfigPath;
+            }
         }
         return terminalService.create(event.sender, options);
     } catch (error: any) {
@@ -1778,6 +1978,21 @@ ipcMain.handle('terminal:history:touchSession', async (_event, id: string) => {
         return { success: false, error: error.message || String(error) };
     }
 });
+
+ipcMain.handle(
+    'terminal:history:updateSession',
+    async (_event, id: string, patch: { title?: string }) => {
+        try {
+            const session = await terminalHistoryStore.updateSession(id, {
+                ...patch,
+                lastActiveAt: new Date().toISOString(),
+            });
+            return { success: true, session };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+);
 
 ipcMain.handle('terminal:history:closeSession', async (_event, id: string) => {
     try {
@@ -2506,6 +2721,22 @@ ipcMain.handle('git:getRepoPath', async () => {
     }
 });
 
+ipcMain.handle('git:pickRepoPath', async () => {
+    if (!mainWindow) {
+        return { success: false, error: 'No window' };
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openDirectory', 'createDirectory'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+    }
+
+    return { success: true, repoPath: result.filePaths[0] };
+});
+
 ipcMain.handle('git:setRepoPath', async (_event: any, repoPath: string) => {
     try {
         const result = await fileStorage.initialize(repoPath);
@@ -2541,9 +2772,30 @@ ipcMain.handle('git:sync', async (_event: any, filePaths?: string[], commitMessa
         if (!gitService.isInitialized()) {
             return { success: false, error: 'Git not initialized' };
         }
-        const paths = filePaths || [];
-        const result = await gitService.sync(paths, commitMessage);
-        return result;
+        if (!filePaths || filePaths.length === 0) {
+            return await gitService.syncAll(commitMessage);
+        }
+        return await gitService.sync(filePaths, commitMessage);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('git:getSyncState', async () => {
+    try {
+        const state = await gitService.getSyncState();
+        return { success: true, state };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('git:retryPendingSync', async () => {
+    try {
+        if (!gitService.isInitialized()) {
+            return { success: false, error: 'Git not initialized' };
+        }
+        return await gitService.retryPendingSync();
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }

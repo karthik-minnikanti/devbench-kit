@@ -10,6 +10,11 @@ export interface OpenToolOptions {
     addTask?: boolean;
 }
 
+export interface OpenDevShellEvent {
+    config: import('../components/TerminalView').TerminalSessionConfig;
+    tabId: string;
+}
+
 type EventCallback = (data?: any) => void;
 
 class AppEventEmitter {
@@ -67,6 +72,7 @@ export const appEvents = new AppEventEmitter();
 // Event names
 export const EVENTS = {
     OPEN_TOOL: 'open-tool',
+    OPEN_DEVSHELL: 'open-devshell',
     PENDING_ITEM_ID: 'pending-item-id',
     PENDING_PLANNER_DATE: 'pending-planner-date',
     PENDING_ADD_TASK: 'pending-add-task',

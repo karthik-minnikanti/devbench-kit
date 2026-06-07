@@ -3,8 +3,10 @@ import type { WebContents } from 'electron';
 import * as pty from 'node-pty';
 import {
     defaultLocalShell,
+    enhancedPath,
     localShellInvocation,
     remoteExecCommand,
+    resolveExecutable,
 } from './terminalShell';
 
 export type TerminalKind = 'local' | 'k8s' | 'docker';
@@ -20,6 +22,7 @@ export interface TerminalCreateOptions {
     cols?: number;
     rows?: number;
     kubectlContextArgs?: string[];
+    kubeconfigPath?: string;
 }
 
 interface TerminalSession {
@@ -37,7 +40,8 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
             const args = [
                 ...(options.kubectlContextArgs || []),
                 'exec',
-                '-it',
+                '-i',
+                '-t',
                 options.podName,
                 '-n',
                 options.namespace,
@@ -46,7 +50,7 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
                 args.push('-c', options.container);
             }
             args.push('--', remote.file, ...remote.args);
-            return { file: 'kubectl', args };
+            return { file: resolveExecutable('kubectl'), args };
         }
         case 'docker': {
             if (!options.containerId) {
@@ -54,8 +58,8 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
             }
             const remote = remoteExecCommand(options.shell);
             return {
-                file: 'docker',
-                args: ['exec', '-it', options.containerId, remote.file, ...remote.args],
+                file: resolveExecutable('docker'),
+                args: ['exec', '-i', '-t', options.containerId, remote.file, ...remote.args],
             };
         }
         case 'local':
@@ -67,12 +71,16 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
 function buildEnv(options: TerminalCreateOptions): Record<string, string> {
     const env = {
         ...process.env,
+        PATH: enhancedPath(),
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
     } as Record<string, string>;
 
+    if (options.kubeconfigPath) {
+        env.KUBECONFIG = options.kubeconfigPath;
+    }
+
     if (options.kind === 'local') {
-        env.TERM = 'xterm-256color';
         if (!env.LANG) {
             env.LANG = 'en_US.UTF-8';
         }
@@ -103,6 +111,7 @@ class TerminalService {
                 rows,
                 cwd,
                 env: buildEnv(options),
+                useConpty: process.platform === 'win32',
             });
 
             const sessionId = randomUUID();

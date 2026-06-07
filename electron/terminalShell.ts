@@ -1,17 +1,60 @@
 import path from 'path';
+import { execSync } from 'child_process';
 
-/** Pick the best interactive shell inside a container/pod. */
-export const REMOTE_INTERACTIVE_SHELL = [
-    'export TERM=xterm-256color',
+/**
+ * Bootstraps an interactive shell inside a pod/container.
+ * Uses `script` when available so kubectl/docker exec gets a real TTY on the remote side.
+ */
+export const REMOTE_SHELL_BOOTSTRAP = [
+    'export TERM=${TERM:-xterm-256color}',
     'export COLORTERM=truecolor',
     'export LANG=${LANG:-C.UTF-8}',
-    'for s in /bin/zsh /usr/bin/zsh /bin/bash /usr/bin/bash /bin/ash /bin/sh; do',
-    '  if [ -x "$s" ]; then',
-    '    exec "$s" -il 2>/dev/null || exec "$s" -i',
+    'if command -v script >/dev/null 2>&1; then',
+    '  if command -v bash >/dev/null 2>&1; then',
+    '    exec script -q -c "bash -il" /dev/null',
     '  fi',
-    'done',
-    'exec sh -i',
+    '  exec script -q -c "sh -i" /dev/null',
+    'fi',
+    'if command -v bash >/dev/null 2>&1; then',
+    '  exec bash -il',
+    'fi',
+    'exec sh -il 2>/dev/null || exec sh -i',
 ].join('\n');
+
+const PATH_PREFIXES = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    `${process.env.HOME || ''}/.local/bin`,
+].filter(Boolean);
+
+export function enhancedPath(): string {
+    const current = process.env.PATH || '';
+    const parts = [...PATH_PREFIXES, ...current.split(path.delimiter)];
+    return [...new Set(parts.filter(Boolean))].join(path.delimiter);
+}
+
+export function resolveExecutable(name: string): string {
+    if (path.isAbsolute(name)) {
+        return name;
+    }
+
+    try {
+        const resolved = execSync(`command -v ${name}`, {
+            encoding: 'utf8',
+            env: { ...process.env, PATH: enhancedPath() },
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        if (resolved) {
+            return resolved;
+        }
+    } catch {
+        /* fall through */
+    }
+
+    return name;
+}
 
 export function defaultLocalShell(): string {
     if (process.platform === 'win32') {
@@ -38,9 +81,27 @@ export function localShellInvocation(shellPath?: string): { file: string; args: 
     return { file, args: ['-i'] };
 }
 
+/** Remote exec argv after `--` for kubectl/docker (interactive shell). */
 export function remoteExecCommand(customShell?: string): { file: string; args: string[] } {
     if (customShell) {
-        return { file: customShell, args: ['-il'] };
+        const escaped = customShell.replace(/'/g, `'\\''`);
+        return {
+            file: 'env',
+            args: [
+                'TERM=xterm-256color',
+                'COLORTERM=truecolor',
+                'sh',
+                '-c',
+                `if [ -x '${escaped}' ]; then exec '${escaped}' -il 2>/dev/null || exec '${escaped}' -i; fi; ${REMOTE_SHELL_BOOTSTRAP}`,
+            ],
+        };
     }
-    return { file: 'sh', args: ['-c', REMOTE_INTERACTIVE_SHELL] };
+
+    return {
+        file: 'env',
+        args: ['TERM=xterm-256color', 'COLORTERM=truecolor', 'sh', '-c', REMOTE_SHELL_BOOTSTRAP],
+    };
 }
+
+/** @deprecated Use REMOTE_SHELL_BOOTSTRAP */
+export const REMOTE_INTERACTIVE_SHELL = REMOTE_SHELL_BOOTSTRAP;

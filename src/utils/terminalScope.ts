@@ -44,3 +44,85 @@ export function sessionConfigKey(session: TerminalSessionConfig): string {
         containerId: session.containerId ?? null,
     });
 }
+
+export function formatDevShellTabTitle(command: string, maxLength = 48): string {
+    const trimmed = command.trim().replace(/\s+/g, " ");
+    if (!trimmed) {
+        return "Shell";
+    }
+    if (trimmed.length <= maxLength) {
+        return trimmed;
+    }
+    return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+export interface TerminalSessionDetail {
+    label: string;
+    value: string;
+    copyValue?: string;
+}
+
+export function getTerminalSessionDetails(
+    config: TerminalSessionConfig,
+): TerminalSessionDetail[] {
+    switch (config.kind) {
+        case "local":
+            return [
+                {
+                    label: "Scope",
+                    value: getTerminalScope(config),
+                    copyValue: getTerminalScope(config),
+                },
+                ...(config.cwd
+                    ? [{ label: "Directory", value: config.cwd, copyValue: config.cwd }]
+                    : []),
+                ...(config.shell
+                    ? [{ label: "Shell", value: config.shell, copyValue: config.shell }]
+                    : []),
+            ];
+        case "k8s":
+            return [
+                {
+                    label: "Namespace",
+                    value: config.namespace || "default",
+                    copyValue: config.namespace || "default",
+                },
+                {
+                    label: "Pod",
+                    value: config.podName || "—",
+                    copyValue: config.podName,
+                },
+                ...(config.container
+                    ? [
+                          {
+                              label: "Container",
+                              value: config.container,
+                              copyValue: config.container,
+                          },
+                      ]
+                    : []),
+                {
+                    label: "Scope",
+                    value: getTerminalScope(config),
+                    copyValue: getTerminalScope(config),
+                },
+            ];
+        case "docker":
+            return [
+                {
+                    label: "Container ID",
+                    value: config.containerId
+                        ? `${config.containerId.slice(0, 12)}…`
+                        : "—",
+                    copyValue: config.containerId,
+                },
+                {
+                    label: "Scope",
+                    value: getTerminalScope(config),
+                    copyValue: getTerminalScope(config),
+                },
+            ];
+        default:
+            return [];
+    }
+}

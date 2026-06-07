@@ -1,4 +1,10 @@
 import { useState, useRef, useEffect } from "react";
+import { Icon } from "./Icon";
+import {
+  getNavCategories,
+  NAV_ALLOWED_TABS,
+  WORKFLOW_CATEGORIES,
+} from "../utils/toolCategories";
 
 export type TabType =
   | "home"
@@ -10,6 +16,7 @@ export type TabType =
   | "js-runner"
   | "docker"
   | "k8s"
+  | "devshell"
   | "terminal"
   | "notes"
   | "planner"
@@ -29,7 +36,7 @@ interface Tab {
 
 interface Category {
   label: string;
-  icon: string;
+  icon: keyof typeof import("./Icons").Icons;
   tabs: Tab[];
 }
 
@@ -115,60 +122,20 @@ export function CategorizedTabs({
   }, [openCategory]);
 
   // Allowed tabs visible in navigation
-  const ALLOWED_TABS: TabType[] = [
-    "home",
-    "api",
-    "planner",
-    "js-runner",
-    "notes",
-    "excalidraw",
-    "uml",
-    "k8s",
-  ];
+  const ALLOWED_TABS = NAV_ALLOWED_TABS;
 
-  const allCategories: Category[] = [
-    {
-      label: "Converters",
-      icon: "🔄",
-      tabs: tabs.filter((t) =>
-        ["schema", "json-xml", "json-diff", "encoder", "csv-yaml"].includes(
-          t.id,
-        ),
-      ),
-    },
-    {
-      label: "Tools",
-      icon: "🛠️",
-      tabs: tabs.filter((t) =>
-        ["api", "formatter", "regex", "js-runner"].includes(t.id),
-      ),
-    },
-    {
-      label: "DevOps",
-      icon: "⚙️",
-      tabs: tabs.filter((t) => ["docker", "k8s", "terminal"].includes(t.id)),
-    },
-    {
-      label: "Design",
-      icon: "🎨",
-      tabs: tabs.filter((t) =>
-        ["home", "notes", "planner", "excalidraw", "uml"].includes(t.id),
-      ),
-    },
-    {
-      label: "Account",
-      icon: "👤",
-      tabs: tabs.filter((t) => ["profile"].includes(t.id)),
-    },
-  ];
+  const workflowCategories = getNavCategories(ALLOWED_TABS);
+
+  const allCategories: Category[] = workflowCategories.map((category) => ({
+    label: category.label,
+    icon:
+      (WORKFLOW_CATEGORIES.find((entry) => entry.id === category.id)?.icon ??
+        "Code") as Category["icon"],
+    tabs: tabs.filter((t) => category.tabs.includes(t.id)),
+  }));
 
   // Filter categories to only show allowed tabs
-  const categories: Category[] = allCategories
-    .map((cat) => ({
-      ...cat,
-      tabs: cat.tabs.filter((t) => ALLOWED_TABS.includes(t.id)),
-    }))
-    .filter((cat) => cat.tabs.length > 0); // Only show categories that have allowed tabs
+  const categories: Category[] = allCategories.filter((cat) => cat.tabs.length > 0);
 
   const toggleCategory = (label: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -209,7 +176,7 @@ export function CategorizedTabs({
                   : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-muted)]"
               }`}
             >
-              <span className="text-[10px]">{category.icon}</span>
+              <Icon name={category.icon} className="w-3 h-3 flex-shrink-0" />
               <span className="text-[10px] font-medium whitespace-nowrap">
                 {category.label}
               </span>

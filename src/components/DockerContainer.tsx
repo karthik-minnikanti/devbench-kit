@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../utils/theme";
-import { TerminalView } from "./TerminalView";
-import { CONTAINER_SHELL } from "../utils/terminalTheme";
+import { openDevShell } from "../utils/devShell";
+import { Icon } from "./Icon";
 import { ToolToolbar, UnderlineTabs, ToolSidebar, ToolSidebarBody, toolSidebarItemClass } from "./ui/ToolChrome";
 import * as monaco from "monaco-editor";
 
@@ -54,7 +54,6 @@ export function DockerContainer() {
   const [containerDetailTab, setContainerDetailTab] = useState<
     "overview" | "logs" | "terminal" | "stats" | "files" | "inspect"
   >("overview");
-  const [terminalKey, setTerminalKey] = useState(0);
   const [images, setImages] = useState<any[]>([]);
   const [volumes, setVolumes] = useState<any[]>([]);
   const [networks, setNetworks] = useState<any[]>([]);
@@ -135,6 +134,14 @@ export function DockerContainer() {
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
+
+  useEffect(() => {
+    if (containerDetailTab !== "terminal" || !selectedContainer) return;
+    openDevShell({
+      kind: "docker",
+      containerId: selectedContainer,
+    });
+  }, [containerDetailTab, selectedContainer]);
 
   // Watch logs and auto-scroll (like tail -f)
   useEffect(() => {
@@ -1207,7 +1214,7 @@ export function DockerContainer() {
                               : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                           }`}
                         >
-                          Terminal
+                          DevShell
                         </button>
                         <button
                           onClick={() => {
@@ -1541,26 +1548,30 @@ export function DockerContainer() {
                   )}
 
                   {containerDetailTab === "terminal" && selectedContainer && (
-                    <div className="flex-1 min-h-0 flex flex-col">
-                      <div className="px-3 py-2 border-b border-[var(--color-border)] flex justify-end">
-                        <button
-                          onClick={() => setTerminalKey((key) => key + 1)}
-                          className="btn-secondary !h-7 !py-1 !px-2 !text-xs"
-                        >
-                          Reconnect
-                        </button>
+                    <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+                      <div className="w-10 h-10 rounded-full bg-[var(--color-muted)] flex items-center justify-center">
+                        <Icon name="Terminal" className="w-5 h-5 text-[var(--color-primary)]" />
                       </div>
-                      <div className="flex-1 min-h-0">
-                        <TerminalView
-                          key={`${selectedContainer}-${terminalKey}`}
-                          active
-                          session={{
+                      <div>
+                        <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                          Container shell opened in DevShell
+                        </p>
+                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1 max-w-sm">
+                          All shell sessions live in one Chrome-style tab bar under Developer Tools.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openDevShell({
                             kind: "docker",
                             containerId: selectedContainer,
-                            shell: CONTAINER_SHELL,
-                          }}
-                        />
-                      </div>
+                          })
+                        }
+                        className="btn-primary !h-8 !text-xs"
+                      >
+                        Focus DevShell
+                      </button>
                     </div>
                   )}
 

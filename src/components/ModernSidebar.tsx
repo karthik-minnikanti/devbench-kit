@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { TabType } from "./CategorizedTabs";
 import { Icon } from "./Icon";
+import {
+  getNavCategories,
+  NAV_ALLOWED_TABS,
+} from "../utils/toolCategories";
 
 interface ModernSidebarProps {
   activeTab: TabType;
@@ -15,67 +19,9 @@ interface ModernSidebarProps {
   onClose?: () => void;
 }
 
-const categoryIcons: Record<string, keyof typeof import("./Icons").Icons> = {
-  home: "Home",
-  converters: "Convert",
-  tools: "Code",
-  devops: "Container",
-  design: "Pen",
-  productivity: "FileText",
-  account: "User",
-};
+const categories = getNavCategories(NAV_ALLOWED_TABS);
 
-interface Category {
-  id: string;
-  label: string;
-  icon: string;
-  tabs: TabType[];
-}
-
-// Allowed tabs visible in navigation
-const ALLOWED_TABS: TabType[] = [
-  "home",
-  "api",
-  "planner",
-  "js-runner",
-  "notes",
-  "excalidraw",
-  "uml",
-  "k8s",
-];
-
-const allCategories: Category[] = [
-  { id: "home", label: "Home", icon: "Menu", tabs: ["home"] },
-  {
-    id: "tools",
-    label: "Developer Tools",
-    icon: "Code",
-    tabs: ["api", "formatter", "regex", "js-runner"],
-  },
-  {
-    id: "converters",
-    label: "Converters",
-    icon: "Convert",
-    tabs: ["schema", "json-xml", "json-diff", "encoder", "csv-yaml"],
-  },
-  {
-    id: "productivity",
-    label: "Productivity",
-    icon: "FileText",
-    tabs: ["notes", "planner"],
-  },
-  { id: "design", label: "Design", icon: "Pen", tabs: ["excalidraw", "uml"] },
-  { id: "devops", label: "DevOps", icon: "Container", tabs: ["docker", "k8s"] },
-  { id: "account", label: "Account", icon: "User", tabs: ["profile"] },
-];
-
-// Filter categories to only show allowed tabs
-const categories: Category[] = allCategories
-  .map((cat) => ({
-    ...cat,
-    tabs: cat.tabs.filter((tab) => ALLOWED_TABS.includes(tab)),
-  }))
-  .filter((cat) => cat.tabs.length > 0); // Only show categories that have allowed tabs
+type NavCategory = (typeof categories)[number];
 
 export function ModernSidebar({
   activeTab,
@@ -116,7 +62,7 @@ export function ModernSidebar({
     );
   });
 
-  const getTabsForCategory = (category: Category) => {
+  const getTabsForCategory = (category: NavCategory) => {
     return filteredTabs.filter((tab) => category.tabs.includes(tab.id));
   };
 
@@ -179,7 +125,7 @@ export function ModernSidebar({
                 <div className="flex items-center gap-2.5">
                   <span className="text-[var(--color-text-secondary)]">
                     <Icon
-                      name={categoryIcons[category.id] || "Menu"}
+                      name={category.icon}
                       className="w-3.5 h-3.5"
                     />
                   </span>

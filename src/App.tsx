@@ -33,7 +33,7 @@ const CsvYamlConverter = lazy(() => import('./components/CsvYamlConverter').then
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(m => ({ default: m.GlobalSearch })));
 const Profile = lazy(() => import('./components/Profile').then(m => ({ default: m.Profile })));
 const DailyPlanner = lazy(() => import('./components/DailyPlanner').then(m => ({ default: m.DailyPlanner })));
-const LocalTerminal = lazy(() => import('./components/LocalTerminal').then(m => ({ default: m.LocalTerminal })));
+const DevShell = lazy(() => import('./components/devshell/DevShell').then(m => ({ default: m.DevShell })));
 // Home is the default view, so import it directly (not lazy) to avoid loading delays
 import { Home } from './components/Home';
 
@@ -128,7 +128,7 @@ function App() {
     }, [config?.theme]);
 
     // Allowed tabs visible in navigation
-    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s', 'terminal'];
+    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s', 'devshell'];
 
     // Define all tabs array with icon components (keeping all code, but filtering for display)
     const allTabs = [
@@ -144,7 +144,8 @@ function App() {
         { id: 'js-runner' as TabType, label: 'JavaScript Runner', icon: 'Zap', description: 'Run JavaScript code' },
         { id: 'docker' as TabType, label: 'Docker', icon: 'Container', description: 'Manage Docker containers' },
         { id: 'k8s' as TabType, label: 'Kube Lens', icon: 'Kubernetes', description: 'Browse and manage Kubernetes clusters' },
-        { id: 'terminal' as TabType, label: 'Terminal', icon: 'Terminal', description: 'System shell with zsh and Oh My Zsh' },
+        { id: 'devshell' as TabType, label: 'DevShell', icon: 'Terminal', description: 'Chrome-style tabs for local, K8s, and Docker shells' },
+        { id: 'terminal' as TabType, label: 'DevShell', icon: 'Terminal', description: 'Chrome-style tabs for local, K8s, and Docker shells' },
         { id: 'notes' as TabType, label: 'Notes', icon: 'FileText', description: 'Take and organize notes' },
         { id: 'planner' as TabType, label: 'Daily Planner', icon: 'Calendar', description: 'Plan your day with tasks and notes' },
         { id: 'excalidraw' as TabType, label: 'Excalidraw', icon: 'Pen', description: 'Create diagrams' },
@@ -156,13 +157,14 @@ function App() {
     const tabs = allTabs.filter(tab => ALLOWED_TABS.includes(tab.id));
 
     const handleTabChange = useCallback((tabType: TabType) => {
-        setActiveTab(tabType);
+        setActiveTab(tabType === 'terminal' ? 'devshell' : tabType);
     }, []);
 
     // Set up event listeners for tool navigation
     useEffect(() => {
         const unsubscribeOpenTool = appEvents.on(EVENTS.OPEN_TOOL, ({ toolId, options }) => {
-            const toolType = toolId as TabType;
+            const normalizedToolId = toolId === 'terminal' ? 'devshell' : toolId;
+            const toolType = normalizedToolId as TabType;
             handleTabChange(toolType);
 
             if (options?.itemId) {
@@ -254,10 +256,11 @@ function App() {
                         <Kubernetes />
                     </Suspense>
                 );
+            case 'devshell':
             case 'terminal':
                 return (
                     <Suspense fallback={<ComponentLoader />}>
-                        <LocalTerminal />
+                        <DevShell />
                     </Suspense>
                 );
             case 'notes':

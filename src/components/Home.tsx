@@ -6,15 +6,10 @@ import { BrandWatermark } from "./BrandLogo";
 import { formatDateLocal } from "../utils/dateUtils";
 import { appEvents, EVENTS, openTool } from "../utils/appEvents";
 import { ToolToolbar, UnderlineTabs } from "./ui/ToolChrome";
-
-type ToolIcon = keyof typeof import("./Icons").Icons;
-
-type ToolTile = {
-  id: string;
-  label: string;
-  icon: ToolIcon;
-  description: string;
-};
+import {
+  HOME_TOOL_SECTIONS,
+  type HomeToolSectionId,
+} from "../utils/toolCategories";
 
 type ContinueItem = {
   id: string;
@@ -23,145 +18,8 @@ type ContinueItem = {
   timestamp: Date;
 };
 
-type ToolSectionId =
-  | "developer"
-  | "converters"
-  | "productivity"
-  | "design"
-  | "devops";
-
-const TOOL_SECTIONS: {
-  id: ToolSectionId;
-  title: string;
-  tools: ToolTile[];
-}[] = [
-  {
-    id: "developer",
-    title: "Developer tools",
-    tools: [
-      {
-        id: "api",
-        label: "API Studio",
-        icon: "Globe",
-        description: "REST client and collections",
-      },
-      {
-        id: "js-runner",
-        label: "JS Runner",
-        icon: "Zap",
-        description: "Run snippets with npm",
-      },
-      {
-        id: "formatter",
-        label: "Formatter",
-        icon: "Code",
-        description: "JSON, XML, and text",
-      },
-      {
-        id: "regex",
-        label: "Regex Tester",
-        icon: "Search",
-        description: "Match and debug patterns",
-      },
-    ],
-  },
-  {
-    id: "converters",
-    title: "Converters",
-    tools: [
-      {
-        id: "schema",
-        label: "Schema Generator",
-        icon: "Schema",
-        description: "Types from JSON samples",
-      },
-      {
-        id: "json-xml",
-        label: "JSON / XML",
-        icon: "Convert",
-        description: "Bidirectional conversion",
-      },
-      {
-        id: "json-diff",
-        label: "JSON Diff",
-        icon: "Diff",
-        description: "Side-by-side compare",
-      },
-      {
-        id: "encoder",
-        label: "Encoder",
-        icon: "Lock",
-        description: "Base64 and URL codecs",
-      },
-      {
-        id: "csv-yaml",
-        label: "CSV / YAML",
-        icon: "File",
-        description: "Tabular and config formats",
-      },
-    ],
-  },
-  {
-    id: "productivity",
-    title: "Productivity",
-    tools: [
-      {
-        id: "notes",
-        label: "Notes",
-        icon: "FileText",
-        description: "Rich docs and templates",
-      },
-      {
-        id: "planner",
-        label: "Daily Planner",
-        icon: "Calendar",
-        description: "Tasks, habits, reflection",
-      },
-    ],
-  },
-  {
-    id: "design",
-    title: "Design",
-    tools: [
-      {
-        id: "excalidraw",
-        label: "Excalidraw",
-        icon: "Pen",
-        description: "Whiteboard diagrams",
-      },
-      {
-        id: "uml",
-        label: "UML Editor",
-        icon: "Chart",
-        description: "PlantUML diagrams",
-      },
-    ],
-  },
-  {
-    id: "devops",
-    title: "DevOps",
-    tools: [
-      {
-        id: "k8s",
-        label: "Kube Lens",
-        icon: "Kubernetes",
-        description: "Pods, logs, cluster ops",
-      },
-      {
-        id: "docker",
-        label: "Docker",
-        icon: "Container",
-        description: "Containers and images",
-      },
-      {
-        id: "terminal",
-        label: "Terminal",
-        icon: "Terminal",
-        description: "Local shell session",
-      },
-    ],
-  },
-];
+const TOOL_SECTIONS = HOME_TOOL_SECTIONS;
+type ToolSectionId = HomeToolSectionId;
 
 function greetingForHour(hour: number): string {
   if (hour < 12) return "Good morning";
@@ -199,7 +57,7 @@ function PanelHeader({
 
 export function Home() {
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<ToolSectionId>("developer");
+  const [activeSection, setActiveSection] = useState<ToolSectionId>("ship");
   const [continueItems, setContinueItems] = useState<ContinueItem[]>([]);
   const [todayTasks, setTodayTasks] = useState<any[]>([]);
   const [stats, setStats] = useState({
@@ -465,7 +323,7 @@ export function Home() {
               <div>
                 <h2 className="title-sm">Open a tool</h2>
                 <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                  Browse by category or use the top navigation
+                  Browse by workflow — top navigation still lists every tool by name
                 </p>
               </div>
             </div>
@@ -486,18 +344,35 @@ export function Home() {
                   key={tool.id}
                   type="button"
                   onClick={() => openTool(tool.id)}
-                  className="card p-4 text-left transition-colors hover:border-[var(--color-border-strong)] group"
+                  className={`card p-4 text-left transition-colors hover:border-[var(--color-border-strong)] group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] ${
+                    tool.id === "devshell" ? "devshell-tool-tile--featured" : ""
+                  }`}
+                  aria-label={`Open ${tool.label}. ${tool.description}`}
                 >
                   <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-[var(--color-muted)] flex items-center justify-center shrink-0 group-hover:bg-[var(--color-primary)]/10 transition-colors">
+                    <div
+                      className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 transition-colors ${
+                        tool.id === "devshell"
+                          ? "bg-[var(--color-primary)]/15 group-hover:bg-[var(--color-primary)]/20"
+                          : "bg-[var(--color-muted)] group-hover:bg-[var(--color-primary)]/10"
+                      }`}
+                    >
                       <Icon
                         name={tool.icon}
-                        className="w-4 h-4 text-[var(--color-text-secondary)] group-hover:text-[var(--color-primary)]"
+                        className={`w-4 h-4 ${
+                          tool.id === "devshell"
+                            ? "text-[var(--color-primary)]"
+                            : "text-[var(--color-text-secondary)] group-hover:text-[var(--color-primary)]"
+                        }`}
+                        aria-hidden="true"
                       />
                     </div>
                     <div className="min-w-0 pt-0.5">
-                      <p className="text-sm font-semibold text-[var(--color-text-primary)] leading-snug">
+                      <p className="text-sm font-semibold text-[var(--color-text-primary)] leading-snug flex items-center gap-2">
                         {tool.label}
+                        {tool.id === "devshell" && (
+                          <span className="devshell-featured-badge">Featured</span>
+                        )}
                       </p>
                       <p className="text-xs text-[var(--color-text-tertiary)] mt-1 leading-relaxed">
                         {tool.description}

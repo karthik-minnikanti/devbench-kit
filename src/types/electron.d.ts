@@ -114,6 +114,10 @@ declare global {
                     error?: string;
                 }>;
                 touchSession: (id: string) => Promise<{ success: boolean; session?: any; error?: string }>;
+                updateSession: (
+                    id: string,
+                    patch: { title?: string },
+                ) => Promise<{ success: boolean; session?: any; error?: string }>;
                 closeSession: (id: string) => Promise<{ success: boolean; session?: any; error?: string }>;
                 removeSession: (id: string) => Promise<{ success: boolean; error?: string }>;
             };
@@ -247,13 +251,29 @@ declare global {
                 delete: (folderId: string) => Promise<any>;
             };
             git: {
-                getRepoPath: () => Promise<{ success: boolean; repoPath?: string; error?: string }>;
+                getRepoPath: () => Promise<any>;
+                pickRepoPath: () => Promise<{ success: boolean; repoPath?: string; canceled?: boolean; error?: string }>;
                 setRepoPath: (repoPath: string) => Promise<any>;
                 initRepo: (repoPath: string) => Promise<any>;
                 checkIfRepo: (repoPath: string) => Promise<any>;
                 sync: (filePaths?: string[], commitMessage?: string) => Promise<any>;
                 status: () => Promise<any>;
                 pull: () => Promise<any>;
+                getSyncState: () => Promise<{
+                    success: boolean;
+                    state?: {
+                        isRepo: boolean;
+                        isOnline: boolean;
+                        isSyncing: boolean;
+                        pendingFileCount: number;
+                        unpushedCommits: number;
+                        hasUncommittedChanges: boolean;
+                        lastError: string | null;
+                    };
+                    error?: string;
+                }>;
+                retryPendingSync: () => Promise<any>;
+                onSyncStateChange: (callback: (state: any) => void) => void;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;

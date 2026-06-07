@@ -102,11 +102,11 @@ export function TerminalHistoryPanel({
                 ) : (
                     <ul>
                         {sessions.map((session) => (
-                            <li key={session.id} className="group relative">
+                            <li key={session.id} className="flex items-stretch gap-0.5">
                                 <button
                                     type="button"
                                     onClick={() => onRestoreSession(session.id)}
-                                    className="tool-sidebar-item w-full text-left pr-8"
+                                    className="tool-sidebar-item flex-1 min-w-0 text-left"
                                 >
                                     <span className="block text-xs font-medium truncate">
                                         {session.title}
@@ -126,9 +126,14 @@ export function TerminalHistoryPanel({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => onRemoveSession(session.id)}
-                                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 opacity-0 group-hover:opacity-100 text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)]"
+                                    onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        onRemoveSession(session.id);
+                                    }}
+                                    className="shrink-0 self-center p-1.5 mr-1 rounded text-[var(--color-text-tertiary)] hover:text-[var(--color-semantic-error)] hover:bg-[var(--color-muted)]"
                                     title="Remove from history"
+                                    aria-label={`Remove ${session.title} from history`}
                                 >
                                     <Icon name="X" className="w-3 h-3" />
                                 </button>
