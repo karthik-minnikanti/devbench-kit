@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 import vm from 'node:vm';
 import { fileStorage } from './fileStorage';
 import { gitService } from './gitService';
+import { gitRepoStore } from './gitRepoStore';
 import { k8sService } from './k8sService';
 import { k8sClusterStore } from './k8sClusterStore';
 import { dockerService } from './dockerService';
@@ -309,6 +310,7 @@ if (isAutoUpdateEnabled()) {
 }
 
 app.whenReady().then(async () => {
+    await loadPersistedGitRepo();
     await createWindow();
 
     // Check for updates on startup (only in production)
@@ -334,6 +336,34 @@ app.on('window-all-closed', () => {
 
 function getUserDataPath(filename: string): string {
     return path.join(app.getPath('userData'), filename);
+}
+
+async function loadPersistedGitRepo(): Promise<void> {
+    const savedPath = await gitRepoStore.getRepoPath();
+    if (!savedPath) {
+        return;
+    }
+
+    try {
+        const stats = await fs.stat(savedPath);
+        if (!stats.isDirectory()) {
+            await gitRepoStore.clearRepoPath();
+            return;
+        }
+    } catch {
+        console.warn('[Git] Saved repository path no longer exists:', savedPath);
+        await gitRepoStore.clearRepoPath();
+        return;
+    }
+
+    const result = await fileStorage.initialize(savedPath);
+    if (!result.success) {
+        console.warn('[Git] Failed to restore saved repository:', result.error);
+    }
+}
+
+async function persistGitRepoPath(repoPath: string): Promise<void> {
+    await gitRepoStore.setRepoPath(repoPath);
 }
 
 // Window control handlers
@@ -2740,6 +2770,9 @@ ipcMain.handle('git:pickRepoPath', async () => {
 ipcMain.handle('git:setRepoPath', async (_event: any, repoPath: string) => {
     try {
         const result = await fileStorage.initialize(repoPath);
+        if (result.success) {
+            await persistGitRepoPath(repoPath);
+        }
         return result;
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
@@ -2750,7 +2783,12 @@ ipcMain.handle('git:initRepo', async (_event: any, repoPath: string) => {
     try {
         const result = await gitService.initialize(repoPath);
         if (result.success) {
-            await fileStorage.initialize(repoPath);
+            const storageResult = await fileStorage.initialize(repoPath);
+            if (storageResult.success) {
+                await persistGitRepoPath(repoPath);
+                return result;
+            }
+            return storageResult;
         }
         return result;
     } catch (error: any) {

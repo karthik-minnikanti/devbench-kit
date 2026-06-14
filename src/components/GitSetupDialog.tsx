@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface GitSetupDialogProps {
   isOpen: boolean;
@@ -16,7 +16,53 @@ export function GitSetupDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const electronAPI = window.electronAPI;
+        if (!electronAPI?.git) return;
+        const result = await electronAPI.git.getRepoPath();
+        if (!cancelled && result.success && result.repoPath) {
+          setRepoPath(result.repoPath);
+        }
+      } catch {
+        // Ignore preload failures; user can pick a folder manually.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleBrowse = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const electronAPI = window.electronAPI;
+      if (!electronAPI?.git.pickRepoPath) {
+        setError("Folder picker is only available in the desktop app.");
+        return;
+      }
+
+      const result = await electronAPI.git.pickRepoPath();
+      if (result.canceled) return;
+      if (result.success && result.repoPath) {
+        setRepoPath(result.repoPath);
+      } else {
+        setError(result.error || "Failed to pick folder");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to pick folder");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +75,7 @@ export function GitSetupDialog({
     setError(null);
 
     try {
-      const electronAPI = (window as any).electronAPI;
+      const electronAPI = window.electronAPI;
       if (!electronAPI) {
         setError("Electron API not available");
         setLoading(false);
@@ -37,7 +83,6 @@ export function GitSetupDialog({
       }
 
       if (initNewRepo) {
-        // Initialize new repository
         const result = await electronAPI.git.initRepo(repoPath.trim());
         if (result.success) {
           onComplete();
@@ -45,7 +90,6 @@ export function GitSetupDialog({
           setError(result.error || "Failed to initialize repository");
         }
       } else {
-        // Use existing repository
         const checkResult = await electronAPI.git.checkIfRepo(repoPath.trim());
         if (!checkResult.success || !checkResult.isRepo) {
           setError("Path is not a Git repository");
@@ -60,8 +104,8 @@ export function GitSetupDialog({
           setError(result.error || "Failed to set repository path");
         }
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }
@@ -80,14 +124,24 @@ export function GitSetupDialog({
               <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-2">
                 Repository Path
               </label>
-              <input
-                type="text"
-                value={repoPath}
-                onChange={(e) => setRepoPath(e.target.value)}
-                placeholder="/path/to/git/repo"
-                className="w-full px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-                disabled={loading}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={repoPath}
+                  onChange={(e) => setRepoPath(e.target.value)}
+                  placeholder="/path/to/git/repo"
+                  className="flex-1 px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                  disabled={loading}
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleBrowse()}
+                  disabled={loading}
+                  className="px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-muted)] text-[var(--color-text-primary)] text-sm hover:opacity-90 disabled:opacity-50"
+                >
+                  Browse
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2">
