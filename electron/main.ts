@@ -2693,7 +2693,7 @@ ipcMain.handle('notes:load', async (_event: any, noteId: string) => {
             return { success: true, note: null };
         }
         const notes = await fileStorage.getNotes();
-        const note = notes.find((n: any) => n.id === noteId);
+        const note = notes.find((n: any) => String(n.id || n._id || '') === String(noteId));
         return { success: true, note: note || null };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };

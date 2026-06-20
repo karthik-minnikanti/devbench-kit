@@ -32,6 +32,9 @@ import {
 import { getThemeForTemplate } from "../utils/blockNoteThemes";
 import { useStore } from "../state/store";
 
+// Survives React Strict Mode remounts — only one note create at a time app-wide
+let noteCreateMutex = false;
+
 interface Note {
   id: string;
   title: string;
@@ -66,6 +69,7 @@ export function Notes({
   const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [currentTemplateId, setCurrentTemplateId] = useState<string>("blank");
   const appTheme = useStore((state) => state.config?.theme ?? "light");
 
@@ -79,7 +83,22 @@ export function Notes({
   const creatingNoteRef = useRef<boolean>(false);
   const lastLoadedNoteIdRef = useRef<string | null>(null);
   const notesLoadedRef = useRef(false);
+  const loadNotesRequestRef = useRef(0);
+  const loadContentRequestRef = useRef(0);
+  const handleCreateNoteRef = useRef<
+    (templateId?: string) => Promise<void>
+  >(() => Promise.resolve());
+  const selectedNoteRef = useRef<string | null>(null);
+  const noteTitleRef = useRef("");
   const sidebarDefaultsApplied = useRef(false);
+
+  useEffect(() => {
+    selectedNoteRef.current = selectedNote;
+  }, [selectedNote]);
+
+  useEffect(() => {
+    noteTitleRef.current = noteTitle;
+  }, [noteTitle]);
 
   useEffect(() => {
     loadNotes();
@@ -106,9 +125,55 @@ export function Notes({
     return String(note.id || note._id || "");
   };
 
+  const dedupeNotesById = useCallback((notesList: Note[]): Note[] => {
+    const byId = new Map<string, Note>();
+    for (const note of notesList) {
+      const id = normalizeNoteId(note);
+      if (!id) continue;
+      const existing = byId.get(id);
+      if (
+        !existing ||
+        new Date(note.updatedAt || 0).getTime() >=
+          new Date(existing.updatedAt || 0).getTime()
+      ) {
+        byId.set(id, { ...note, id });
+      }
+    }
+    return Array.from(byId.values());
+  }, []);
+
+  const applyLoadedNotes = useCallback(
+    (loadedNotes: Note[]): Note[] => {
+      const activeNoteId = selectedNoteRef.current;
+      const activeTitle = noteTitleRef.current?.trim() ?? "";
+
+      let merged = dedupeNotesById(loadedNotes);
+      if (activeNoteId && activeTitle) {
+        merged = merged.map((note) =>
+          note.id === activeNoteId && activeTitle !== note.title
+            ? { ...note, title: activeTitle }
+            : note,
+        );
+      }
+      return merged;
+    },
+    [dedupeNotesById],
+  );
+
   const loadNotes = async () => {
+    if (creatingNoteRef.current || noteCreateMutex) return;
+
+    const requestId = ++loadNotesRequestRef.current;
     try {
       const loadedNotes = await getNotes();
+      if (
+        requestId !== loadNotesRequestRef.current ||
+        creatingNoteRef.current ||
+        noteCreateMutex
+      ) {
+        return;
+      }
+
       const transformedNotes = loadedNotes
         .map((note) => ({
           ...note,
@@ -116,41 +181,18 @@ export function Notes({
           folderId: note.folderId ?? null,
           createdAt: note.createdAt || new Date().toISOString(),
           updatedAt: note.updatedAt || new Date().toISOString(),
-          // Preserve title - never overwrite with empty or undefined
           title: note.title || "Untitled Note",
         }))
         .filter((note) => note.id);
 
-      // Merge with existing notes to preserve titles that might be in the process of being edited
-      setNotes((prev) => {
-        const merged = transformedNotes.map((loadedNote) => {
-          // Find existing note with same ID
-          const existingNote = prev.find((n) => n.id === loadedNote.id);
-          // If note exists and has a title, preserve it (user might be editing)
-          // Only use loaded title if existing note doesn't have a title or is empty
-          if (
-            existingNote &&
-            existingNote.title &&
-            existingNote.title.trim() !== "" &&
-            existingNote.title !== "Untitled Note"
-          ) {
-            return { ...loadedNote, title: existingNote.title };
-          }
-          return loadedNote;
-        });
-
-        // Add any new notes that don't exist in previous state
-        const newNotes = transformedNotes.filter(
-          (loadedNote) => !prev.find((n) => n.id === loadedNote.id),
-        );
-
-        return [...merged, ...newNotes];
+      let mergedNotes: Note[] = [];
+      setNotes(() => {
+        mergedNotes = applyLoadedNotes(transformedNotes);
+        return mergedNotes;
       });
+      setDateGroups(groupByDate(mergedNotes));
 
-      setDateGroups(groupByDate(transformedNotes));
-
-      // Update last synced state
-      transformedNotes.forEach((note) => {
+      mergedNotes.forEach((note) => {
         if (note.content) {
           lastSyncedStateRef.current.set(note.id, {
             title: note.title || "Untitled Note",
@@ -162,7 +204,9 @@ export function Notes({
     } catch (err) {
       console.error("Failed to load notes:", err);
     } finally {
-      notesLoadedRef.current = true;
+      if (requestId === loadNotesRequestRef.current) {
+        notesLoadedRef.current = true;
+      }
     }
   };
 
@@ -357,13 +401,20 @@ export function Notes({
   useEffect(() => {
     if (!editor || !selectedNote) return;
 
+    const requestId = ++loadContentRequestRef.current;
+    const noteIdToLoad = selectedNote;
+
     const loadNoteContent = async () => {
       try {
+        if (requestId !== loadContentRequestRef.current) return;
+
         // Fetch fresh note data from file system
         const allNotes = await getNotes();
+        if (requestId !== loadContentRequestRef.current) return;
+
         const note = allNotes.find((n) => {
           const noteId = String(n.id || (n as any)._id || "");
-          return noteId === selectedNote;
+          return noteId === noteIdToLoad;
         });
 
         // Determine template ID from note title or content
@@ -381,25 +432,6 @@ export function Notes({
         }
 
         if (!note) {
-          // Note not found, clear editor
-          try {
-            isSavingRef.current = true;
-            editor.replaceBlocks(editor.document, [
-              {
-                type: "paragraph",
-                content: [
-                  { type: "text", text: "Start typing...", styles: {} },
-                ],
-              },
-            ]);
-            lastLoadedNoteIdRef.current = selectedNote;
-            setTimeout(() => {
-              isSavingRef.current = false;
-            }, 100);
-          } catch (error) {
-            console.error("Error clearing editor:", error);
-            isSavingRef.current = false;
-          }
           return;
         }
 
@@ -423,6 +455,8 @@ export function Notes({
 
         // Only update if content is actually different
         if (currentStr !== newStr) {
+          if (requestId !== loadContentRequestRef.current) return;
+
           // Mark as saving to prevent onChange from firing during load
           isSavingRef.current = true;
           editor.replaceBlocks(
@@ -431,7 +465,7 @@ export function Notes({
           );
 
           // Update last synced state with fresh content
-          lastSyncedStateRef.current.set(selectedNote, {
+          lastSyncedStateRef.current.set(noteIdToLoad, {
             title: note.title,
             content: JSON.parse(JSON.stringify(noteContent)),
             folderId: note.folderId ?? null,
@@ -441,7 +475,7 @@ export function Notes({
           // But preserve the current title if it's different (user might be renaming)
           setNotes((prev) =>
             prev.map((n) => {
-              if (n.id === selectedNote) {
+              if (String(n.id) === noteIdToLoad) {
                 const currentTitle = noteTitle || n.title;
                 // Use the title from file, but if user is typing something different, preserve it
                 // Also preserve if existing title is not empty and not "Untitled Note"
@@ -480,15 +514,19 @@ export function Notes({
             return note.title;
           });
 
-          lastLoadedNoteIdRef.current = selectedNote;
+          lastLoadedNoteIdRef.current = noteIdToLoad;
 
           // Clear saving flag after a brief delay
           setTimeout(() => {
-            isSavingRef.current = false;
+            if (requestId === loadContentRequestRef.current) {
+              isSavingRef.current = false;
+            }
           }, 100);
         } else {
           // Content is same, just update metadata
-          lastLoadedNoteIdRef.current = selectedNote;
+          if (requestId !== loadContentRequestRef.current) return;
+
+          lastLoadedNoteIdRef.current = noteIdToLoad;
           // Update title to match the loaded note, but preserve if user is typing
           setNoteTitle((prevTitle) => {
             if (prevTitle && prevTitle !== note.title) {
@@ -501,7 +539,7 @@ export function Notes({
           // Update notes state with fresh title from file
           setNotes((prev) =>
             prev.map((n) => {
-              if (n.id === selectedNote) {
+              if (String(n.id) === noteIdToLoad) {
                 // Only update title if it matches what we're loading (don't overwrite user's typing)
                 // Preserve existing title if it's not empty and not "Untitled Note"
                 const titleToUse =
@@ -527,6 +565,9 @@ export function Notes({
     };
 
     loadNoteContent();
+    return () => {
+      loadContentRequestRef.current += 1;
+    };
   }, [selectedNote, editor]); // Only depends on selectedNote, NOT notes
 
   // Auto-save on editor changes
@@ -535,7 +576,14 @@ export function Notes({
 
     const handleChange = () => {
       // Don't save if we're currently loading content or saving
-      if (isSavingRef.current || !selectedNote) return;
+      if (
+        isSavingRef.current ||
+        !selectedNote ||
+        creatingNoteRef.current ||
+        noteCreateMutex
+      ) {
+        return;
+      }
 
       // Don't save if this note isn't loaded yet
       if (lastLoadedNoteIdRef.current !== selectedNote) return;
@@ -555,9 +603,10 @@ export function Notes({
       }, 500);
     };
 
-    editor.onChange(handleChange);
+    const unsubscribe = editor.onChange(handleChange);
 
     return () => {
+      unsubscribe();
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
@@ -565,9 +614,17 @@ export function Notes({
   }, [editor, selectedNote]);
 
   const saveCurrentNote = useCallback(async () => {
-    if (!selectedNote || !editorRef.current || isSavingRef.current) return;
+    if (
+      !selectedNote ||
+      !editorRef.current ||
+      isSavingRef.current ||
+      creatingNoteRef.current ||
+      noteCreateMutex
+    ) {
+      return;
+    }
 
-    const note = notes.find((n) => n.id === selectedNote);
+    const note = notes.find((n) => String(n.id) === String(selectedNote));
     if (!note) return;
 
     const currentContent = editorRef.current.document;
@@ -677,14 +734,19 @@ export function Notes({
 
   const handleCreateNote = useCallback(
     async (templateId?: string) => {
-      if (loading || creatingNoteRef.current) return; // Prevent duplicate creation
+      if (noteCreateMutex || creatingNoteRef.current) return;
 
+      noteCreateMutex = true;
       creatingNoteRef.current = true;
+      setIsCreatingNote(true);
       setLoading(true);
       setShowTemplateModal(false);
+      loadNotesRequestRef.current += 1;
+      loadContentRequestRef.current += 1;
+
+      const uniqueId = generateUUID();
 
       try {
-        const uniqueId = generateUUID();
         const templateIdToUse = templateId || "blank";
         const template = noteTemplates.find((t) => t.id === templateIdToUse);
         const templateContent = template
@@ -692,8 +754,6 @@ export function Notes({
           : [{ type: "paragraph", content: "" }];
         const templateTitle =
           template && template.id !== "blank" ? template.name : "Untitled";
-
-        setCurrentTemplateId(templateIdToUse);
 
         const newNote = await saveNote({
           id: uniqueId,
@@ -705,27 +765,25 @@ export function Notes({
         if (newNote) {
           const noteId = String(newNote.id || (newNote as any)._id || uniqueId);
 
-          // Add to state immediately
-          setNotes((prev) => {
-            // Check if already exists to prevent duplicates
-            if (prev.find((n) => n.id === noteId)) {
-              return prev;
-            }
-            return [
-              ...prev,
-              {
-                id: noteId,
-                title: newNote.title,
-                content: newNote.content || templateContent,
-                folderId: null,
-                createdAt: newNote.createdAt || new Date().toISOString(),
-                updatedAt: newNote.updatedAt || new Date().toISOString(),
-              },
-            ];
-          });
+          setCurrentTemplateId(templateIdToUse);
 
-          setSelectedNote(noteId);
-          setNoteTitle(newNote.title);
+          const createdNote: Note = {
+            id: noteId,
+            title: newNote.title,
+            content: newNote.content || templateContent,
+            folderId: null,
+            createdAt: newNote.createdAt || new Date().toISOString(),
+            updatedAt: newNote.updatedAt || new Date().toISOString(),
+          };
+
+          setNotes((prev) => {
+            const deduped = dedupeNotesById([
+              ...prev.filter((n) => String(n.id) !== noteId),
+              createdNote,
+            ]);
+            setDateGroups(groupByDate(deduped));
+            return deduped;
+          });
 
           lastSyncedStateRef.current.set(noteId, {
             title: newNote.title,
@@ -733,35 +791,50 @@ export function Notes({
             folderId: null,
           });
 
-          // Reload to get fresh data
-          await loadNotes();
+          lastLoadedNoteIdRef.current = null;
+          setNoteTitle(newNote.title);
+          setSelectedNote(noteId);
         }
       } catch (err) {
         console.error("Failed to create note:", err);
       } finally {
         setLoading(false);
-        creatingNoteRef.current = false;
+        setIsCreatingNote(false);
+        window.setTimeout(() => {
+          loadNotesRequestRef.current += 1;
+          noteCreateMutex = false;
+          creatingNoteRef.current = false;
+        }, 400);
       }
     },
-    [loading, generateUUID],
+    [generateUUID, dedupeNotesById],
   );
+
+  handleCreateNoteRef.current = handleCreateNote;
 
   const handleDeleteNote = useCallback(
     async (noteId: string) => {
+      const normalizedId = String(noteId || "");
+      if (!normalizedId) return;
       if (!confirm("Delete this note?")) return;
 
       try {
-        const success = await deleteNote(noteId);
+        const success = await deleteNote(normalizedId);
         if (success) {
-          setNotes((prev) => prev.filter((n) => n.id !== noteId));
-          lastSyncedStateRef.current.delete(noteId);
+          setNotes((prev) => {
+            const updated = prev.filter(
+              (n) => String(n.id) !== normalizedId,
+            );
+            setDateGroups(groupByDate(updated));
+            return updated;
+          });
+          lastSyncedStateRef.current.delete(normalizedId);
 
-          if (selectedNote === noteId) {
+          if (String(selectedNote || "") === normalizedId) {
             setSelectedNote(null);
             setNoteTitle("");
+            lastLoadedNoteIdRef.current = null;
           }
-
-          await loadNotes();
         }
       } catch (err) {
         console.error("Failed to delete note:", err);
@@ -862,16 +935,12 @@ export function Notes({
       setNoteTitle(newTitle);
 
       // Update sidebar immediately (optimistic update)
-      // Force re-render by creating new array and objects
       setNotes((prev) => {
         const updated = prev.map((n) =>
-          n.id === currentNoteId
-            ? { ...n, title: newTitle } // New object reference
-            : n,
+          n.id === currentNoteId ? { ...n, title: newTitle } : n,
         );
-        // Update date groups to reflect the change
         setDateGroups(groupByDate(updated));
-        return [...updated]; // New array reference to force re-render
+        return updated;
       });
 
       // Clear any pending save
@@ -930,9 +999,8 @@ export function Notes({
               folderId: note.folderId ?? null,
             });
 
-            // Update the note in the list with server response (in case it changed)
-            setNotes((prev) =>
-              prev.map((n) =>
+            setNotes((prev) => {
+              const updated = prev.map((n) =>
                 n.id === currentNoteId
                   ? {
                       ...n,
@@ -941,8 +1009,10 @@ export function Notes({
                         updatedNote.updatedAt || new Date().toISOString(),
                     }
                   : n,
-              ),
-            );
+              );
+              setDateGroups(groupByDate(updated));
+              return updated;
+            });
           } else {
             console.error("Failed to save title: updatedNote is null");
           }
@@ -962,8 +1032,8 @@ export function Notes({
       // Cmd/Ctrl + N: New note
       if ((e.metaKey || e.ctrlKey) && e.key === "n" && !e.shiftKey) {
         e.preventDefault();
-        if (!loading && !creatingNoteRef.current) {
-          handleCreateNote();
+        if (!noteCreateMutex && !creatingNoteRef.current) {
+          void handleCreateNoteRef.current("blank");
         }
       }
       // Cmd/Ctrl + E: Export PDF
@@ -982,7 +1052,7 @@ export function Notes({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [loading, selectedNote, handleCreateNote, handleExportPDF]);
+  }, [selectedNote, handleExportPDF]);
 
   return (
     <div className="h-full w-full flex flex-col bg-[var(--color-background)] overflow-hidden">
@@ -992,13 +1062,26 @@ export function Notes({
             <ToolSidebarHeader
               title="Notes"
               actions={
-                <button
-                  onClick={() => setShowTemplateModal(true)}
-                  disabled={loading}
-                  className="px-2 py-0.5 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-muted)] rounded transition-colors disabled:opacity-50"
-                >
-                  New
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void handleCreateNote("blank")}
+                    disabled={loading || isCreatingNote}
+                    className="px-2 py-0.5 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-muted)] rounded transition-colors disabled:opacity-50"
+                  >
+                    New
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateModal(true)}
+                    disabled={loading || isCreatingNote}
+                    className="p-1 rounded text-[var(--color-text-tertiary)] hover:bg-[var(--color-muted)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50"
+                    title="Browse templates"
+                  >
+                    <Icon name="BookOpen" size={14} />
+                  </button>
+                </div>
               }
             />
             <ToolSidebarBody
@@ -1105,7 +1188,7 @@ export function Notes({
                                 }
                                 isDragged={draggedNoteId === note.id}
                                 onSelect={() => handleSelectNote(note.id)}
-                                onDelete={() => handleDeleteNote(note.id)}
+                                onDelete={handleDeleteNote}
                                 onDragStart={(e) => handleDragStart(e, note.id)}
                                 onDragEnd={() => setDraggedNoteId(null)}
                               />
@@ -1146,7 +1229,7 @@ export function Notes({
                               }
                               isDragged={draggedNoteId === note.id}
                               onSelect={() => handleSelectNote(note.id)}
-                              onDelete={() => handleDeleteNote(note.id)}
+                              onDelete={handleDeleteNote}
                               onDragStart={(e) => handleDragStart(e, note.id)}
                               onDragEnd={() => setDraggedNoteId(null)}
                             />
@@ -1262,15 +1345,24 @@ export function Notes({
  background: var(--color-card) !important;
  border: 1px solid var(--color-border) !important;
  border-radius: 6px !important;
- box-shadow: none !important;
- padding: 3px !important;
+ min-width: 240px !important;
+ z-index: 80 !important;
  }
- .notes-editor-container .bn-suggestion-menu-item {
- border-radius: 4px !important;
- padding: 6px 10px !important;
- margin: 1px 0 !important;
+ .notes-editor-container .bn-suggestion-menu p {
+ margin: 0 !important;
+ padding: 0 !important;
  }
- .notes-editor-container h1 {
+ .notes-editor-container .bn-suggestion-menu .bn-mt-suggestion-menu-item-title {
+ font-size: 14px !important;
+ line-height: 20px !important;
+ font-weight: 500 !important;
+ }
+ .notes-editor-container .bn-suggestion-menu .bn-mt-suggestion-menu-item-subtitle {
+ font-size: 10px !important;
+ line-height: 16px !important;
+ color: var(--color-text-secondary) !important;
+ }
+ .notes-editor-container .bn-editor h1 {
  font-size: 2rem !important;
  font-weight: 600 !important;
  margin-top: 1.5rem !important;
@@ -1278,7 +1370,7 @@ export function Notes({
  line-height: 1.2 !important;
  letter-spacing: -0.02em !important;
  }
- .notes-editor-container h2 {
+ .notes-editor-container .bn-editor h2 {
  font-size: 1.375rem !important;
  font-weight: 600 !important;
  margin-top: 1.25rem !important;
@@ -1286,46 +1378,46 @@ export function Notes({
  line-height: 1.3 !important;
  letter-spacing: -0.01em !important;
  }
- .notes-editor-container h3 {
+ .notes-editor-container .bn-editor h3 {
  font-size: 1.125rem !important;
  font-weight: 600 !important;
  margin-top: 1rem !important;
  margin-bottom: 0.375rem !important;
  line-height: 1.4 !important;
  }
- .notes-editor-container p {
+ .notes-editor-container .bn-editor p {
  margin: 0.375rem 0 !important;
  padding: 0 !important;
  }
- .notes-editor-container ul, .notes-editor-container ol {
+ .notes-editor-container .bn-editor ul, .notes-editor-container .bn-editor ol {
  margin: 0.5rem 0 !important;
  padding-left: 1.25rem !important;
  }
- .notes-editor-container li {
+ .notes-editor-container .bn-editor li {
  margin: 0.125rem 0 !important;
  padding: 0 !important;
  }
- .notes-editor-container blockquote {
+ .notes-editor-container .bn-editor blockquote {
  border-left: 2px solid var(--color-border) !important;
  padding-left: 0.75rem !important;
  margin: 0.75rem 0 !important;
  color: var(--color-text-secondary) !important;
  }
- .notes-editor-container code {
+ .notes-editor-container .bn-editor code {
  background: var(--color-muted) !important;
  padding: 2px 5px !important;
  border-radius: 3px !important;
  font-size: 0.875em !important;
  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace !important;
  }
- .notes-editor-container pre {
+ .notes-editor-container .bn-editor pre {
  background: var(--color-muted) !important;
  padding: 0.75rem !important;
  border-radius: 6px !important;
  margin: 0.75rem 0 !important;
  overflow-x: auto !important;
  }
- .notes-editor-container pre code {
+ .notes-editor-container .bn-editor pre code {
  background: transparent !important;
  padding: 0 !important;
  }
@@ -1375,11 +1467,13 @@ export function Notes({
                       them with folders and find them easily later.
                     </p>
                     <button
-                      onClick={() => setShowTemplateModal(true)}
-                      disabled={loading}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => void handleCreateNote("blank")}
+                      disabled={loading || isCreatingNote}
                       className="px-5 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-all duration-200 disabled:opacity-50 active:scale-95"
                     >
-                      {loading ? "Creating..." : "+ Create New Note"}
+                      {isCreatingNote ? "Creating..." : "+ Create New Note"}
                     </button>
                   </>
                 ) : (
@@ -1455,8 +1549,10 @@ export function Notes({
                       {templates.map((template) => (
                         <button
                           key={template.id}
-                          onClick={() => handleCreateNote(template.id)}
-                          disabled={loading}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => void handleCreateNote(template.id)}
+                          disabled={loading || isCreatingNote}
                           className="group p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-card)] transition-all duration-150 text-left disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <div className="flex items-start gap-2.5">

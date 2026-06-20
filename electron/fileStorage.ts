@@ -204,10 +204,77 @@ class FileStorageService {
         }
     }
 
+    private normalizeFolderId(folderId: string | null | undefined): string | null {
+        return folderId ?? null;
+    }
+
+    private normalizeNoteId(note: { id?: string; _id?: string }): string {
+        return String(note.id || note._id || '');
+    }
+
+    private async findNoteFilePaths(noteId: string): Promise<string[]> {
+        const notesDir = path.join(this.config!.repoPath, 'notes');
+        const paths: string[] = [];
+
+        const walk = async (dirPath: string): Promise<void> => {
+            try {
+                const entries = await fs.readdir(dirPath, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(dirPath, entry.name);
+                    if (entry.isDirectory()) {
+                        await walk(fullPath);
+                    } else if (entry.isFile() && entry.name === `${noteId}.json`) {
+                        paths.push(fullPath);
+                    }
+                }
+            } catch {
+                /* directory may not exist */
+            }
+        };
+
+        await walk(notesDir);
+        return paths;
+    }
+
+    private async deleteNoteFilesExcept(noteId: string, keepPath: string): Promise<void> {
+        const keepResolved = path.resolve(keepPath);
+        const paths = await this.findNoteFilePaths(noteId);
+        for (const filePath of paths) {
+            if (path.resolve(filePath) === keepResolved) continue;
+            try {
+                await fs.unlink(filePath);
+                await this.triggerSync(filePath, 'note');
+            } catch {
+                /* ignore missing files */
+            }
+        }
+    }
+
     // Notes
     async getNotes(): Promise<any[]> {
         const notesDir = path.join(this.config!.repoPath, 'notes');
-        return this.readFilesRecursively(notesDir);
+        const allNotes = await this.readFilesRecursively(notesDir);
+        const byId = new Map<string, any>();
+
+        for (const note of allNotes) {
+            const id = this.normalizeNoteId(note);
+            if (!id) continue;
+
+            const normalized = { ...note, id };
+            const existing = byId.get(id);
+            if (!existing) {
+                byId.set(id, normalized);
+                continue;
+            }
+
+            const existingUpdated = new Date(existing.updatedAt || 0).getTime();
+            const noteUpdated = new Date(normalized.updatedAt || 0).getTime();
+            if (noteUpdated >= existingUpdated) {
+                byId.set(id, normalized);
+            }
+        }
+
+        return Array.from(byId.values());
     }
 
     async saveNote(note: any): Promise<{ success: boolean; note?: any; error?: string }> {
@@ -216,19 +283,26 @@ class FileStorageService {
                 // Generate a UUID v4 for note ID
                 note.id = this.generateUUID();
             }
+
+            note.folderId = this.normalizeFolderId(note.folderId);
             
             // Check if note exists and has a different folderId (need to move file)
             const existingNote = await this.getNote(note.id);
-            if (existingNote && existingNote.folderId !== note.folderId) {
-                // Delete old file location
-                const oldPath = await this.getFilePathWithFolder('notes', note.id, existingNote.folderId);
-                try {
-                    await fs.unlink(oldPath);
-                } catch {}
+            if (existingNote) {
+                const existingFolderId = this.normalizeFolderId(existingNote.folderId);
+                if (existingFolderId !== note.folderId) {
+                    const paths = await this.findNoteFilePaths(note.id);
+                    for (const oldPath of paths) {
+                        try {
+                            await fs.unlink(oldPath);
+                        } catch {}
+                    }
+                }
             }
             
             const filePath = await this.getFilePathWithFolder('notes', note.id, note.folderId);
             await fs.writeFile(filePath, JSON.stringify(note, null, 2), 'utf-8');
+            await this.deleteNoteFilesExcept(note.id, filePath);
             await this.triggerSync(filePath, 'note');
             
             return { success: true, note };
@@ -239,24 +313,49 @@ class FileStorageService {
 
     async deleteNote(noteId: string, folderId?: string | null): Promise<{ success: boolean; error?: string }> {
         try {
-            // First try to find the note to get its folderId
-            const note = await this.getNote(noteId);
-            if (note) {
-                const filePath = await this.getFilePathWithFolder('notes', noteId, note.folderId);
-                await fs.unlink(filePath);
-                await this.triggerSync(filePath, 'note');
-                return { success: true };
+            const normalizedId = String(noteId || '');
+            if (!normalizedId) {
+                return { success: false, error: 'Note id is required' };
             }
-            
-            // If not found, try with provided folderId
-            if (folderId !== undefined) {
-                const filePath = await this.getFilePathWithFolder('notes', noteId, folderId);
-                await fs.unlink(filePath);
-                await this.triggerSync(filePath, 'note');
-                return { success: true };
+
+            const paths = await this.findNoteFilePaths(normalizedId);
+            if (paths.length === 0) {
+                // Fall back to expected path when filename matches id
+                const note = await this.getNote(normalizedId);
+                const resolvedFolderId = note
+                    ? this.normalizeFolderId(note.folderId)
+                    : this.normalizeFolderId(folderId);
+                try {
+                    const filePath = await this.getFilePathWithFolder(
+                        'notes',
+                        normalizedId,
+                        resolvedFolderId,
+                    );
+                    paths.push(filePath);
+                } catch {
+                    /* ignore */
+                }
             }
-            
-            return { success: false, error: 'Note not found' };
+
+            const uniquePaths = [...new Set(paths.map((p) => path.resolve(p)))];
+            if (uniquePaths.length === 0) {
+                return { success: false, error: 'Note not found' };
+            }
+
+            let deleted = 0;
+            for (const filePath of uniquePaths) {
+                try {
+                    await fs.unlink(filePath);
+                    await this.triggerSync(filePath, 'note');
+                    deleted++;
+                } catch {
+                    /* ignore missing files */
+                }
+            }
+
+            return deleted > 0
+                ? { success: true }
+                : { success: false, error: 'Note not found' };
         } catch (error: any) {
             return { success: false, error: error.message || String(error) };
         }
@@ -276,7 +375,7 @@ class FileStorageService {
         
         // Search all notes to find by id
         const notes = await this.getNotes();
-        return notes.find((n: any) => n.id === id) || null;
+        return notes.find((n: any) => this.normalizeNoteId(n) === String(id)) || null;
     }
 
     // Drawings

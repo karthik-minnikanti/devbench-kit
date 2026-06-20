@@ -55,6 +55,32 @@ interface TerminalViewProps {
 
 const MAX_SUGGESTIONS = 8;
 
+async function waitForTerminalLayout(
+    element: HTMLElement,
+    maxMs = 3000,
+): Promise<void> {
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+        if (element.offsetWidth >= 2 && element.offsetHeight >= 2) {
+            return;
+        }
+        await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+        });
+    }
+}
+
+function measureTerminalSize(
+    fitAddon: FitAddon,
+    term: Terminal,
+): { cols: number; rows: number } {
+    fitAddon.fit();
+    return {
+        cols: Math.max(term.cols, 80),
+        rows: Math.max(term.rows, 24),
+    };
+}
+
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     function TerminalView(
         {
@@ -201,6 +227,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
             const term = new Terminal({
                 cursorBlink: true,
+                cursorStyle: "block",
                 fontSize: getTerminalFontSize(),
                 lineHeight: 1,
                 fontFamily: terminalFontFamily,
@@ -229,9 +256,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                     bg,
                 );
                 fitAddon.fit();
+                const cols = Math.max(term.cols, 80);
+                const rows = Math.max(term.rows, 24);
+                if (cols !== term.cols || rows !== term.rows) {
+                    term.resize(cols, rows);
+                }
                 const sessionId = sessionIdRef.current;
                 if (sessionId) {
-                    window.electronAPI?.terminal.resize(sessionId, term.cols, term.rows);
+                    window.electronAPI?.terminal.resize(sessionId, cols, rows);
                 }
             };
             applyTheme();
@@ -246,13 +278,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                 if (!containerRef.current) return;
                 requestAnimationFrame(() => {
                     if (disposed || !termRef.current) return;
-                    fitAddon.fit();
+                    const { cols, rows } = measureTerminalSize(fitAddon, term);
+                    if (cols !== term.cols || rows !== term.rows) {
+                        term.resize(cols, rows);
+                    }
                     const sessionId = sessionIdRef.current;
                     if (sessionId) {
                         window.electronAPI?.terminal.resize(
                             sessionId,
-                            term.cols,
-                            term.rows,
+                            cols,
+                            rows,
                         );
                     }
                     term.scrollToBottom();
@@ -269,6 +304,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             };
 
             const handleInput = (data: string) => {
+                if (isRemoteSession) {
+                    writeToTerminalRef.current(data);
+                    return;
+                }
+
                 const activeSuggestions = suggestionsRef.current;
                 if (data === "\t" && activeSuggestions.length > 0) {
                     const pick =
@@ -293,7 +333,19 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             };
 
             const start = async () => {
-                syncSize();
+                const host = containerRef.current;
+                if (!host) return;
+
+                await waitForTerminalLayout(host);
+                if (disposed) return;
+
+                const { cols, rows } = measureTerminalSize(fitAddon, term);
+                if (cols !== term.cols || rows !== term.rows) {
+                    term.resize(cols, rows);
+                }
+
+                term.onData(handleInput);
+
                 const result = await window.electronAPI!.terminal.create({
                     kind: session.kind,
                     shell: session.shell,
@@ -302,8 +354,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                     namespace: session.namespace,
                     container: session.container,
                     containerId: session.containerId,
-                    cols: term.cols,
-                    rows: term.rows,
+                    cols,
+                    rows,
                 });
 
                 if (disposed) {
@@ -330,9 +382,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                 }
 
                 if (isRemoteSession) {
-                    // Ensure kubectl/docker exec receives final terminal dimensions.
-                    syncSize();
-                    window.setTimeout(() => syncSize(), 150);
+                    // kubectl/docker need a few resize passes once the pane is visible.
+                    for (const delay of [0, 75, 200, 400]) {
+                        window.setTimeout(() => syncSize(), delay);
+                    }
                 }
 
                 if (session.initialCommand?.trim()) {
@@ -341,7 +394,6 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                     );
                 }
 
-                term.onData(handleInput);
                 term.focus();
             };
 

@@ -1,25 +1,13 @@
 import path from 'path';
 import { execSync } from 'child_process';
 
-/**
- * Bootstraps an interactive shell inside a pod/container.
- * Uses `script` when available so kubectl/docker exec gets a real TTY on the remote side.
- */
-export const REMOTE_SHELL_BOOTSTRAP = [
-    'export TERM=${TERM:-xterm-256color}',
-    'export COLORTERM=truecolor',
-    'export LANG=${LANG:-C.UTF-8}',
-    'if command -v script >/dev/null 2>&1; then',
-    '  if command -v bash >/dev/null 2>&1; then',
-    '    exec script -q -c "bash -il" /dev/null',
-    '  fi',
-    '  exec script -q -c "sh -i" /dev/null',
-    'fi',
-    'if command -v bash >/dev/null 2>&1; then',
-    '  exec bash -il',
-    'fi',
-    'exec sh -il 2>/dev/null || exec sh -i',
-].join('\n');
+/** One-liner: pick an interactive shell; kubectl/docker `-it` already allocates the TTY. */
+export const REMOTE_SHELL_BOOTSTRAP =
+    'export TERM="${TERM:-xterm-256color}"; ' +
+    'export COLORTERM="${COLORTERM:-truecolor}"; ' +
+    'if command -v bash >/dev/null 2>&1; then exec bash -i; ' +
+    'elif command -v ash >/dev/null 2>&1; then exec ash -i; ' +
+    'else exec sh -i; fi';
 
 const PATH_PREFIXES = [
     '/opt/homebrew/bin',
@@ -84,21 +72,10 @@ export function localShellInvocation(shellPath?: string): { file: string; args: 
 /** Remote exec argv after `--` for kubectl/docker (interactive shell). */
 export function remoteExecCommand(customShell?: string): { file: string; args: string[] } {
     if (customShell) {
-        const escaped = customShell.replace(/'/g, `'\\''`);
-        return {
-            file: 'sh',
-            args: [
-                '-c',
-                `if [ -x '${escaped}' ]; then exec '${escaped}' -il 2>/dev/null || exec '${escaped}' -i; fi; ${REMOTE_SHELL_BOOTSTRAP}`,
-            ],
-        };
+        return { file: customShell, args: ['-i'] };
     }
 
-    // Use sh directly — many minimal/distroless images lack the env(1) binary.
-    return {
-        file: 'sh',
-        args: ['-c', REMOTE_SHELL_BOOTSTRAP],
-    };
+    return { file: 'sh', args: ['-c', REMOTE_SHELL_BOOTSTRAP] };
 }
 
 /** @deprecated Use REMOTE_SHELL_BOOTSTRAP */

@@ -781,8 +781,24 @@ input[type="radio"]:disabled {
 }
 
 .bn-suggestion-menu-item:hover,
-.bn-suggestion-menu-item[data-selected="true"] {
+.bn-suggestion-menu-item[aria-selected="true"] {
     background: var(--color-muted) !important;
+}
+
+.bn-suggestion-menu p {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.bn-suggestion-menu .bn-mt-suggestion-menu-item-title {
+    font-size: 14px !important;
+    line-height: 20px !important;
+    font-weight: 500 !important;
+}
+
+.bn-suggestion-menu .bn-mt-suggestion-menu-item-subtitle {
+    font-size: 10px !important;
+    line-height: 16px !important;
 }
 
 .bn-placeholder {

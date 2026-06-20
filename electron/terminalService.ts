@@ -40,8 +40,7 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
             const args = [
                 ...(options.kubectlContextArgs || []),
                 'exec',
-                '-i',
-                '-t',
+                '-it',
                 options.podName,
                 '-n',
                 options.namespace,
@@ -59,7 +58,7 @@ function buildSpawn(options: TerminalCreateOptions): { file: string; args: strin
             const remote = remoteExecCommand(options.shell);
             return {
                 file: resolveExecutable('docker'),
-                args: ['exec', '-i', '-t', options.containerId, remote.file, ...remote.args],
+                args: ['exec', '-it', options.containerId, remote.file, ...remote.args],
             };
         }
         case 'local':
@@ -97,8 +96,8 @@ class TerminalService {
         options: TerminalCreateOptions,
     ): { success: boolean; sessionId?: string; error?: string } {
         try {
-            const cols = options.cols ?? 80;
-            const rows = options.rows ?? 24;
+            const cols = Math.max(options.cols ?? 80, 2);
+            const rows = Math.max(options.rows ?? 24, 2);
             const { file, args } = buildSpawn(options);
             const cwd =
                 options.kind === 'local'

@@ -148,7 +148,7 @@ export function K8sResourceTable({
                           </button>
                           <button
                             type="button"
-                            title="Shell"
+                            title="DevShell"
                             onClick={(e) => {
                               e.stopPropagation();
                               onPodDockOpen(row, "terminal");

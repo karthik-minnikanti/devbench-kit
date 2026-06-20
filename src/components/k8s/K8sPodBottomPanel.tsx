@@ -30,7 +30,7 @@ function scrollLogsToBottom(editor: monaco.editor.IStandaloneCodeEditor | null) 
 
 const DOCK_TABS: { id: PodDockTab; label: string; icon: React.ComponentProps<typeof Icon>["name"] }[] = [
   { id: "logs", label: "Logs", icon: "FileText" },
-  { id: "terminal", label: "Terminal", icon: "Terminal" },
+  { id: "terminal", label: "DevShell", icon: "Terminal" },
 ];
 
 export function K8sPodBottomPanel({
@@ -70,7 +70,7 @@ export function K8sPodBottomPanel({
     [name, namespace, resolvedContainer],
   );
 
-  const launchDevShell = useCallback(() => {
+  const openInDevShell = useCallback(() => {
     openDevShell(shellSession, { navigate: true });
   }, [shellSession]);
 
@@ -270,7 +270,7 @@ export function K8sPodBottomPanel({
               </select>
               <button
                 type="button"
-                onClick={launchDevShell}
+                onClick={openInDevShell}
                 className="btn-secondary !h-7 !py-1 !px-2 !text-xs"
                 title="Open this shell in DevShell"
               >
@@ -294,7 +294,7 @@ export function K8sPodBottomPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 relative">
         {activeTab === "logs" ? (
           <Editor
             height="100%"
@@ -322,13 +322,19 @@ export function K8sPodBottomPanel({
               scrollBeyondLastLine: false,
             }}
           />
+        ) : resolvedContainer ? (
+          <div className="absolute inset-0 h-full devshell-terminal-pane devshell-terminal-pane--k8s">
+            <TerminalView
+              key={`${namespace}/${name}/${resolvedContainer}`}
+              session={shellSession}
+              active
+              className="h-full"
+            />
+          </div>
         ) : (
-          <TerminalView
-            key={`${namespace}/${name}/${resolvedContainer ?? ""}`}
-            session={shellSession}
-            active={activeTab === "terminal"}
-            className="h-full"
-          />
+          <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-tertiary)]">
+            No container available for shell.
+          </div>
         )}
       </div>
     </div>

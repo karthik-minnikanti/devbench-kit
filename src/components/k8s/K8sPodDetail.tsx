@@ -317,7 +317,7 @@ export function K8sPodDetail({
               </button>
               <button
                 onClick={() => onOpenDockPanel("terminal")}
-                title="Shell"
+                title="DevShell"
                 className={`p-1.5 rounded transition-colors ${
                   activeDockTab === "terminal"
                     ? "text-[var(--color-primary)] bg-[var(--color-primary)]/10"
