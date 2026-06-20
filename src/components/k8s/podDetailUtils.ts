@@ -65,6 +65,14 @@ export interface PodContainerResources {
   memoryLimit?: string;
 }
 
+export interface PodEnvVar {
+  name: string;
+  value?: string;
+  source?: string;
+  resolvedValue?: string;
+  isSecret?: boolean;
+}
+
 export interface PodContainerInfo {
   name: string;
   image: string;
@@ -75,6 +83,7 @@ export interface PodContainerInfo {
   resources?: PodContainerResources;
   imagePullPolicy?: string;
   isInit?: boolean;
+  env: PodEnvVar[];
 }
 
 export interface PodSummary {
@@ -252,6 +261,229 @@ export function podPhaseBadgeClass(phase: string): string {
   return "bg-[var(--color-muted)] text-[var(--color-text-secondary)] border-[var(--color-border)]";
 }
 
+function formatEnvSource(valueFrom: Record<string, unknown> | undefined): string | undefined {
+  if (!valueFrom) return undefined;
+  if (valueFrom.configMapKeyRef) {
+    const ref = valueFrom.configMapKeyRef as { name?: string; key?: string };
+    return `configMap/${ref.name ?? "?"}:${ref.key ?? "?"}`;
+  }
+  if (valueFrom.secretKeyRef) {
+    const ref = valueFrom.secretKeyRef as { name?: string; key?: string };
+    return `secret/${ref.name ?? "?"}:${ref.key ?? "?"}`;
+  }
+  if (valueFrom.fieldRef) {
+    const ref = valueFrom.fieldRef as { fieldPath?: string };
+    return `fieldRef(${ref.fieldPath ?? "?"})`;
+  }
+  if (valueFrom.resourceFieldRef) {
+    const ref = valueFrom.resourceFieldRef as { resource?: string };
+    return `resourceFieldRef(${ref.resource ?? "?"})`;
+  }
+  return undefined;
+}
+
+function extractContainerEnv(container: { env?: unknown[] }): PodEnvVar[] {
+  return (container.env || []).map((entry) => {
+    const env = entry as {
+      name?: string;
+      value?: string;
+      valueFrom?: Record<string, unknown>;
+    };
+    return {
+      name: env.name || "—",
+      value: env.value,
+      source: formatEnvSource(env.valueFrom),
+    };
+  });
+}
+
+function resolveFieldRef(pod: any, fieldPath: string): string | undefined {
+  const parts = fieldPath.split(".");
+  let current: unknown = pod;
+  for (const part of parts) {
+    if (current == null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current != null ? String(current) : undefined;
+}
+
+function configMapValue(
+  configMaps: any[],
+  namespace: string,
+  name: string,
+  key: string,
+): string | undefined {
+  const cm = configMaps.find(
+    (c) => c.metadata?.name === name && c.metadata?.namespace === namespace,
+  );
+  const raw = cm?.data?.[key];
+  return raw != null ? String(raw) : undefined;
+}
+
+function collectSecretNamesFromContainer(container: {
+  env?: unknown[];
+  envFrom?: unknown[];
+}): string[] {
+  const names = new Set<string>();
+  for (const entry of container.env || []) {
+    const ref = (entry as { valueFrom?: { secretKeyRef?: { name?: string } } })
+      .valueFrom?.secretKeyRef?.name;
+    if (ref) names.add(ref);
+  }
+  for (const entry of container.envFrom || []) {
+    const ref = (entry as { secretRef?: { name?: string } }).secretRef?.name;
+    if (ref) names.add(ref);
+  }
+  return [...names];
+}
+
+function resolveContainerEnv(
+  container: { env?: unknown[]; envFrom?: unknown[] },
+  pod: any,
+  namespace: string,
+  configMaps: any[],
+  secretData: Record<string, Record<string, string>>,
+): PodEnvVar[] {
+  const resolved: PodEnvVar[] = [];
+
+  for (const entry of container.env || []) {
+    const env = entry as {
+      name?: string;
+      value?: string;
+      valueFrom?: Record<string, unknown>;
+    };
+    const name = env.name || "—";
+    const source = formatEnvSource(env.valueFrom);
+
+    if (env.value !== undefined) {
+      resolved.push({ name, value: env.value, resolvedValue: env.value });
+      continue;
+    }
+
+    const secretRef = env.valueFrom?.secretKeyRef as { name?: string; key?: string } | undefined;
+    if (secretRef?.name && secretRef.key) {
+      const val = secretData[secretRef.name]?.[secretRef.key];
+      resolved.push({
+        name,
+        source,
+        resolvedValue: val,
+        isSecret: true,
+      });
+      continue;
+    }
+
+    const cmRef = env.valueFrom?.configMapKeyRef as { name?: string; key?: string } | undefined;
+    if (cmRef?.name && cmRef.key) {
+      const val = configMapValue(configMaps, namespace, cmRef.name, cmRef.key);
+      resolved.push({
+        name,
+        source,
+        resolvedValue: val,
+      });
+      continue;
+    }
+
+    const fieldRef = env.valueFrom?.fieldRef as { fieldPath?: string } | undefined;
+    if (fieldRef?.fieldPath) {
+      const val = resolveFieldRef(pod, fieldRef.fieldPath);
+      resolved.push({
+        name,
+        source,
+        resolvedValue: val,
+      });
+      continue;
+    }
+
+    resolved.push({ name, source });
+  }
+
+  for (const entry of container.envFrom || []) {
+    const envFrom = entry as {
+      prefix?: string;
+      secretRef?: { name?: string };
+      configMapRef?: { name?: string };
+    };
+    const prefix = envFrom.prefix || "";
+
+    if (envFrom.secretRef?.name) {
+      const secretName = envFrom.secretRef.name;
+      const data = secretData[secretName] || {};
+      for (const [key, val] of Object.entries(data)) {
+        resolved.push({
+          name: `${prefix}${key}`,
+          source: `secret/${secretName}`,
+          resolvedValue: val,
+          isSecret: true,
+        });
+      }
+      continue;
+    }
+
+    if (envFrom.configMapRef?.name) {
+      const cmName = envFrom.configMapRef.name;
+      const cm = configMaps.find(
+        (c) => c.metadata?.name === cmName && c.metadata?.namespace === namespace,
+      );
+      for (const [key, val] of Object.entries(cm?.data || {})) {
+        resolved.push({
+          name: `${prefix}${key}`,
+          source: `configMap/${cmName}`,
+          resolvedValue: String(val),
+        });
+      }
+    }
+  }
+
+  return resolved;
+}
+
+export function collectPodSecretNames(pod: any): string[] {
+  const names = new Set<string>();
+  const containers = [
+    ...(pod?.spec?.containers || []),
+    ...(pod?.spec?.initContainers || []),
+  ];
+  for (const container of containers) {
+    for (const name of collectSecretNamesFromContainer(container)) {
+      names.add(name);
+    }
+  }
+  return [...names];
+}
+
+export async function resolvePodSummaryEnv(
+  summary: PodSummary,
+  pod: any,
+  namespace: string,
+  configMaps: any[],
+  fetchSecretData: (namespace: string, name: string) => Promise<Record<string, string>>,
+): Promise<PodSummary> {
+  const secretNames = collectPodSecretNames(pod);
+  const secretData: Record<string, Record<string, string>> = {};
+
+  await Promise.all(
+    secretNames.map(async (name) => {
+      try {
+        secretData[name] = await fetchSecretData(namespace, name);
+      } catch {
+        secretData[name] = {};
+      }
+    }),
+  );
+
+  const resolveContainers = (containers: PodContainerInfo[], specContainers: any[]) =>
+    containers.map((c, i) => ({
+      ...c,
+      env: resolveContainerEnv(specContainers[i] || {}, pod, namespace, configMaps, secretData),
+    }));
+
+  return {
+    ...summary,
+    containers: resolveContainers(summary.containers, pod?.spec?.containers || []),
+    initContainers: resolveContainers(summary.initContainers, pod?.spec?.initContainers || []),
+  };
+}
+
 function mapContainer(
   c: any,
   cs: any,
@@ -293,6 +525,7 @@ function mapContainer(
       protocol: p.protocol || "TCP",
       source: "container" as const,
     })),
+    env: extractContainerEnv(c),
   };
 }
 

@@ -170,6 +170,8 @@ try {
             services: (namespace?: string) => ipcRenderer.invoke('k8s:services', namespace),
             configMaps: (namespace?: string) => ipcRenderer.invoke('k8s:configmaps', namespace),
             secrets: (namespace?: string) => ipcRenderer.invoke('k8s:secrets', namespace),
+            secretData: (namespace: string, name: string) =>
+                ipcRenderer.invoke('k8s:secret-data', namespace, name),
             nodes: () => ipcRenderer.invoke('k8s:nodes'),
             statefulSets: (namespace?: string) => ipcRenderer.invoke('k8s:statefulsets', namespace),
             jobs: (namespace?: string) => ipcRenderer.invoke('k8s:jobs', namespace),
@@ -405,6 +407,10 @@ declare global {
                 services: (namespace?: string) => Promise<any>;
                 configMaps: (namespace?: string) => Promise<any>;
                 secrets: (namespace?: string) => Promise<any>;
+                secretData: (
+                    namespace: string,
+                    name: string,
+                ) => Promise<{ success: boolean; data?: Record<string, string>; error?: string }>;
             };
             notes: {
                 list: () => Promise<any>;

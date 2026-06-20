@@ -3,6 +3,7 @@ import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../../utils/theme";
 import * as monaco from "monaco-editor";
 import { Icon } from "../Icon";
+import { TerminalView } from "../TerminalView";
 import { openDevShell } from "../../utils/devShell";
 
 export type PodDockTab = "logs" | "terminal";
@@ -29,7 +30,7 @@ function scrollLogsToBottom(editor: monaco.editor.IStandaloneCodeEditor | null) 
 
 const DOCK_TABS: { id: PodDockTab; label: string; icon: React.ComponentProps<typeof Icon>["name"] }[] = [
   { id: "logs", label: "Logs", icon: "FileText" },
-  { id: "terminal", label: "DevShell", icon: "Terminal" },
+  { id: "terminal", label: "Terminal", icon: "Terminal" },
 ];
 
 export function K8sPodBottomPanel({
@@ -46,6 +47,7 @@ export function K8sPodBottomPanel({
   const [isStreaming, setIsStreaming] = useState(false);
   const [logContainer, setLogContainer] = useState<string | undefined>(undefined);
   const [terminalContainer, setTerminalContainer] = useState<string | undefined>(undefined);
+  const [fetchedContainerNames, setFetchedContainerNames] = useState<string[]>([]);
   const logsEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const previousLogLengthRef = useRef(0);
   const isStreamingRef = useRef(false);
@@ -54,20 +56,22 @@ export function K8sPodBottomPanel({
 
   const containerNames =
     (rawPod as { spec?: { containers?: { name: string }[] } })?.spec?.containers?.map((c) => c.name) ||
-    [];
+    fetchedContainerNames;
+
+  const resolvedContainer = terminalContainer ?? containerNames[0];
 
   const shellSession = useMemo(
     () => ({
       kind: "k8s" as const,
       podName: name,
       namespace,
-      ...(terminalContainer ? { container: terminalContainer } : {}),
+      ...(resolvedContainer ? { container: resolvedContainer } : {}),
     }),
-    [name, namespace, terminalContainer],
+    [name, namespace, resolvedContainer],
   );
 
   const launchDevShell = useCallback(() => {
-    openDevShell(shellSession);
+    openDevShell(shellSession, { navigate: true });
   }, [shellSession]);
 
   useEffect(() => {
@@ -82,10 +86,23 @@ export function K8sPodBottomPanel({
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === "terminal") {
-      launchDevShell();
-    }
-  }, [activeTab, launchDevShell]);
+    if (rawPod || !window.electronAPI) return;
+    let cancelled = false;
+    void window.electronAPI.k8s.pods(namespace).then((result) => {
+      if (cancelled || !result.success) return;
+      const pod = (result.pods || []).find(
+        (p: { metadata?: { name?: string } }) => p.metadata?.name === name,
+      );
+      const names =
+        (pod as { spec?: { containers?: { name: string }[] } })?.spec?.containers?.map(
+          (c) => c.name,
+        ) || [];
+      setFetchedContainerNames(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [name, namespace, rawPod]);
 
   useEffect(() => {
     return () => {
@@ -239,17 +256,27 @@ export function K8sPodBottomPanel({
             </>
           )}
           {activeTab === "terminal" && containerNames.length > 0 && (
-            <select
-              value={terminalContainer ?? containerNames[0] ?? ""}
-              onChange={(e) => setTerminalContainer(e.target.value)}
-              className="h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-background)] text-xs"
-            >
-              {containerNames.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                value={terminalContainer ?? containerNames[0] ?? ""}
+                onChange={(e) => setTerminalContainer(e.target.value)}
+                className="h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-background)] text-xs"
+              >
+                {containerNames.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={launchDevShell}
+                className="btn-secondary !h-7 !py-1 !px-2 !text-xs"
+                title="Open this shell in DevShell"
+              >
+                DevShell
+              </button>
+            </>
           )}
           <button
             onClick={onClose}
@@ -296,22 +323,12 @@ export function K8sPodBottomPanel({
             }}
           />
         ) : (
-          <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
-            <div className="w-10 h-10 rounded-full bg-[var(--color-muted)] flex items-center justify-center">
-              <Icon name="Terminal" className="w-5 h-5 text-[var(--color-primary)]" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[var(--color-text-primary)]">
-                Pod shell opened in DevShell
-              </p>
-              <p className="text-xs text-[var(--color-text-tertiary)] mt-1 max-w-sm">
-                Switch containers above or focus DevShell to keep working across local, K8s, and Docker sessions.
-              </p>
-            </div>
-            <button type="button" onClick={launchDevShell} className="btn-primary !h-8 !text-xs">
-              Focus DevShell
-            </button>
-          </div>
+          <TerminalView
+            key={`${namespace}/${name}/${resolvedContainer ?? ""}`}
+            session={shellSession}
+            active={activeTab === "terminal"}
+            className="h-full"
+          />
         )}
       </div>
     </div>

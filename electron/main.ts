@@ -2558,6 +2558,16 @@ ipcMain.handle('k8s:secrets', async (_event: any, namespace?: string) => {
     }
 });
 
+ipcMain.handle('k8s:secret-data', async (_event: any, namespace: string, name: string) => {
+    try {
+        await activateK8sFromStore();
+        const data = await k8sService.getSecretData(namespace, name);
+        return { success: true, data };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), data: {} };
+    }
+});
+
 ipcMain.handle('k8s:nodes', async () => {
     try {
         await activateK8sFromStore();

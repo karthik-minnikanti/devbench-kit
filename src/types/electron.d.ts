@@ -188,6 +188,10 @@ declare global {
                 services: (namespace?: string) => Promise<any>;
                 configMaps: (namespace?: string) => Promise<any>;
                 secrets: (namespace?: string) => Promise<any>;
+                secretData: (
+                    namespace: string,
+                    name: string,
+                ) => Promise<{ success: boolean; data?: Record<string, string>; error?: string }>;
                 nodes: () => Promise<any>;
                 statefulSets: (namespace?: string) => Promise<any>;
                 jobs: (namespace?: string) => Promise<any>;

@@ -5,6 +5,7 @@ import {
   PodPortInfo,
   PodSummary,
   suggestLocalPort,
+  type PodEnvVar,
 } from "./podDetailUtils";
 
 interface ActiveForward {
@@ -74,6 +75,39 @@ function CollapsibleSection({
 }
 
 const DEFAULT_EXPANDED_SECTIONS = new Set(["containers", "ports"]);
+
+function EnvVarRow({ env }: { env: PodEnvVar }) {
+  const display = env.resolvedValue ?? env.value ?? env.source ?? "—";
+  const unresolved =
+    env.resolvedValue === undefined && env.value === undefined && !!env.source;
+
+  return (
+    <div className="flex gap-2 text-[10px] font-mono py-0.5 min-w-0">
+      <span className="text-[var(--color-text-primary)] shrink-0">{env.name}</span>
+      {env.isSecret && (
+        <span
+          className="shrink-0 text-[9px] px-1 rounded bg-[var(--color-timeline-done)]/15 text-[var(--color-timeline-done)]"
+          title="From Secret"
+        >
+          secret
+        </span>
+      )}
+      <span className="text-[var(--color-text-tertiary)]">=</span>
+      <span
+        className={`truncate ${
+          unresolved
+            ? "text-[var(--color-primary)]"
+            : env.isSecret
+              ? "text-[var(--color-text-secondary)]"
+              : "text-[var(--color-text-secondary)]"
+        }`}
+        title={display}
+      >
+        {display}
+      </span>
+    </div>
+  );
+}
 
 function ContainerCard({ container }: { container: PodSummary["containers"][0] }) {
   const borderTone = container.ready
@@ -205,6 +239,10 @@ export function K8sPodOverview({
 
   const restartCheck = podCanRestart(rawPod);
 
+  const allEnvVars = [...summary.containers, ...summary.initContainers].flatMap((c) =>
+    c.env.map((env) => ({ ...env, container: c.name })),
+  );
+
   return (
     <div className="h-full overflow-y-auto custom-scrollbar">
       <div className="px-3 py-2 border-b border-[var(--color-border)] grid grid-cols-2 gap-x-4 gap-y-2">
@@ -330,6 +368,36 @@ export function K8sPodOverview({
             ))}
           </div>
         </CollapsibleSection>
+
+        {allEnvVars.length > 0 && (
+          <CollapsibleSection
+            id="environment"
+            title="Environment"
+            count={allEnvVars.length}
+            expanded={isExpanded("environment")}
+            onToggle={toggleSection}
+          >
+            <div className="space-y-2">
+              {[...summary.containers, ...summary.initContainers].map((c) =>
+                c.env.length > 0 ? (
+                  <div key={c.name}>
+                    {[...summary.containers, ...summary.initContainers].length > 1 && (
+                      <div className="text-[10px] font-medium text-[var(--color-text-tertiary)] mb-1">
+                        {c.name}
+                        {c.isInit ? " (init)" : ""}
+                      </div>
+                    )}
+                    <div className="space-y-0.5">
+                      {c.env.map((env) => (
+                        <EnvVarRow key={`${c.name}/${env.name}`} env={env} />
+                      ))}
+                    </div>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          </CollapsibleSection>
+        )}
 
         <CollapsibleSection
           id="ports"

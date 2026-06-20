@@ -10,6 +10,7 @@ import {
   podPhaseBadgeClass,
   PodPortInfo,
   PodSummary,
+  resolvePodSummaryEnv,
   suggestLocalPort,
   isPrivilegedLocalPort,
 } from "./podDetailUtils";
@@ -118,10 +119,11 @@ export function K8sPodDetail({
 
     const load = async () => {
       if (!window.electronAPI) return;
-      const [diag, pods, services] = await Promise.all([
+      const [diag, pods, services, configMapsResult] = await Promise.all([
         window.electronAPI.k8s.diagnose(name, namespace),
         window.electronAPI.k8s.pods(namespace),
         window.electronAPI.k8s.services(namespace),
+        window.electronAPI.k8s.configMaps(namespace),
       ]);
       if (diag.success) setDiagnostic(diag.diagnostic);
       if (pods.success) {
@@ -131,7 +133,20 @@ export function K8sPodDetail({
         );
         const serviceList = services.success ? services.services || [] : [];
         setRawPod(pod || null);
-        const podSummary = buildPodSummary(pod, serviceList);
+        let podSummary = buildPodSummary(pod, serviceList);
+        if (podSummary && pod && window.electronAPI.k8s.secretData) {
+          const cmList = configMapsResult.success ? configMapsResult.configMaps || [] : [];
+          podSummary = await resolvePodSummaryEnv(
+            podSummary,
+            pod,
+            namespace,
+            cmList,
+            async (ns, secretName) => {
+              const result = await window.electronAPI!.k8s.secretData(ns, secretName);
+              return result.success ? result.data || {} : {};
+            },
+          );
+        }
         setSummary(podSummary);
         const defaults: Record<string, string> = {};
         for (const port of podSummary?.ports || []) {

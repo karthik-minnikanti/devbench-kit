@@ -86,20 +86,18 @@ export function remoteExecCommand(customShell?: string): { file: string; args: s
     if (customShell) {
         const escaped = customShell.replace(/'/g, `'\\''`);
         return {
-            file: 'env',
+            file: 'sh',
             args: [
-                'TERM=xterm-256color',
-                'COLORTERM=truecolor',
-                'sh',
                 '-c',
                 `if [ -x '${escaped}' ]; then exec '${escaped}' -il 2>/dev/null || exec '${escaped}' -i; fi; ${REMOTE_SHELL_BOOTSTRAP}`,
             ],
         };
     }
 
+    // Use sh directly — many minimal/distroless images lack the env(1) binary.
     return {
-        file: 'env',
-        args: ['TERM=xterm-256color', 'COLORTERM=truecolor', 'sh', '-c', REMOTE_SHELL_BOOTSTRAP],
+        file: 'sh',
+        args: ['-c', REMOTE_SHELL_BOOTSTRAP],
     };
 }
 

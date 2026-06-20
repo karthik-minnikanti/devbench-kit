@@ -406,6 +406,22 @@ export class K8sService {
         }));
     }
 
+    /** Fetch and base64-decode a single Secret's data keys. */
+    async getSecretData(namespace: string, name: string): Promise<Record<string, string>> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.readNamespacedSecret({ name, namespace });
+        const secret = getResource(response);
+        const data = secret.data || {};
+        return Object.fromEntries(
+            Object.entries(data).map(([key, val]) => [
+                key,
+                typeof val === 'string'
+                    ? Buffer.from(val, 'base64').toString('utf8')
+                    : String(val ?? ''),
+            ]),
+        );
+    }
+
     /**
      * Get DaemonSets
      */
