@@ -8,8 +8,8 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
-# Rebuild only required native modules (see rebuild:native). Full npmRebuild also
-# tries to compile optional ssh2/cpu-features, which fails on Electron 32 without C++20.
+# Rebuild only node-pty (see rebuild:native). Full npmRebuild also tries to compile
+# optional ssh2/cpu-features, which fails on Electron 32 without C++20.
 npmRebuild: false
 asarUnpack:
   - node_modules/node-pty/**/*

@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:electron": "tsc --noEmit -p tsconfig.electron.json",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "rebuild:native": "electron-rebuild -f -w node-pty,bufferutil,utf-8-validate",
+    "rebuild:native": "electron-rebuild -f -w node-pty",
     "electron:build": "npm run build && npm run rebuild:native && electron-builder",
     "build:dmg": "npm run build && npm run rebuild:native && electron-builder --mac dmg",
     "build:mas": "npm run build && npm run rebuild:native && electron-builder --mac mas",

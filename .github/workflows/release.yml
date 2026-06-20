@@ -64,10 +64,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup MSVC toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Rebuild native modules for Electron
+        shell: bash
         run: npm run rebuild:native
         env:
-          CXXFLAGS: "-std=c++20"
+          CXXFLAGS: ${{ runner.os != 'Windows' && '-std=c++20' || '' }}
+          GYP_MSVS_VERSION: '2022'
 
       - name: Build and publish
         run: npm run build && npx electron-builder ${{ matrix.args }} --publish always
