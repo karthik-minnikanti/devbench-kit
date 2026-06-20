@@ -11,6 +11,7 @@ import { UpdateNotification } from './components/UpdateNotification';
 import { getElectronAPI } from './utils/electronAPI';
 import { appEvents, EVENTS, openTool as emitOpenTool } from './utils/appEvents';
 import { handleError } from './utils/errorHandler';
+import { PROFILE_SECTION_ENABLED } from './utils/toolCategories';
 
 // Lazy load heavy components for code splitting
 const JsonEditor = lazy(() => import('./components/JsonEditor').then(m => ({ default: m.JsonEditor })));
@@ -31,7 +32,6 @@ const JsonDiff = lazy(() => import('./components/JsonDiff').then(m => ({ default
 const RegexTester = lazy(() => import('./components/RegexTester').then(m => ({ default: m.RegexTester })));
 const CsvYamlConverter = lazy(() => import('./components/CsvYamlConverter').then(m => ({ default: m.CsvYamlConverter })));
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(m => ({ default: m.GlobalSearch })));
-const Profile = lazy(() => import('./components/Profile').then(m => ({ default: m.Profile })));
 const DailyPlanner = lazy(() => import('./components/DailyPlanner').then(m => ({ default: m.DailyPlanner })));
 const DevShell = lazy(() => import('./components/devshell/DevShell').then(m => ({ default: m.DevShell })));
 // Home is the default view, so import it directly (not lazy) to avoid loading delays
@@ -157,7 +157,12 @@ function App() {
     const tabs = allTabs.filter(tab => ALLOWED_TABS.includes(tab.id));
 
     const handleTabChange = useCallback((tabType: TabType) => {
-        setActiveTab(tabType === 'terminal' ? 'devshell' : tabType);
+        const normalized = tabType === 'terminal' ? 'devshell' : tabType;
+        if (normalized === 'profile' && !PROFILE_SECTION_ENABLED) {
+            setActiveTab('home');
+            return;
+        }
+        setActiveTab(normalized);
     }, []);
 
     // Set up event listeners for tool navigation
@@ -325,11 +330,7 @@ function App() {
                     </Suspense>
                 );
             case 'profile':
-                return (
-                    <Suspense fallback={<ComponentLoader />}>
-                        <Profile />
-                    </Suspense>
-                );
+                return <Home />;
             case 'git-settings':
                 return <GitSettings />;
             default:

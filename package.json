@@ -1,11 +1,11 @@
 {
   "name": "devbench-desktop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "DevBench Desktop Application",
-  "homepage": "https://github.com/karthik-minnikanti/devbench-kit",
+  "homepage": "https://devbench.in",
   "author": {
     "name": "Karthik Minnikanti",
-    "email": "karthik@devbench.app"
+    "email": "contact@devbench.in"
   },
   "license": "MIT",
   "repository": {

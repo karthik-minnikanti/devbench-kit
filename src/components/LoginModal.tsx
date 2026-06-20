@@ -75,7 +75,7 @@ export function LoginModal({ isOpen, onSuccess }: LoginModalProps) {
             onSuccess();
           } else {
             removeToken();
-            alert("Your subscription is not valid. Please contact support.");
+            alert("Your subscription is not valid. Please contact contact@devbench.in.");
           }
         } catch (error) {
           console.error("Token verification failed:", error);

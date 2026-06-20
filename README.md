@@ -5,6 +5,8 @@
 
 A comprehensive desktop application for developers that combines productivity tools, API testing, code execution, and planning features in one unified interface.
 
+**Homepage**: [devbench.in](https://devbench.in)
+
 **Open Source**: This project is fully open source and available under the MIT License.
 
 ## 📸 Screenshots
@@ -154,6 +156,36 @@ Create UML diagrams using Mermaid syntax:
   - Theme matching with DevBench
   - Code editor with auto-completion
 
+### ☸️ Kube Lens
+Browse and operate Kubernetes workloads from the desktop:
+
+- Multi-cluster pod browser
+- Pod logs, env vars, and resource details
+- In-panel shell sessions and DevShell integration
+- Pod restart and lifecycle actions where supported
+
+### 🐳 Docker
+Manage local containers without leaving DevBench:
+
+- Container and image lists
+- Logs and inspect views
+- Open shells in DevShell
+
+### 🖥️ DevShell
+Integrated terminal tabs for day-to-day work:
+
+- Local shell sessions with PTY support
+- Kubernetes and Docker remote shells
+- Multiple tabs, themes, and xterm-based rendering
+
+### 🔧 Data utilities
+Format, transform, and inspect payloads:
+
+- JSON / XML formatter and minifier
+- JSON Diff with side-by-side compare
+- Schema Generator, Encoder (Base64 / URL), CSV / YAML conversion
+- Regex Tester
+
 ## 📦 Installation
 
 ### macOS
@@ -241,13 +273,31 @@ Copyright (c) 2025 Karthik Minnikanti
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## 🏢 Enterprise
+
+DevBench Enterprise is available for teams and organizations. Contact us for licensing, rollout support, and subscription management.
+
+- **Email**: [contact@devbench.in](mailto:contact@devbench.in)
+- **Website**: [devbench.in](https://devbench.in)
+
 ## 📧 Contact
 
 - **Author**: Karthik Minnikanti
-- **Email**: contact@devbench.in
-- **Homepage**: https://devbench.in
+- **Email**: [contact@devbench.in](mailto:contact@devbench.in)
+- **Homepage**: [devbench.in](https://devbench.in)
+- **Repository**: [github.com/karthik-minnikanti/devbench-kit](https://github.com/karthik-minnikanti/devbench-kit)
 
 ## 🔄 Version History
+
+### Version 0.1.8
+- Marketing website at devbench.in with enterprise contact
+- Hide Profile section from navigation (temporary)
+- Unified contact email: contact@devbench.in
+
+### Version 0.1.7
+- Kube Lens pod shells via DevShell with improved PTY handling
+- Embedded terminal in K8s pod panel
+- Remote shell bootstrap fixes for kubectl exec
 
 ### Version 0.1.1
 - Initial release

@@ -27,8 +27,10 @@ export interface WorkflowCategoryDefinition {
   alwaysShowDropdown?: boolean;
 }
 
-/** Tabs surfaced in the top navigation dropdowns. */
-export const NAV_ALLOWED_TABS: TabType[] = [
+/** Set to true to show Profile in navigation and allow opening the profile tab. */
+export const PROFILE_SECTION_ENABLED = false;
+
+const NAV_TAB_IDS: TabType[] = [
   "home",
   "js-runner",
   "api",
@@ -46,8 +48,11 @@ export const NAV_ALLOWED_TABS: TabType[] = [
   "planner",
   "excalidraw",
   "uml",
-  "profile",
+  ...(PROFILE_SECTION_ENABLED ? (["profile"] as TabType[]) : []),
 ];
+
+/** Tabs surfaced in the top navigation dropdowns. */
+export const NAV_ALLOWED_TABS: TabType[] = NAV_TAB_IDS;
 
 export const TAB_LABELS: Record<TabType, string> = {
   home: "Home",
@@ -269,7 +274,11 @@ export function getNavCategories(allowedTabs: TabType[] = NAV_ALLOWED_TABS) {
     icon: category.icon,
     tabs: category.tabs.filter((tab) => allowedTabs.includes(tab)),
     alwaysShowDropdown: category.alwaysShowDropdown,
-  })).filter((category) => category.tabs.length > 0);
+  })).filter(
+    (category) =>
+      category.tabs.length > 0 &&
+      (PROFILE_SECTION_ENABLED || category.id !== "profile"),
+  );
 }
 
 export function getCategoryForTab(

@@ -111,7 +111,7 @@ linux:
         - x64
         - arm64
   category: Development
-  maintainer: Karthik Minnikanti <karthik@devbench.app>
+  maintainer: Karthik Minnikanti <contact@devbench.in>
   desktop:
     Name: DevBench
     Comment: Developer Tools Suite
