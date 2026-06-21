@@ -273,6 +273,9 @@ DevBench Enterprise is available for teams and organizations. Contact us for lic
 
 ## 🔄 Version History
 
+### Version 0.1.10
+- Fix Windows CI: upgrade @electron/rebuild and node-gyp for VS 2026 detection, pin windows-2022 runner
+
 ### Version 0.1.9
 - Fix Windows release build: rebuild only node-pty, skip optional native ws deps
 

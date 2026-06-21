@@ -1,6 +1,6 @@
 {
   "name": "devbench-desktop",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "DevBench Desktop Application",
   "homepage": "https://devbench.in",
   "author": {
@@ -61,7 +61,7 @@
     "zustand": "^4.4.7"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.2",
+    "@electron/rebuild": "^4.0.4",
     "@types/diff": "^5.0.9",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.10.5",
@@ -80,5 +80,8 @@
     "vite-plugin-electron": "^0.29.0",
     "vitest": "^4.1.8",
     "wait-on": "^7.2.0"
+  },
+  "overrides": {
+    "node-gyp": "^12.3.0"
   }
 }
