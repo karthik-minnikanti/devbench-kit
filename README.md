@@ -273,6 +273,9 @@ DevBench Enterprise is available for teams and organizations. Contact us for lic
 
 ## 🔄 Version History
 
+### Version 0.1.9
+- Fix Windows release build: rebuild only node-pty, skip optional native ws deps
+
 ### Version 0.1.8
 - Marketing website at devbench.in with enterprise contact
 - Hide Profile section from navigation (temporary)

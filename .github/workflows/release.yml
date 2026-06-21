@@ -62,7 +62,7 @@ jobs:
           npm pkg set "version=${VERSION}"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Setup Python for node-gyp
         uses: actions/setup-python@v5
@@ -75,12 +75,17 @@ jobs:
         with:
           arch: x64
 
-      - name: Rebuild native modules for Electron
-        shell: bash
+      - name: Rebuild native modules for Electron (Windows)
+        if: runner.os == 'Windows'
         run: npm run rebuild:native
         env:
-          CXXFLAGS: ${{ runner.os != 'Windows' && '-std=c++20' || '' }}
           GYP_MSVS_VERSION: '2022'
+
+      - name: Rebuild native modules for Electron (Unix)
+        if: runner.os != 'Windows'
+        run: npm run rebuild:native
+        env:
+          CXXFLAGS: '-std=c++20'
 
       - name: Build and publish
         run: npm run build && npx electron-builder ${{ matrix.args }} --publish always

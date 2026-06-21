@@ -1,6 +1,6 @@
 {
   "name": "devbench-desktop",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "DevBench Desktop Application",
   "homepage": "https://devbench.in",
   "author": {
@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:electron": "tsc --noEmit -p tsconfig.electron.json",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "rebuild:native": "electron-rebuild -f -w node-pty",
+    "rebuild:native": "electron-rebuild -f -o node-pty -t prod",
     "electron:build": "npm run build && npm run rebuild:native && electron-builder",
     "build:dmg": "npm run build && npm run rebuild:native && electron-builder --mac dmg",
     "build:mas": "npm run build && npm run rebuild:native && electron-builder --mac mas",
@@ -46,7 +46,6 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "axios": "^1.6.2",
-    "bufferutil": "^4.1.0",
     "cmdk": "^0.2.0",
     "diff": "^5.1.0",
     "dockerode": "^4.0.9",
@@ -59,7 +58,6 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "simple-git": "^3.22.0",
-    "utf-8-validate": "^6.0.6",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
