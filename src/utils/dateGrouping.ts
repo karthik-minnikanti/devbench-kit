@@ -43,9 +43,13 @@ export function groupByDate<T extends DateGroupedItem>(items: T[]): DateGroup[] 
         }
     });
 
-    // Sort items within each group by updatedAt (newest first)
+    // Sort by createdAt so merely selecting a note does not reshuffle the list.
     Object.keys(groups).forEach((key) => {
-        groups[key].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        groups[key].sort(
+            (a, b) =>
+                new Date(b.createdAt || b.updatedAt).getTime() -
+                new Date(a.createdAt || a.updatedAt).getTime(),
+        );
     });
 
     return [

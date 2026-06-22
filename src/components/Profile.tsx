@@ -12,6 +12,12 @@ import { ToolToolbar } from "./ui/ToolChrome";
 import { API_URL } from "../config/api";
 import pkg from "../../package.json";
 
+const CONTACT_EMAIL = "contact@devbench.in";
+const GITHUB_ISSUES_URL =
+  "https://github.com/karthik-minnikanti/devbench-kit/issues/new";
+const GITHUB_RELEASES_URL =
+  "https://github.com/karthik-minnikanti/devbench-kit/releases/latest";
+
 type ProfileSection = "account" | "git" | "about";
 
 const SECTIONS: {
@@ -150,6 +156,42 @@ function ProfileAbout() {
           <Icon name="Copy" className="w-3.5 h-3.5" aria-hidden="true" />
           Copy API URL
         </button>
+      </ProfileCard>
+
+      <ProfileCard
+        title="Support & feedback"
+        description="Report bugs, request features, or share ideas."
+      >
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+          Email{" "}
+          <a href={`mailto:${CONTACT_EMAIL}`} className="profile-settings-link">
+            {CONTACT_EMAIL}
+          </a>{" "}
+          or{" "}
+          <a
+            href={GITHUB_ISSUES_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="profile-settings-link"
+          >
+            create an issue on GitHub
+          </a>
+          .
+        </p>
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mt-3">
+          On macOS, we are working on an Apple Developer signature and
+          notarization. If the app is blocked on first launch, right-click
+          DevBench → Open → Open again. Downloads are available from{" "}
+          <a
+            href={GITHUB_RELEASES_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="profile-settings-link"
+          >
+            GitHub Releases
+          </a>
+          .
+        </p>
       </ProfileCard>
     </div>
   );

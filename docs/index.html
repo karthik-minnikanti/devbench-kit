@@ -273,8 +273,8 @@
             <p class="caption-uppercase">Download</p>
             <h2>Ready to try DevBench?</h2>
             <p>
-              Free and open source. Pick a release for your OS, or clone the repo
-              and run in development mode.
+              Free and open source. Download the latest build for your operating
+              system — no clone or build step required.
             </p>
             <div class="download__actions">
               <a
@@ -295,16 +295,98 @@
               </a>
             </div>
           </div>
-          <div class="install-block">
-            <p class="install-block__label">From source</p>
-            <pre class="code-block"><code>git clone https://github.com/karthik-minnikanti/devbench-kit.git
-cd devbench-kit && npm ci
-npm run electron:dev</code></pre>
-            <p class="download__note">Node 18+ · kubectl &amp; docker optional</p>
+          <div class="download__side">
+            <div class="install-block">
+            <p class="install-block__label">Download links</p>
+            <ul class="download__platform-links">
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >macOS (Apple Silicon)</a
+                >
+                <span>— pick the <code>arm64</code> DMG</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >macOS (Intel)</a
+                >
+                <span>— pick the <code>x64</code> DMG</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Windows</a
+                >
+                <span>— installer or portable <code>.exe</code></span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Linux</a
+                >
+                <span>— AppImage or <code>.deb</code></span>
+              </li>
+            </ul>
+            <p class="download__note">
+              All builds are on the
+              <a
+                href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+                >latest GitHub release</a
+              >.
+            </p>
+            </div>
+            <div class="install-block install-block--notice">
+            <p class="install-block__label">macOS — please allow the app</p>
+            <p class="download__notice">
+              We are working on obtaining an Apple Developer signature and
+              notarization. Until then, macOS may block DevBench on first
+              launch — this is expected, not a bad download.
+            </p>
+            <p class="download__notice">
+              <strong>Right-click</strong> DevBench in Applications →
+              <strong>Open</strong> → confirm <strong>Open</strong> again. If
+              macOS says the app is damaged or corrupted, use the same
+              right-click → Open flow.
+            </p>
+            <p class="download__notice">
+              Please share feedback while we complete signing:
+              <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+            </p>
+            </div>
           </div>
         </div>
 
         <div class="container enterprise-cta card">
+          <div class="enterprise-cta__copy">
+            <p class="caption-uppercase">Feedback &amp; issues</p>
+            <h2>Report a bug or share ideas</h2>
+            <p>
+              Email us at
+              <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+              or
+              <a
+                href="https://github.com/karthik-minnikanti/devbench-kit/issues/new"
+                target="_blank"
+                rel="noopener noreferrer"
+                >create an issue on GitHub</a
+              >. We read every report.
+            </p>
+          </div>
+          <a class="btn btn-primary btn-lg" href="mailto:contact@devbench.in">contact@devbench.in</a>
+        </div>
+
+        <div class="container enterprise-cta card enterprise-cta--secondary">
           <div class="enterprise-cta__copy">
             <p class="caption-uppercase">Enterprise</p>
             <h2>DevBench for teams</h2>
@@ -327,6 +409,12 @@ npm run electron:dev</code></pre>
         <div class="site-footer__links">
           <a href="https://devbench.in">devbench.in</a>
           <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+          <a
+            href="https://github.com/karthik-minnikanti/devbench-kit/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Report issue</a
+          >
           <a href="https://github.com/karthik-minnikanti/devbench-kit" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href="https://github.com/karthik-minnikanti/devbench-kit/releases" target="_blank" rel="noopener noreferrer">Releases</a>
         </div>

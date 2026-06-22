@@ -141,6 +141,24 @@ export async function saveNote(note: Note): Promise<Note | null> {
     }
 }
 
+export async function loadNote(id: string): Promise<Note | null> {
+    try {
+        const electronAPI = getElectronAPI();
+        if (!electronAPI) {
+            return null;
+        }
+
+        const result = await electronAPI.notes.load(id);
+        if (result.success && result.note) {
+            return result.note;
+        }
+        return null;
+    } catch (error: any) {
+        console.error('Failed to load note:', error);
+        return null;
+    }
+}
+
 export async function deleteNote(id: string): Promise<boolean> {
     try {
         const electronAPI = getElectronAPI();

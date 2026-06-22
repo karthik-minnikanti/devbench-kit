@@ -270,18 +270,7 @@ function App() {
                     </Suspense>
                 );
             case 'notes':
-                return (
-                    <Suspense fallback={<ComponentLoader />}>
-                        <Notes
-                            pendingItemId={
-                                pendingItemNav?.toolType === 'notes'
-                                    ? pendingItemNav.itemId
-                                    : undefined
-                            }
-                            onPendingItemHandled={() => setPendingItemNav(null)}
-                        />
-                    </Suspense>
-                );
+                return null;
             case 'planner':
                 return (
                     <Suspense fallback={<ComponentLoader />}>
@@ -372,8 +361,27 @@ function App() {
                         </div>
                     )}
                     {/* Content */}
-                    <div className="flex-1 overflow-hidden bg-[var(--color-background)]" style={{ minHeight: 0 }}>
+                    <div className="flex-1 overflow-hidden bg-[var(--color-background)] relative" style={{ minHeight: 0 }}>
                         {renderContent()}
+                        <div
+                            className={
+                                activeTab === 'notes'
+                                    ? 'absolute inset-0 flex flex-col min-h-0'
+                                    : 'hidden'
+                            }
+                            aria-hidden={activeTab !== 'notes'}
+                        >
+                            <Suspense fallback={<ComponentLoader />}>
+                                <Notes
+                                    pendingItemId={
+                                        pendingItemNav?.toolType === 'notes'
+                                            ? pendingItemNav.itemId
+                                            : undefined
+                                    }
+                                    onPendingItemHandled={() => setPendingItemNav(null)}
+                                />
+                            </Suspense>
+                        </div>
                     </div>
                 </div>
 

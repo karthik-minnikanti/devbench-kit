@@ -173,17 +173,18 @@ Format, transform, and inspect payloads:
 ## 📦 Installation
 
 ### macOS
-1. Download the latest `DevBench-*-arm64.dmg` (Apple Silicon) or `DevBench-*-x64.dmg` (Intel) from [GitHub Releases](https://github.com/karthik-minnikanti/devbench-kit/releases)
+1. Download the latest `DevBench-*-arm64.dmg` (Apple Silicon) or `DevBench-*-x64.dmg` (Intel) from [GitHub Releases](https://github.com/karthik-minnikanti/devbench-kit/releases/latest)
 2. Open the DMG file (it mounts as a disk image — that is normal)
 3. Drag **DevBench** to your **Applications** folder, then eject the disk
-4. **First launch** (unsigned developer app):
-   - **Right-click** DevBench in Applications → **Open** → **Open** again in the dialog  
-   - If macOS says the app is **"damaged" or "corrupted"**, that is a Gatekeeper quarantine message, not a bad download. Fix it with:
+4. **First launch** — we are working on an Apple Developer signature and notarization. Until then, macOS may block the app. This is expected, not a bad download:
+   - **Right-click** DevBench in Applications → **Open** → **Open** again in the dialog
+   - If macOS says the app is **"damaged" or "corrupted"**, use the same right-click → Open flow, or run:
      ```bash
      xattr -cr /Applications/DevBench.app
      ```
-     Then right-click → Open once more.
 5. Launch DevBench from Applications
+
+**Feedback:** [contact@devbench.in](mailto:contact@devbench.in) · [Report an issue on GitHub](https://github.com/karthik-minnikanti/devbench-kit/issues/new)
 
 ### Windows
 1. Download `DevBench Setup 1.0.0.exe` for installation
