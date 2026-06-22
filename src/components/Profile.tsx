@@ -10,6 +10,7 @@ import {
 } from "./profile/ProfileLayout";
 import { ToolToolbar } from "./ui/ToolChrome";
 import { API_URL } from "../config/api";
+import { EULA_URL } from "../content/eula";
 import pkg from "../../package.json";
 
 const CONTACT_EMAIL = "contact@devbench.in";
@@ -125,7 +126,19 @@ function ProfileAbout() {
         <ProfileMetaList
           rows={[
             { label: "Version", value: pkg.version },
-            { label: "License", value: pkg.license ?? "MIT" },
+            {
+              label: "License",
+              value: (
+                <a
+                  href={EULA_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="profile-settings-link"
+                >
+                  Proprietary EULA
+                </a>
+              ),
+            },
             { label: "Author", value: pkg.author?.name ?? "DevBench" },
             {
               label: "Website",
@@ -156,6 +169,25 @@ function ProfileAbout() {
           <Icon name="Copy" className="w-3.5 h-3.5" aria-hidden="true" />
           Copy API URL
         </button>
+      </ProfileCard>
+
+      <ProfileCard
+        title="License terms"
+        description="Use only — redistribution and resale are not permitted."
+      >
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+          DevBench is licensed, not sold. You may use the application for personal
+          or internal business purposes. You may not copy, distribute, sublicense,
+          or sell the Software.
+        </p>
+        <a
+          href={EULA_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="profile-settings-link text-sm inline-block mt-3"
+        >
+          Read full End User License Agreement
+        </a>
       </ProfileCard>
 
       <ProfileCard

@@ -1,13 +1,12 @@
 # DevBench
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Open Source](https://img.shields.io/badge/Open%20Source-Yes-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 
 A comprehensive desktop application for developers that combines productivity tools, API testing, code execution, and planning features in one unified interface.
 
 **Homepage**: [devbench.in](https://devbench.in)
 
-**Open Source**: This project is fully open source and available under the MIT License.
+**License**: DevBench is proprietary software. Use is permitted under the [End User License Agreement](LICENSE). Redistribution and resale are not allowed.
 
 ## 🚀 Features
 
@@ -250,13 +249,18 @@ All data is stored locally in your Git repository:
 
 ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+DevBench is **proprietary software** licensed for use only — not for redistribution or resale.
 
-Copyright (c) 2025 Karthik Minnikanti
+By downloading or using DevBench, you agree to the [End User License Agreement](LICENSE).
+
+- **Permitted**: install and use for personal or internal business purposes  
+- **Not permitted**: copy, distribute, sublicense, rent, lease, lend, or sell the Software  
+
+Copyright (c) 2025–2026 Karthik Minnikanti. All rights reserved.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+This repository is not open source. Feature requests and bug reports are welcome via [GitHub Issues](https://github.com/karthik-minnikanti/devbench-kit/issues) or [contact@devbench.in](mailto:contact@devbench.in). Code contributions are accepted only by prior agreement with the author.
 
 ## 🏢 Enterprise
 

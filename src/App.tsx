@@ -9,6 +9,8 @@ import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
 import { UpdateNotification } from './components/UpdateNotification';
 import { ArchMismatchBanner } from './components/ArchMismatchBanner';
+import { EulaModal } from './components/EulaModal';
+import { isEulaAccepted } from './utils/eula';
 import { getElectronAPI } from './utils/electronAPI';
 import { appEvents, EVENTS, openTool as emitOpenTool } from './utils/appEvents';
 import { handleError } from './utils/errorHandler';
@@ -67,6 +69,7 @@ function App() {
         taskId?: string;
         addTask?: boolean;
     } | null>(null);
+    const [eulaAccepted, setEulaAccepted] = useState(() => isEulaAccepted());
 
     useEffect(() => {
         // Detect macOS for window controls spacing
@@ -423,6 +426,10 @@ function App() {
 
             {/* Update Notification */}
             <UpdateNotification />
+
+            {!eulaAccepted && (
+                <EulaModal onAccepted={() => setEulaAccepted(true)} />
+            )}
         </div>
     );
 }
