@@ -3,7 +3,8 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
-import { ensureK8sAuthentication, type K8sAuthResult } from './k8sAuth';
+import { ensureK8sAuthentication, patchKubeConfigForElectron, type K8sAuthResult } from './k8sAuth';
+import { enhancedPath, resolveExecutable } from './terminalShell';
 
 const execFileAsync = promisify(execFile);
 
@@ -186,6 +187,7 @@ export class K8sService {
                 this.kc.setCurrentContext(contextName);
             }
 
+            patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
             this.reinitializeClients();
             this.initialized = true;
         } catch (error: any) {
@@ -229,6 +231,7 @@ export class K8sService {
             if (context) {
                 this.kc.setCurrentContext(context);
             }
+            patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
             this.reinitializeClients();
         }
         return result;
@@ -260,7 +263,9 @@ export class K8sService {
      * Load kubeconfig from file (uses selected file directly; does not corrupt ~/.kube/config)
      */
     async importKubeconfig(configPath: string): Promise<void> {
+        this.kubeconfigPath = configPath;
         this.kc.loadFromFile(configPath);
+        patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
         this.reinitializeClients();
         this.initialized = true;
     }
@@ -303,6 +308,9 @@ export class K8sService {
         try {
             const args = ['top', 'pods', '--no-headers'];
             const context = this.getCurrentContext();
+            if (this.kubeconfigPath) {
+                args.unshift('--kubeconfig', this.kubeconfigPath);
+            }
             if (context) {
                 args.unshift('--context', context);
             }
@@ -312,7 +320,9 @@ export class K8sService {
                 args.push('-A');
             }
 
-            const { stdout } = await execFileAsync('kubectl', args);
+            const { stdout } = await execFileAsync(resolveExecutable('kubectl'), args, {
+                env: { ...process.env, PATH: enhancedPath() },
+            });
             const metrics: Record<string, PodMetrics> = {};
             for (const line of stdout.trim().split('\n')) {
                 if (!line.trim()) continue;

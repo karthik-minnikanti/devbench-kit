@@ -201,7 +201,11 @@ export function K8sLensView() {
   const loadNamespaces = useCallback(async () => {
     if (!window.electronAPI) return;
     const result = await window.electronAPI.k8s.namespaces();
-    if (result.success) setNamespaces(result.namespaces || []);
+    if (result.success) {
+      setNamespaces(result.namespaces || []);
+    } else if (result.error) {
+      setError(result.error);
+    }
   }, []);
 
   const loadResources = useCallback(async () => {

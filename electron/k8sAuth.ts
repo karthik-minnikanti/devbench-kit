@@ -55,6 +55,54 @@ function buildAuthEnv(kubeconfigPath?: string): NodeJS.ProcessEnv {
     return env;
 }
 
+type ExecConfig = NonNullable<k8s.User['exec']>;
+
+function getUserExec(user: k8s.User): ExecConfig | null {
+    if (user.exec?.command) {
+        return user.exec;
+    }
+    const legacy = user.authProvider?.config?.exec;
+    if (legacy?.command) {
+        return legacy;
+    }
+    return null;
+}
+
+function patchExecConfig(exec: ExecConfig, kubeconfigPath?: string): void {
+    exec.command = resolveExecutable(exec.command);
+
+    const envMap = new Map<string, string>();
+    for (const entry of exec.env || []) {
+        envMap.set(entry.name, entry.value);
+    }
+    if (!envMap.has('PATH')) {
+        envMap.set('PATH', enhancedPath());
+    }
+    if (kubeconfigPath && !envMap.has('KUBECONFIG')) {
+        envMap.set('KUBECONFIG', kubeconfigPath);
+    }
+    exec.env = Array.from(envMap.entries()).map(([name, value]) => ({ name, value }));
+}
+
+/**
+ * client-node spawns exec credential plugins with a minimal GUI-app PATH.
+ * Resolve binaries and inject KUBECONFIG/PATH so API calls work after kubectl sign-in.
+ */
+export function patchKubeConfigForElectron(kc: k8s.KubeConfig, kubeconfigPath?: string): void {
+    for (const user of kc.users) {
+        const exec = getUserExec(user);
+        if (!exec) {
+            continue;
+        }
+        patchExecConfig(exec, kubeconfigPath);
+        if (user.exec) {
+            user.exec = exec;
+        } else if (user.authProvider?.config) {
+            user.authProvider.config.exec = exec;
+        }
+    }
+}
+
 export function getUserAuthType(user: k8s.User | null | undefined): 'exec' | 'oidc' | 'none' {
     if (!user) {
         return 'none';
