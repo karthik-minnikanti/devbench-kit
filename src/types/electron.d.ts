@@ -280,11 +280,27 @@ declare global {
                 retryPendingSync: () => Promise<any>;
                 onSyncStateChange: (callback: (state: any) => void) => void;
             };
+            app: {
+                getArchMismatch: () => Promise<{
+                    mismatch?: boolean;
+                    appArch?: string;
+                    machineArch?: string;
+                    message?: string;
+                    releasesUrl?: string;
+                } | null>;
+            };
             updater: {
                 checkForUpdates: () => Promise<any>;
                 downloadUpdate: () => Promise<any>;
                 quitAndInstall: () => Promise<any>;
                 getAppVersion: () => Promise<any>;
+                getStatus: () => Promise<{
+                    enabled: boolean;
+                    checksEnabled: boolean;
+                    autoInstallSupported: boolean;
+                    signing: string;
+                    hint?: string;
+                }>;
                 onCheckingForUpdate: (callback: () => void) => void;
                 onUpdateAvailable: (callback: (info: any) => void) => void;
                 onUpdateNotAvailable: (callback: (info: any) => void) => void;

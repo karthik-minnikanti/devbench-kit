@@ -285,11 +285,15 @@ try {
                 ipcRenderer.on('git:sync-state', (_event: any, state: any) => callback(state));
             },
         },
+        app: {
+            getArchMismatch: () => ipcRenderer.invoke('app:getArchMismatch'),
+        },
         updater: {
             checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
             downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
             quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
             getAppVersion: () => ipcRenderer.invoke('updater:getAppVersion'),
+            getStatus: () => ipcRenderer.invoke('updater:getStatus'),
             onCheckingForUpdate: (callback: () => void) => {
                 ipcRenderer.on('updater:checking-for-update', () => callback());
             },
@@ -470,11 +474,15 @@ declare global {
                 retryPendingSync: () => Promise<any>;
                 onSyncStateChange: (callback: (state: any) => void) => void;
             };
+            app: {
+                getArchMismatch: () => Promise<any>;
+            };
             updater: {
                 checkForUpdates: () => Promise<any>;
                 downloadUpdate: () => Promise<any>;
                 quitAndInstall: () => Promise<any>;
                 getAppVersion: () => Promise<any>;
+                getStatus: () => Promise<any>;
                 onCheckingForUpdate: (callback: () => void) => void;
                 onUpdateAvailable: (callback: (info: any) => void) => void;
                 onUpdateNotAvailable: (callback: (info: any) => void) => void;

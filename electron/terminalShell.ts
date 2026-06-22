@@ -1,5 +1,7 @@
+import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
+import os from 'os';
 
 /** One-liner: pick an interactive shell; kubectl/docker `-it` already allocates the TTY. */
 export const REMOTE_SHELL_BOOTSTRAP =
@@ -48,11 +50,59 @@ export function defaultLocalShell(): string {
     if (process.platform === 'win32') {
         return process.env.COMSPEC || 'powershell.exe';
     }
-    return process.env.SHELL || '/bin/zsh';
+    return resolveLocalShell();
+}
+
+/** Pick the first shell that exists and is executable (GUI apps often lack a valid $SHELL). */
+export function resolveLocalShell(preferred?: string): string {
+    const candidates = [
+        preferred,
+        process.env.SHELL,
+        '/bin/zsh',
+        '/bin/bash',
+        '/bin/sh',
+    ].filter((value): value is string => Boolean(value));
+
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+        const shellPath = path.isAbsolute(candidate)
+            ? candidate
+            : resolveExecutable(candidate);
+        if (seen.has(shellPath)) {
+            continue;
+        }
+        seen.add(shellPath);
+        try {
+            fs.accessSync(shellPath, fs.constants.X_OK);
+            return shellPath;
+        } catch {
+            /* try next */
+        }
+    }
+
+    return '/bin/sh';
+}
+
+/** GUI-launched apps may have no $HOME; fall back to os.homedir() or /tmp. */
+export function resolveTerminalCwd(cwd?: string): string {
+    const candidates = [cwd, process.env.HOME, os.homedir(), '/tmp', '/'].filter(
+        (value): value is string => Boolean(value),
+    );
+
+    for (const dir of candidates) {
+        try {
+            fs.accessSync(dir, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+            return dir;
+        } catch {
+            /* try next */
+        }
+    }
+
+    return '/';
 }
 
 export function localShellInvocation(shellPath?: string): { file: string; args: string[] } {
-    const file = shellPath || defaultLocalShell();
+    const file = resolveLocalShell(shellPath);
     const base = path.basename(file).toLowerCase();
 
     if (process.platform === 'win32') {

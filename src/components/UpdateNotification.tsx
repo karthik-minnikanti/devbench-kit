@@ -37,12 +37,21 @@ export function UpdateNotification() {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string>("");
+  const [updateHint, setUpdateHint] = useState<string | null>(null);
 
   useEffect(() => {
     if (window.electronAPI?.updater?.getAppVersion) {
       window.electronAPI.updater.getAppVersion().then((result: any) => {
         if (result?.version) {
           setCurrentVersion(result.version);
+        }
+      });
+    }
+
+    if (window.electronAPI?.updater?.getStatus) {
+      void window.electronAPI.updater.getStatus().then((status: any) => {
+        if (status?.hint) {
+          setUpdateHint(status.hint);
         }
       });
     }
@@ -133,6 +142,11 @@ export function UpdateNotification() {
             <p className="text-xs text-[var(--color-text-secondary)] mb-3">
               Version {updateDownloaded.version} has been downloaded and is
               ready to install.
+              {updateHint && (
+                <span className="block mt-1 text-[var(--color-text-tertiary)]">
+                  {updateHint}
+                </span>
+              )}
             </p>
             <div className="flex gap-2">
               <button

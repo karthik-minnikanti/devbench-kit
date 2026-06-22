@@ -2,11 +2,11 @@ import { randomUUID } from 'crypto';
 import type { WebContents } from 'electron';
 import * as pty from 'node-pty';
 import {
-    defaultLocalShell,
     enhancedPath,
     localShellInvocation,
     remoteExecCommand,
     resolveExecutable,
+    resolveTerminalCwd,
 } from './terminalShell';
 
 export type TerminalKind = 'local' | 'k8s' | 'docker';
@@ -101,8 +101,8 @@ class TerminalService {
             const { file, args } = buildSpawn(options);
             const cwd =
                 options.kind === 'local'
-                    ? options.cwd || process.env.HOME || process.cwd()
-                    : process.env.HOME || process.cwd();
+                    ? resolveTerminalCwd(options.cwd)
+                    : resolveTerminalCwd();
 
             const ptyProcess = pty.spawn(file, args, {
                 name: 'xterm-256color',
@@ -131,7 +131,18 @@ class TerminalService {
             this.sessions.set(sessionId, { pty: ptyProcess, webContents });
             return { success: true, sessionId };
         } catch (error: any) {
-            return { success: false, error: error.message || String(error) };
+            const message = error?.message || String(error);
+            if (message.includes('posix_spawnp failed')) {
+                return {
+                    success: false,
+                    error:
+                        'DevShell could not start a terminal on this Mac. ' +
+                        'Install the build for your chip (Apple Silicon = arm64, Intel = x64). ' +
+                        'If already correct, try: xattr -cr /Applications/DevBench.app. ' +
+                        `Details: ${message}`,
+                };
+            }
+            return { success: false, error: message };
         }
     }
 

@@ -8,6 +8,7 @@ import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
 import { UpdateNotification } from './components/UpdateNotification';
+import { ArchMismatchBanner } from './components/ArchMismatchBanner';
 import { getElectronAPI } from './utils/electronAPI';
 import { appEvents, EVENTS, openTool as emitOpenTool } from './utils/appEvents';
 import { handleError } from './utils/errorHandler';
@@ -347,6 +348,8 @@ function App() {
                 onNewTab={handleTabChange}
                 isMac={isMac}
             />
+
+            <ArchMismatchBanner />
 
             {/* Main Layout: Editor + Secondary Sidebar */}
             <div className="flex-1 flex overflow-hidden" style={{ minHeight: 0 }}>

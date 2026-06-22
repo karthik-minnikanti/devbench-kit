@@ -19,6 +19,12 @@ import { k8sClusterStore } from './k8sClusterStore';
 import { dockerService } from './dockerService';
 import { terminalService } from './terminalService';
 import { terminalHistoryStore } from './terminalHistoryStore';
+import { getArchMismatchWarning } from './archMismatch';
+import {
+    getAutoUpdateStatus,
+    isAutoUpdateEnabled,
+    isBenignUpdateError,
+} from './autoUpdaterConfig';
 
 const execAsync = promisify(exec);
 
@@ -29,47 +35,6 @@ const __dirname = dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-
-function isMacAppSigned(): boolean {
-    if (process.platform !== 'darwin') {
-        return true;
-    }
-    try {
-        const output = execSync(`codesign -dv --verbose=4 "${process.execPath}" 2>&1`, {
-            encoding: 'utf8',
-        });
-        if (output.includes('Signature=adhoc')) {
-            return false;
-        }
-        return output.includes('Authority=Developer ID Application');
-    } catch {
-        return false;
-    }
-}
-
-function isAutoUpdateEnabled(): boolean {
-    if (isDev) {
-        return false;
-    }
-    // macOS auto-update requires a Developer ID signed build and latest-mac.yml on GitHub.
-    if (process.platform === 'darwin' && !isMacAppSigned()) {
-        console.log('[AutoUpdater] Skipping checks on unsigned macOS build');
-        return false;
-    }
-    return true;
-}
-
-function isBenignUpdateError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return (
-        message.includes('latest-mac.yml') ||
-        message.includes('latest.yml') ||
-        message.includes('latest-linux.yml') ||
-        message.includes('Cannot find latest') ||
-        message.includes('404') ||
-        message.includes('HttpError')
-    );
-}
 
 function checkForUpdatesSafely(context: string): void {
     autoUpdater.checkForUpdates().catch((err) => {
@@ -3519,12 +3484,7 @@ ipcMain.handle('updater:checkForUpdates', async () => {
         return { error: 'Updates are disabled in development mode' };
     }
     if (!isAutoUpdateEnabled()) {
-        return {
-            error:
-                process.platform === 'darwin'
-                    ? 'Auto-update requires a signed macOS build with published update metadata'
-                    : 'Auto-update is not configured for this build',
-        };
+        return { error: 'Auto-update is not configured for this build' };
     }
     try {
         const result = await autoUpdater.checkForUpdates();
@@ -3572,6 +3532,14 @@ ipcMain.handle('updater:quitAndInstall', () => {
 
 ipcMain.handle('updater:getAppVersion', () => {
     return { version: app.getVersion() };
+});
+
+ipcMain.handle('updater:getStatus', () => {
+    return getAutoUpdateStatus();
+});
+
+ipcMain.handle('app:getArchMismatch', () => {
+    return getArchMismatchWarning();
 });
 
 // Auto-updater event listeners
