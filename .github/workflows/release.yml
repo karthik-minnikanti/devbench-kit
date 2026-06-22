@@ -93,7 +93,32 @@ jobs:
           CXXFLAGS: '-std=c++20'
 
       - name: Build and publish
-        run: npm run build && npx electron-builder ${{ matrix.args }} --publish always
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+
+          detach_devbench_volumes() {
+            shopt -s nullglob
+            for vol in /Volumes/DevBench*; do
+              if [ -d "$vol" ]; then
+                echo "Detaching stale DMG volume: $vol"
+                hdiutil detach "$vol" -force || true
+              fi
+            done
+          }
+
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # Build one arch at a time so DMG volumes don't collide on the runner.
+            detach_devbench_volumes
+            npx electron-builder --mac zip dmg --x64 --publish never
+
+            detach_devbench_volumes
+            sleep 2
+            npx electron-builder --mac zip dmg --arm64 --publish always
+          else
+            npx electron-builder ${{ matrix.args }} --publish always
+          fi
         env:
           NODE_ENV: production
           VITE_API_URL: https://dev-api.devbench.in

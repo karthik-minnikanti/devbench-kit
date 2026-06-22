@@ -22,6 +22,23 @@ function normalizeArch(arch) {
   return 'x64';
 }
 
+function inferTargetArch(context) {
+  const fromContext = context.arch ?? context.packager?.arch;
+  if (fromContext) {
+    return normalizeArch(fromContext);
+  }
+
+  const appOutDir = context.appOutDir ?? '';
+  if (appOutDir.includes('mac-arm64')) {
+    return 'arm64';
+  }
+  if (appOutDir.includes('mac')) {
+    return 'x64';
+  }
+
+  return normalizeArch();
+}
+
 function shouldSignNodePtyBinary(fullPath, targetArch) {
   if (!fullPath.includes(`${path.sep}node-pty${path.sep}`)) {
     return false;
@@ -91,7 +108,7 @@ module.exports = async function adHocSignMac(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
-  const targetArch = normalizeArch(context.arch);
+  const targetArch = inferTargetArch(context);
 
   if (!fs.existsSync(appPath)) {
     throw new Error(`Expected app bundle not found for ad-hoc signing: ${appPath}`);

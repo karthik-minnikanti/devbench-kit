@@ -62,7 +62,8 @@ mas:
   # type: distribution
   # identity: "3rd Party Mac Developer Application: Your Name (TEAM_ID)"
 dmg:
-  title: ${productName} ${version}
+  # Unique volume name per arch — same title for x64+arm64 in one CI job causes hdiutil detach failures.
+  title: ${productName} ${version} ${arch}
   contents:
     - x: 130
       y: 220
