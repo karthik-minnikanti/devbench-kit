@@ -19,6 +19,7 @@ import { k8sClusterStore } from './k8sClusterStore';
 import { dockerService } from './dockerService';
 import { terminalService } from './terminalService';
 import { terminalHistoryStore } from './terminalHistoryStore';
+import { kubectlPath, kubectlSpawnEnv } from './terminalShell';
 import { getArchMismatchWarning } from './archMismatch';
 import {
     getAutoUpdateStatus,
@@ -2048,7 +2049,11 @@ ipcMain.handle('k8s:logs', async (_event: any, podName: string, namespace: strin
 
         // Start streaming with kubectl (for now - can be improved later)
         return new Promise((resolve) => {
-            const logProcess = spawn('kubectl', [...getKubectlContextArgs(), 'logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])]);
+            const logProcess = spawn(
+                kubectlPath(),
+                [...getKubectlContextArgs(), 'logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])],
+                { env: kubectlSpawnEnv() },
+            );
 
             logProcess.stdout.on('data', (data) => {
                 const lines = data.toString().split('\n').filter((line: string) => line.trim());
@@ -2155,7 +2160,7 @@ ipcMain.handle(
                 address?: string;
                 error?: string;
             }>((resolve) => {
-                const pfProcess = spawn('kubectl', pfArgs);
+                const pfProcess = spawn(kubectlPath(), pfArgs, { env: kubectlSpawnEnv() });
                 let settled = false;
                 let stderrBuf = '';
 
@@ -2270,9 +2275,11 @@ ipcMain.handle('k8s:stop-pod-port-forwards', async (_event: any, podName: string
 ipcMain.handle('k8s:exec', async (_event: any, podName: string, namespace: string, initialCommand: string) => {
     return new Promise((resolve) => {
         // Start an interactive shell session
-        const execProcess = spawn('kubectl', [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', 'sh'], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        const execProcess = spawn(
+            kubectlPath(),
+            [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', 'sh'],
+            { stdio: ['pipe', 'pipe', 'pipe'], env: kubectlSpawnEnv() },
+        );
 
         // Store initial command to send after process starts
         (execProcess as any).initialCommand = initialCommand;
@@ -2350,9 +2357,11 @@ ipcMain.handle('k8s:exec:stop', async (_event: any, podName: string, namespace: 
 
 ipcMain.handle('k8s:shell', async (_event: any, podName: string, namespace: string, shell: string = '/bin/sh') => {
     return new Promise((resolve) => {
-        const shellProcess = spawn('kubectl', [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', shell], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        const shellProcess = spawn(
+            kubectlPath(),
+            [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', shell],
+            { stdio: ['pipe', 'pipe', 'pipe'], env: kubectlSpawnEnv() },
+        );
 
         shellProcess.stdout.on('data', (data) => {
             if (mainWindow) {
@@ -2415,7 +2424,10 @@ ipcMain.handle('k8s:command', async (_event: any, command: string) => {
     try {
         await activateK8sFromStore();
         const contextArgs = getKubectlContextArgs().join(' ');
-        const { stdout, stderr } = await execAsync(`kubectl ${contextArgs} ${command}`.replace(/\s+/g, ' ').trim());
+        const { stdout, stderr } = await execAsync(
+            `"${kubectlPath()}" ${contextArgs} ${command}`.replace(/\s+/g, ' ').trim(),
+            { env: kubectlSpawnEnv() },
+        );
         return { success: !stderr, output: stdout, error: stderr || null };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };

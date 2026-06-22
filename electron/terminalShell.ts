@@ -46,6 +46,15 @@ export function resolveExecutable(name: string): string {
     return name;
 }
 
+/** Resolved kubectl binary for GUI apps with a minimal PATH. */
+export function kubectlPath(): string {
+    return resolveExecutable('kubectl');
+}
+
+export function kubectlSpawnEnv(): NodeJS.ProcessEnv {
+    return { ...process.env, PATH: enhancedPath() };
+}
+
 export function defaultLocalShell(): string {
     if (process.platform === 'win32') {
         return process.env.COMSPEC || 'powershell.exe';

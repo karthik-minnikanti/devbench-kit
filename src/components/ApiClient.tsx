@@ -81,6 +81,105 @@ type RequestTab =
   | "settings";
 type ResponseTab = "preview" | "raw" | "headers";
 
+const API_SESSION_STORAGE_KEY = "devbench-api-workspace";
+
+interface TabEditorDraft {
+  selectedRequest: string | null;
+  requestName: string;
+  method: SavedApiRequest["method"];
+  url: string;
+  baseUrl: string;
+  urlInput: string;
+  headersList: Header[];
+  queryParams: QueryParam[];
+  bodyType: BodyType;
+  body: string;
+  formData: FormDataField[];
+  binaryData: string;
+  timeout: number;
+  response: ApiResponse | null;
+  authConfig: AuthConfig;
+  preRequestScript: string;
+  testScript: string;
+  followRedirects: boolean;
+  sslVerification: boolean;
+}
+
+interface ApiWorkspaceSession {
+  openTabs: string[];
+  activeTab: string | null;
+  tabDrafts: Record<string, TabEditorDraft>;
+}
+
+function createEmptyEditorDraft(): TabEditorDraft {
+  return {
+    selectedRequest: null,
+    requestName: "",
+    method: "GET",
+    url: "",
+    baseUrl: "",
+    urlInput: "",
+    headersList: [{ key: "Content-Type", value: "application/json", enabled: true }],
+    queryParams: [{ key: "", value: "", enabled: true }],
+    bodyType: "json",
+    body: "",
+    formData: [{ key: "", value: "", type: "text", enabled: true }],
+    binaryData: "",
+    timeout: 30000,
+    response: null,
+    authConfig: { type: "none" },
+    preRequestScript: "",
+    testScript: "",
+    followRedirects: true,
+    sslVerification: true,
+  };
+}
+
+function restoreEditorDraft(
+  draft: TabEditorDraft,
+  apply: {
+    setSelectedRequest: (v: string | null) => void;
+    setRequestName: (v: string) => void;
+    setMethod: (v: SavedApiRequest["method"]) => void;
+    setUrl: (v: string) => void;
+    setBaseUrl: (v: string) => void;
+    setUrlInput: (v: string) => void;
+    setHeadersList: (v: Header[]) => void;
+    setQueryParams: (v: QueryParam[]) => void;
+    setBodyType: (v: BodyType) => void;
+    setBody: (v: string) => void;
+    setFormData: (v: FormDataField[]) => void;
+    setBinaryData: (v: string) => void;
+    setRequestTimeout: (v: number) => void;
+    setResponse: (v: ApiResponse | null) => void;
+    setAuthConfig: (v: AuthConfig) => void;
+    setPreRequestScript: (v: string) => void;
+    setTestScript: (v: string) => void;
+    setFollowRedirects: (v: boolean) => void;
+    setSslVerification: (v: boolean) => void;
+  },
+) {
+  apply.setSelectedRequest(draft.selectedRequest);
+  apply.setRequestName(draft.requestName);
+  apply.setMethod(draft.method);
+  apply.setUrl(draft.url);
+  apply.setBaseUrl(draft.baseUrl);
+  apply.setUrlInput(draft.urlInput);
+  apply.setHeadersList(draft.headersList);
+  apply.setQueryParams(draft.queryParams);
+  apply.setBodyType(draft.bodyType);
+  apply.setBody(draft.body);
+  apply.setFormData(draft.formData);
+  apply.setBinaryData(draft.binaryData);
+  apply.setRequestTimeout(draft.timeout);
+  apply.setResponse(draft.response);
+  apply.setAuthConfig(draft.authConfig);
+  apply.setPreRequestScript(draft.preRequestScript);
+  apply.setTestScript(draft.testScript);
+  apply.setFollowRedirects(draft.followRedirects);
+  apply.setSslVerification(draft.sslVerification);
+}
+
 export interface SavedApiRequest {
   id: string;
   name: string;
@@ -557,6 +656,36 @@ export function ApiClient() {
   const sidebarResizeRef = useRef<HTMLDivElement>(null);
   const requestResizeRef = useRef<HTMLDivElement>(null);
   const sidebarDefaultsApplied = useRef(false);
+  const tabDraftsRef = useRef<Record<string, TabEditorDraft>>({});
+  const sessionHydratedRef = useRef(false);
+  const workspacePersistRef = useRef<{ openTabs: string[]; activeTab: string | null }>({
+    openTabs: [],
+    activeTab: null,
+  });
+  const editorStateRef = useRef<TabEditorDraft>(createEmptyEditorDraft());
+
+  editorStateRef.current = {
+    selectedRequest,
+    requestName,
+    method,
+    url,
+    baseUrl,
+    urlInput,
+    headersList,
+    queryParams,
+    bodyType,
+    body,
+    formData,
+    binaryData,
+    timeout,
+    response,
+    authConfig,
+    preRequestScript,
+    testScript,
+    followRedirects,
+    sslVerification,
+  };
+  workspacePersistRef.current = { openTabs, activeTab };
 
   useEffect(() => {
     if (sidebarDefaultsApplied.current) return;
@@ -615,6 +744,10 @@ export function ApiClient() {
     loadRequestHistory();
     loadConsoleLogs();
     loadResizeSettings();
+
+    return () => {
+      persistWorkspaceSession();
+    };
   }, []);
 
   // Save console logs on unmount (as backup, but they should already be saved immediately)
@@ -633,6 +766,34 @@ export function ApiClient() {
       }
     };
   }, [consoleLogs]);
+
+  useEffect(() => {
+    if (!sessionHydratedRef.current) return;
+    const timer = setTimeout(() => persistWorkspaceSession(), 600);
+    return () => clearTimeout(timer);
+  }, [
+    openTabs,
+    activeTab,
+    selectedRequest,
+    requestName,
+    method,
+    url,
+    baseUrl,
+    urlInput,
+    headersList,
+    queryParams,
+    bodyType,
+    body,
+    formData,
+    binaryData,
+    timeout,
+    response,
+    authConfig,
+    preRequestScript,
+    testScript,
+    followRedirects,
+    sslVerification,
+  ]);
 
   // Load console logs from file system
   const loadConsoleLogs = async () => {
@@ -970,14 +1131,17 @@ export function ApiClient() {
       if ((window as any).electronAPI?.apiClient?.get) {
         try {
           const result = await (window as any).electronAPI.apiClient.get();
-          if (result.success && result.requests && result.requests.length > 0) {
+          if (result.success && result.requests) {
             const normalized = result.requests.map(normalizeSavedRequest);
             setRequests(normalized);
-            // Also update localStorage for backward compatibility
-            localStorage.setItem(
-              "devbench-api-requests",
-              JSON.stringify(normalized),
-            );
+            hydrateWorkspaceSession(normalized);
+            if (normalized.length > 0) {
+              // Also update localStorage for backward compatibility
+              localStorage.setItem(
+                "devbench-api-requests",
+                JSON.stringify(normalized),
+              );
+            }
             return;
           }
         } catch (err) {
@@ -996,6 +1160,7 @@ export function ApiClient() {
           ? parsed.map(normalizeSavedRequest)
           : [];
         setRequests(normalized);
+        hydrateWorkspaceSession(normalized);
         // Migrate to file storage if we have data in localStorage
         if ((window as any).electronAPI?.apiClient?.save && normalized.length > 0) {
           try {
@@ -1004,6 +1169,8 @@ export function ApiClient() {
             console.warn("Failed to migrate to file storage:", err);
           }
         }
+      } else {
+        hydrateWorkspaceSession([]);
       }
     } catch (err) {
       console.error("Failed to load API requests:", err);
@@ -1304,6 +1471,115 @@ export function ApiClient() {
     });
   };
 
+  const applyEditorDraft = (draft: TabEditorDraft) => {
+    restoreEditorDraft(draft, {
+      setSelectedRequest,
+      setRequestName,
+      setMethod,
+      setUrl,
+      setBaseUrl,
+      setUrlInput,
+      setHeadersList,
+      setQueryParams,
+      setBodyType,
+      setBody,
+      setFormData,
+      setBinaryData,
+      setRequestTimeout,
+      setResponse,
+      setAuthConfig,
+      setPreRequestScript,
+      setTestScript,
+      setFollowRedirects,
+      setSslVerification,
+    });
+  };
+
+  const persistWorkspaceSession = () => {
+    const { openTabs: tabs, activeTab: tab } = workspacePersistRef.current;
+    if (tab) {
+      tabDraftsRef.current[tab] = editorStateRef.current;
+    }
+    const session: ApiWorkspaceSession = {
+      openTabs: tabs,
+      activeTab: tab,
+      tabDrafts: tabDraftsRef.current,
+    };
+    localStorage.setItem(API_SESSION_STORAGE_KEY, JSON.stringify(session));
+  };
+
+  const hydrateWorkspaceSession = (loadedRequests: SavedApiRequest[]) => {
+    if (sessionHydratedRef.current) return;
+    sessionHydratedRef.current = true;
+
+    try {
+      const raw = localStorage.getItem(API_SESSION_STORAGE_KEY);
+      if (!raw) return;
+
+      const session = JSON.parse(raw) as ApiWorkspaceSession;
+      if (session.tabDrafts) {
+        tabDraftsRef.current = session.tabDrafts;
+      }
+      if (!session.openTabs?.length) return;
+
+      const tabs = session.openTabs;
+      const tab = session.activeTab && tabs.includes(session.activeTab)
+        ? session.activeTab
+        : tabs[0];
+
+      setOpenTabs(tabs);
+      setActiveTab(tab);
+
+      const draft = tabDraftsRef.current[tab];
+      if (draft) {
+        applyEditorDraft(draft);
+        return;
+      }
+
+      const saved = loadedRequests.find((r) => r.id === tab);
+      if (saved) {
+        setSelectedRequest(tab);
+        applySavedRequestToState(saved);
+        return;
+      }
+
+      if (tab.startsWith("temp-")) {
+        applyEditorDraft(createEmptyEditorDraft());
+      }
+    } catch (err) {
+      console.error("Failed to restore API workspace session:", err);
+    }
+  };
+
+  const saveActiveTabDraft = () => {
+    if (!activeTab) return;
+    tabDraftsRef.current[activeTab] = editorStateRef.current;
+  };
+
+  const activateTab = (tabId: string) => {
+    if (tabId === activeTab) return;
+
+    saveActiveTabDraft();
+    setActiveTab(tabId);
+
+    const draft = tabDraftsRef.current[tabId];
+    if (draft) {
+      applyEditorDraft(draft);
+      return;
+    }
+
+    const saved = requests.find((r) => r.id === tabId);
+    if (saved) {
+      setSelectedRequest(tabId);
+      applySavedRequestToState(saved);
+      return;
+    }
+
+    if (tabId.startsWith("temp-")) {
+      applyEditorDraft(createEmptyEditorDraft());
+    }
+  };
+
   const applySavedRequestToState = (request: SavedApiRequest) => {
     setRequestName(request.name ?? "");
     setMethod(request.method ?? "GET");
@@ -1340,18 +1616,12 @@ export function ApiClient() {
 
   const handleSelectRequest = (requestId: string) => {
     const request = requests.find((r) => r.id === requestId);
-    if (request) {
-      // Add to tabs if not already open
-      setOpenTabs((prev) => {
-        if (!prev.includes(requestId)) {
-          return [...prev, requestId];
-        }
-        return prev;
-      });
-      setActiveTab(requestId);
-      setSelectedRequest(requestId);
-      applySavedRequestToState(request);
-    }
+    if (!request) return;
+
+    setOpenTabs((prev) =>
+      prev.includes(requestId) ? prev : [...prev, requestId],
+    );
+    activateTab(requestId);
   };
 
   const buildSavedRequestFromState = (
@@ -1447,6 +1717,11 @@ export function ApiClient() {
       await saveRequest(savedRequest);
 
       if (activeTab?.startsWith("temp-")) {
+        const draft = tabDraftsRef.current[activeTab];
+        delete tabDraftsRef.current[activeTab];
+        if (draft) {
+          tabDraftsRef.current[requestId] = { ...draft, selectedRequest: requestId };
+        }
         setOpenTabs((prev) =>
           prev.map((tabId) => (tabId === activeTab ? requestId : tabId)),
         );
@@ -1545,28 +1820,11 @@ export function ApiClient() {
   };
 
   const handleCreateRequest = () => {
-    // Create a new temporary request ID for the tab
+    saveActiveTabDraft();
     const newRequestId = `temp-${Date.now()}`;
     setOpenTabs((prev) => [...prev, newRequestId]);
     setActiveTab(newRequestId);
-    setSelectedRequest(null);
-    setRequestName("");
-    setMethod("GET");
-    setUrl("");
-    setBaseUrl("");
-    setUrlInput(""); // Clear input value
-    setHeadersList([
-      { key: "Content-Type", value: "application/json", enabled: true },
-    ]);
-    setQueryParams([{ key: "", value: "", enabled: true }]);
-    setBodyType("json");
-    setBody("");
-    setFormData([{ key: "", value: "", type: "text", enabled: true }]);
-    setBinaryData("");
-    setResponse(null);
-    setAuthConfig({ type: "none" });
-    setPreRequestScript("");
-    setTestScript("");
+    applyEditorDraft(createEmptyEditorDraft());
   };
 
   // Update Content-Type header when body type changes
@@ -2551,6 +2809,17 @@ export function ApiClient() {
     reader.readAsDataURL(file);
   };
 
+  const beautifyBody = () => {
+    if (bodyType !== "json" || !body.trim()) return;
+    try {
+      const parsed = JSON.parse(body);
+      setBody(JSON.stringify(parsed, null, 2));
+      setError(null);
+    } catch {
+      setError("Invalid JSON — cannot beautify body");
+    }
+  };
+
   const renderBodyEditor = () => {
     if (bodyType === "none") {
       return (
@@ -3415,39 +3684,7 @@ export function ApiClient() {
                         ? "bg-[var(--color-background)] text-[var(--color-text-primary)] border-b-[var(--color-primary)] font-medium"
                         : "bg-[var(--color-sidebar)] text-[var(--color-text-secondary)] hover:bg-[var(--color-muted)] border-b-transparent"
                     }`}
-                    onClick={() => {
-                      setActiveTab(tabId);
-                      if (request) {
-                        setSelectedRequest(tabId);
-                        applySavedRequestToState(request);
-                      } else {
-                        // New request tab
-                        setSelectedRequest(null);
-                        setRequestName("");
-                        setMethod("GET");
-                        setUrl("");
-                        setBaseUrl("");
-                        setUrlInput("");
-                        setHeadersList([
-                          {
-                            key: "Content-Type",
-                            value: "application/json",
-                            enabled: true,
-                          },
-                        ]);
-                        setQueryParams([{ key: "", value: "", enabled: true }]);
-                        setBodyType("json");
-                        setBody("");
-                        setFormData([
-                          { key: "", value: "", type: "text", enabled: true },
-                        ]);
-                        setBinaryData("");
-                        setResponse(null);
-                        setAuthConfig({ type: "none" });
-                        setPreRequestScript("");
-                        setTestScript("");
-                      }
-                    }}
+                    onClick={() => activateTab(tabId)}
                   >
                     <span
                       className={`text-[10px] font-semibold flex-shrink-0 ${getHttpMethodTextClass(tabMethod)}`}
@@ -3467,32 +3704,23 @@ export function ApiClient() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setOpenTabs((prev) => {
-                          const newTabs = prev.filter((id) => id !== tabId);
-                          if (newTabs.length === 0) {
-                            setActiveTab(null);
-                            setSelectedRequest(null);
-                            setRequestName("");
-                            setMethod("GET");
-                            setUrl("");
-                            setBaseUrl("");
-                            setUrlInput("");
-                          } else if (isActive) {
-                            // If closing active tab, switch to the previous one or first one
-                            const currentIndex = prev.indexOf(tabId);
-                            const newActiveIndex =
-                              currentIndex > 0 ? currentIndex - 1 : 0;
-                            const newActiveId = newTabs[newActiveIndex];
-                            setActiveTab(newActiveId);
-                            if (
-                              newActiveId &&
-                              !newActiveId.startsWith("temp-")
-                            ) {
-                              handleSelectRequest(newActiveId);
-                            }
-                          }
-                          return newTabs;
-                        });
+                        const newTabs = openTabs.filter((id) => id !== tabId);
+                        delete tabDraftsRef.current[tabId];
+
+                        if (newTabs.length === 0) {
+                          setOpenTabs([]);
+                          setActiveTab(null);
+                          applyEditorDraft(createEmptyEditorDraft());
+                          return;
+                        }
+
+                        setOpenTabs(newTabs);
+                        if (isActive) {
+                          const currentIndex = openTabs.indexOf(tabId);
+                          const newActiveIndex =
+                            currentIndex > 0 ? currentIndex - 1 : 0;
+                          activateTab(newTabs[newActiveIndex] ?? newTabs[0]);
+                        }
                       }}
                       className="opacity-60 hover:opacity-100 hover:bg-[var(--color-muted)] rounded p-0.5 transition-all duration-200 flex-shrink-0"
                       title="Close tab"
@@ -3768,13 +3996,24 @@ export function ApiClient() {
                       <div className="text-xs font-medium text-[var(--color-text-secondary)]">
                         Body
                       </div>
-                      <select
-                        value={bodyType}
-                        onChange={(e) =>
-                          setBodyType(e.target.value as BodyType)
-                        }
-                        className="w-[200px] px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs"
-                      >
+                      <div className="flex items-center gap-2">
+                        {bodyType === "json" && (
+                          <button
+                            type="button"
+                            onClick={beautifyBody}
+                            className="btn-secondary !h-7 !py-0 !px-2 !text-xs"
+                            title="Format JSON"
+                          >
+                            Beautify
+                          </button>
+                        )}
+                        <select
+                          value={bodyType}
+                          onChange={(e) =>
+                            setBodyType(e.target.value as BodyType)
+                          }
+                          className="w-[200px] px-3 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)] text-xs"
+                        >
                         <option value="none">None</option>
                         <option value="json">JSON</option>
                         <option value="raw">Raw</option>
@@ -3784,6 +4023,7 @@ export function ApiClient() {
                         </option>
                         <option value="binary">Binary</option>
                       </select>
+                      </div>
                     </div>
 
                     {bodyType === "none" && (
