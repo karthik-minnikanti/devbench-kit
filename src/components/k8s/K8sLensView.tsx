@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { K8sClusterPanel } from "../K8sClusterPanel";
 import { K8sIntelligencePanel } from "./K8sIntelligencePanel";
 import { K8sNavigator } from "./K8sNavigator";
@@ -25,6 +25,7 @@ interface Namespace {
 async function fetchResources(
   kind: K8sResourceKind,
   namespace: string,
+  options?: { metrics?: boolean },
 ): Promise<K8sResourceRow[]> {
   if (!window.electronAPI) return [];
   const ns = namespace === ALL_NAMESPACES ? undefined : namespace;
@@ -36,7 +37,7 @@ async function fetchResources(
         return r.success ? mapResources(kind, r.nodes || []) : [];
       }
       case "pods": {
-        const r = await window.electronAPI!.k8s.pods(ns);
+        const r = await window.electronAPI!.k8s.pods(ns, { metrics: options?.metrics });
         return r.success
           ? mapResources(kind, r.pods || [], r.metrics || {}, ns)
           : [];
@@ -122,6 +123,12 @@ export function K8sLensView() {
   const [podDockTarget, setPodDockTarget] = useState<PodDockTarget | null>(null);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const clusterEpochRef = useRef(0);
+
+  const bumpClusterEpoch = () => {
+    clusterEpochRef.current += 1;
+    return clusterEpochRef.current;
+  };
 
   const applyAuthResult = (auth?: {
     success?: boolean;
@@ -200,7 +207,9 @@ export function K8sLensView() {
 
   const loadNamespaces = useCallback(async () => {
     if (!window.electronAPI) return;
+    const epoch = clusterEpochRef.current;
     const result = await window.electronAPI.k8s.namespaces();
+    if (epoch !== clusterEpochRef.current) return;
     if (result.success) {
       setNamespaces(result.namespaces || []);
     } else if (result.error) {
@@ -208,43 +217,69 @@ export function K8sLensView() {
     }
   }, []);
 
-  const loadResources = useCallback(async () => {
+  const loadResources = useCallback(async (options?: { silent?: boolean }) => {
     if (!window.electronAPI) return;
-    setLoading(true);
-    setError(null);
+    const epoch = clusterEpochRef.current;
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       if (isIntelligenceView(activeKind)) {
         const ns = selectedNamespace === ALL_NAMESPACES ? "default" : selectedNamespace;
         if (activeKind === "timeline") {
           const r = await window.electronAPI.k8s.timeline(ns);
-          if (r.success) setTimeline(r.timeline || []);
+          if (epoch !== clusterEpochRef.current) return;
+          if (r.success) {
+            const timeline = r.timeline || [];
+            if (silent) startTransition(() => setTimeline(timeline));
+            else setTimeline(timeline);
+          }
         } else if (activeKind === "dependency-graph") {
           const r = await window.electronAPI.k8s.dependencyGraph(ns);
-          if (r.success) setGraph(r.graph);
+          if (epoch !== clusterEpochRef.current) return;
+          if (r.success) {
+            const graph = r.graph;
+            if (silent) startTransition(() => setGraph(graph));
+            else setGraph(graph);
+          }
         } else if (activeKind === "events") {
           const nsParam = selectedNamespace === ALL_NAMESPACES ? undefined : selectedNamespace;
           const r = await window.electronAPI.k8s.events(nsParam);
-          if (r.success) setEvents(r.events || []);
+          if (epoch !== clusterEpochRef.current) return;
+          if (r.success) {
+            const events = r.events || [];
+            if (silent) startTransition(() => setEvents(events));
+            else setEvents(events);
+          }
         }
-        setRows([]);
+        if (!silent) setRows([]);
       } else {
-        const data = await fetchResources(activeKind, selectedNamespace);
-        setRows(data);
+        const data = await fetchResources(activeKind, selectedNamespace, {
+          metrics: silent && activeKind === "pods",
+        });
+        if (epoch !== clusterEpochRef.current) return;
+        if (silent) startTransition(() => setRows(data));
+        else setRows(data);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load resources");
+      if (epoch !== clusterEpochRef.current) return;
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Failed to load resources");
+      }
     } finally {
-      setLoading(false);
+      if (!silent && epoch === clusterEpochRef.current) {
+        setLoading(false);
+      }
     }
   }, [activeKind, selectedNamespace]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    loadClusters().then(() => {
-      loadContexts();
-      loadCurrentContext();
-      loadNamespaces();
-    });
+    void loadClusters().then(() =>
+      Promise.all([loadContexts(), loadCurrentContext(), loadNamespaces()]),
+    );
   }, [loadClusters, loadContexts, loadCurrentContext, loadNamespaces]);
 
   useEffect(() => {
@@ -262,13 +297,17 @@ export function K8sLensView() {
     closePodDock();
     loadResources();
     if (!isIntelligenceView(activeKind)) {
-      const interval = setInterval(loadResources, 8000);
+      const interval = setInterval(() => loadResources({ silent: true }), 15000);
       return () => clearInterval(interval);
     }
-  }, [activeKind, selectedNamespace, loadResources]);
+  }, [activeKind, selectedNamespace, activeClusterId, loadResources]);
 
   const handleClusterChange = async (clusterId: string) => {
     if (!window.electronAPI || clusterId === activeClusterId) return;
+    bumpClusterEpoch();
+    setRows([]);
+    setNamespaces([]);
+    setAuthMessage(null);
     setAuthLoading(true);
     setError(null);
     try {
@@ -319,6 +358,9 @@ export function K8sLensView() {
 
   const handleContextChange = async (context: string) => {
     if (!window.electronAPI) return;
+    bumpClusterEpoch();
+    setRows([]);
+    setNamespaces([]);
     setAuthLoading(true);
     setError(null);
     try {
@@ -330,6 +372,7 @@ export function K8sLensView() {
         }
         applyAuthResult(result.auth);
         await loadNamespaces();
+        await loadResources();
         setSelectedRow(null);
         closePodDock();
       } else {
@@ -529,11 +572,11 @@ export function K8sLensView() {
                 kind={activeKind}
                 rows={rows}
                 selectedId={selectedRow?.id ?? null}
-                loading={loading}
+                loading={loading && rows.length === 0}
                 filter={tableFilter}
                 onFilterChange={setTableFilter}
                 onSelect={handleSelectRow}
-                onRefresh={loadResources}
+                onRefresh={() => loadResources({ silent: true })}
                 onPodDockOpen={activeKind === "pods" ? handlePodDockFromTable : undefined}
                 activePodDockTab={podDockTab}
                 activePodDockTargetId={podDockTargetId(podDockTarget)}

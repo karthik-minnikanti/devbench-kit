@@ -3,7 +3,7 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
-import { ensureK8sAuthentication, patchKubeConfigForElectron, type K8sAuthResult } from './k8sAuth';
+import { ensureK8sAuthentication, getUserAuthType, patchKubeConfigForElectron, requiresInteractiveAuth, type K8sAuthResult } from './k8sAuth';
 import { enhancedPath, resolveExecutable } from './terminalShell';
 
 const execFileAsync = promisify(execFile);
@@ -148,10 +148,20 @@ export class K8sService {
     private watch: k8s.Watch;
     private initialized: boolean = false;
     private kubeconfigPath?: string;
+    private clusterKey?: string;
+    private authOkForClusterKey?: string;
 
     constructor() {
         this.kc = new k8s.KubeConfig();
         this.watch = new k8s.Watch(this.kc);
+    }
+
+    private clusterKeyFor(kubeconfigPath?: string, contextName?: string): string {
+        return `${kubeconfigPath ?? ''}\0${contextName ?? ''}`;
+    }
+
+    invalidateAuth(): void {
+        this.authOkForClusterKey = undefined;
     }
 
     private reinitializeClients(): void {
@@ -167,6 +177,19 @@ export class K8sService {
      */
     async initialize(kubeconfigPath?: string, contextName?: string): Promise<void> {
         try {
+            const key = this.clusterKeyFor(kubeconfigPath, contextName);
+            if (this.initialized && this.clusterKey === key) {
+                return;
+            }
+
+            const switchingCluster = this.clusterKey !== undefined && this.clusterKey !== key;
+            if (!this.initialized || switchingCluster) {
+                this.kc = new k8s.KubeConfig();
+                this.watch = new k8s.Watch(this.kc);
+                this.authOkForClusterKey = undefined;
+            }
+
+            this.clusterKey = key;
             this.kubeconfigPath = kubeconfigPath;
             if (kubeconfigPath) {
                 this.kc.loadFromFile(kubeconfigPath);
@@ -224,15 +247,57 @@ export class K8sService {
 
     async ensureAuthenticated(): Promise<K8sAuthResult> {
         this.ensureInitialized();
+        const user = this.kc.getCurrentUser();
+        const authType = getUserAuthType(user);
+
+        if (this.authOkForClusterKey === this.clusterKey) {
+            return {
+                success: true,
+                required: authType !== 'none',
+                authType: authType === 'none' ? 'none' : authType,
+            };
+        }
+
+        try {
+            await this.k8sApi.listNamespace({});
+            this.authOkForClusterKey = this.clusterKey;
+            return {
+                success: true,
+                required: authType !== 'none',
+                authType: authType === 'none' ? 'none' : authType,
+            };
+        } catch {
+            // Fall through to interactive OIDC / exec login.
+        }
+
+        if (!user) {
+            return { success: true, required: false, authType: 'none' };
+        }
+
+        const needsInteractive =
+            authType === 'exec' || (authType === 'oidc' && requiresInteractiveAuth(user));
+
+        if (!needsInteractive) {
+            return {
+                success: false,
+                required: false,
+                authType,
+                error: 'Failed to connect to cluster',
+            };
+        }
+
         const context = this.kc.getCurrentContext();
         const result = await ensureK8sAuthentication(this.kc, { kubeconfigPath: this.kubeconfigPath });
-        if (result.success && this.kubeconfigPath) {
-            this.kc.loadFromFile(this.kubeconfigPath);
-            if (context) {
-                this.kc.setCurrentContext(context);
+        if (result.success) {
+            this.authOkForClusterKey = this.clusterKey;
+            if (this.kubeconfigPath) {
+                this.kc.loadFromFile(this.kubeconfigPath);
+                if (context) {
+                    this.kc.setCurrentContext(context);
+                }
+                patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
+                this.reinitializeClients();
             }
-            patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
-            this.reinitializeClients();
         }
         return result;
     }
@@ -256,6 +321,12 @@ export class K8sService {
      */
     setContext(contextName: string): void {
         this.kc.setCurrentContext(contextName);
+        const newKey = this.clusterKeyFor(this.kubeconfigPath, contextName);
+        if (newKey !== this.clusterKey) {
+            this.clusterKey = newKey;
+            this.authOkForClusterKey = undefined;
+        }
+        patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
         this.reinitializeClients();
     }
 

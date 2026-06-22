@@ -141,7 +141,8 @@ try {
             useContext: (context: string) => ipcRenderer.invoke('k8s:use-context', context),
             authenticate: () => ipcRenderer.invoke('k8s:authenticate'),
             importConfig: (configPath: string) => ipcRenderer.invoke('k8s:import-config', configPath),
-            pods: (namespace?: string) => ipcRenderer.invoke('k8s:pods', namespace),
+            pods: (namespace?: string, options?: { metrics?: boolean }) =>
+                ipcRenderer.invoke('k8s:pods', namespace, options),
             namespaces: () => ipcRenderer.invoke('k8s:namespaces'),
             logs: (podName: string, namespace: string, tail?: number, container?: string) => ipcRenderer.invoke('k8s:logs', podName, namespace, tail, container),
             stopLogs: (podName: string, namespace: string) => ipcRenderer.invoke('k8s:stop-logs', podName, namespace),
@@ -389,7 +390,7 @@ declare global {
                 useContext: (context: string) => Promise<any>;
                 authenticate: () => Promise<any>;
                 importConfig: (configPath: string) => Promise<any>;
-                pods: (namespace?: string) => Promise<any>;
+                pods: (namespace?: string, options?: { metrics?: boolean }) => Promise<any>;
                 namespaces: () => Promise<any>;
                 logs: (podName: string, namespace: string, tail?: number, container?: string) => Promise<any>;
                 stopLogs: (podName: string, namespace: string) => Promise<any>;

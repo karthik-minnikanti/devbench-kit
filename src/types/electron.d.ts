@@ -157,7 +157,7 @@ declare global {
                 useContext: (context: string) => Promise<any>;
                 authenticate: () => Promise<any>;
                 importConfig: (configPath: string) => Promise<any>;
-                pods: (namespace?: string) => Promise<any>;
+                pods: (namespace?: string, options?: { metrics?: boolean }) => Promise<any>;
                 namespaces: () => Promise<any>;
                 logs: (podName: string, namespace: string, tail?: number, container?: string) => Promise<any>;
                 stopLogs: (podName: string, namespace: string) => Promise<any>;

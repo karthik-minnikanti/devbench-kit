@@ -1853,6 +1853,7 @@ ipcMain.handle('k8s:use-context', async (_event: any, context: string) => {
 
 ipcMain.handle('k8s:authenticate', async () => {
     try {
+        k8sService.invalidateAuth();
         const auth = await authenticateActiveK8sCluster();
         return { success: auth.success, auth };
     } catch (error: any) {
@@ -1877,13 +1878,11 @@ ipcMain.handle('k8s:import-config', async (_event: any, configPath: string) => {
     }
 });
 
-ipcMain.handle('k8s:pods', async (_event: any, namespace?: string) => {
+ipcMain.handle('k8s:pods', async (_event: any, namespace?: string, options?: { metrics?: boolean }) => {
     try {
         await activateK8sFromStore();
-        const [pods, metrics] = await Promise.all([
-            k8sService.getPods(namespace),
-            k8sService.getPodMetrics(namespace),
-        ]);
+        const pods = await k8sService.getPods(namespace);
+        const metrics = options?.metrics ? await k8sService.getPodMetrics(namespace) : {};
         return { success: true, pods: pods.map(p => p), metrics };
     } catch (error: any) {
         return { success: false, error: error.message || String(error), pods: [], metrics: {} };
