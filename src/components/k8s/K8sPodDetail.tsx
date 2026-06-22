@@ -134,7 +134,7 @@ export function K8sPodDetail({
         const serviceList = services.success ? services.services || [] : [];
         setRawPod(pod || null);
         let podSummary = buildPodSummary(pod, serviceList);
-        if (podSummary && pod && window.electronAPI.k8s.secretData) {
+        if (podSummary && pod) {
           const cmList = configMapsResult.success ? configMapsResult.configMaps || [] : [];
           podSummary = await resolvePodSummaryEnv(
             podSummary,

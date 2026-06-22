@@ -1,6 +1,7 @@
 import * as k8s from '@kubernetes/client-node';
 import { spawn } from 'child_process';
 import { shell } from 'electron';
+import { enhancedPath, resolveExecutable } from './terminalShell';
 
 export interface K8sAuthResult {
     success: boolean;
@@ -72,7 +73,8 @@ function getExecConfig(user: k8s.User): { command: string; args: string[]; env: 
         return null;
     }
 
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    // Packaged Electron apps often have a minimal PATH; ensure common locations.
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: enhancedPath() };
     if (exec.env) {
         for (const elt of exec.env) {
             env[elt.name] = elt.value;
@@ -80,7 +82,7 @@ function getExecConfig(user: k8s.User): { command: string; args: string[]; env: 
     }
 
     return {
-        command: exec.command,
+        command: resolveExecutable(exec.command),
         args: exec.args || [],
         env,
     };
@@ -198,8 +200,8 @@ async function runOidcLogin(kc: k8s.KubeConfig): Promise<K8sAuthResult> {
         const openedUrls: string[] = [];
         let settled = false;
 
-        const subprocess = spawn('kubectl', args, {
-            env: process.env,
+        const subprocess = spawn(resolveExecutable('kubectl'), args, {
+            env: { ...process.env, PATH: enhancedPath() },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
 
@@ -237,12 +239,16 @@ async function runOidcLogin(kc: k8s.KubeConfig): Promise<K8sAuthResult> {
             });
         });
 
-        subprocess.on('error', () => {
+        subprocess.on('error', (error: any) => {
             finish({
                 success: false,
                 required: true,
                 authType: 'oidc',
-                error: 'kubectl not found. Install kubectl and the oidc-login plugin.',
+                error:
+                    (error?.code === 'ENOENT'
+                        ? 'kubectl not found (ENOENT). Install kubectl and ensure it is on PATH.'
+                        : `kubectl failed to start: ${error?.message || String(error)}`) +
+                    ' DevBench uses your system kubectl for OIDC login.',
             });
         });
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import type { WebContents } from 'electron';
 import * as pty from 'node-pty';
 import {
+    defaultLocalShell,
     enhancedPath,
     localShellInvocation,
     remoteExecCommand,
