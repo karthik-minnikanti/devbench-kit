@@ -148,6 +148,7 @@ export function GitSettings({ embedded = false }: GitSettingsProps) {
         if (result.success) {
           setMessage({ type: "success", text: "Synced successfully." });
           await loadStatus();
+          window.dispatchEvent(new CustomEvent("devbench:git-data-changed"));
         } else {
           setMessage({ type: "error", text: result.error || "Failed to sync" });
         }
@@ -172,6 +173,7 @@ export function GitSettings({ embedded = false }: GitSettingsProps) {
         if (result.success) {
           setMessage({ type: "success", text: "Pulled latest changes." });
           await loadStatus();
+          window.dispatchEvent(new CustomEvent("devbench:git-data-changed"));
         } else if (result.hasConflicts) {
           setMessage({
             type: "error",

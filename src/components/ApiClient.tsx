@@ -83,6 +83,28 @@ type ResponseTab = "preview" | "raw" | "headers";
 
 const API_SESSION_STORAGE_KEY = "devbench-api-workspace";
 
+function normalizeFolderId(
+  value: string | number | null | undefined,
+): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized === "" ? null : normalized;
+}
+
+function requestBelongsToFolder(
+  request: SavedApiRequest,
+  folderId: string,
+  folderName: string,
+): boolean {
+  const requestFolderId = normalizeFolderId(request.folderId);
+  const targetFolderId = normalizeFolderId(folderId);
+  if (!targetFolderId) return false;
+  if (requestFolderId === targetFolderId) return true;
+  // Legacy imports may have stored folder name/path instead of folder id.
+  if (folderName && requestFolderId === folderName) return true;
+  return false;
+}
+
 interface TabEditorDraft {
   selectedRequest: string | null;
   requestName: string;
@@ -293,7 +315,10 @@ function normalizeSavedRequest(
     preRequestScript: raw.preRequestScript,
     testScript: raw.testScript,
     response: raw.response,
-    folderId: raw.folderId,
+    folderId:
+      raw.folderId === null || raw.folderId === undefined
+        ? null
+        : normalizeFolderId(raw.folderId),
     createdAt: raw.createdAt || new Date().toISOString(),
     updatedAt: raw.updatedAt || new Date().toISOString(),
   };
@@ -655,7 +680,7 @@ export function ApiClient() {
   const binaryFileInputRef = useRef<HTMLInputElement>(null);
   const sidebarResizeRef = useRef<HTMLDivElement>(null);
   const requestResizeRef = useRef<HTMLDivElement>(null);
-  const sidebarDefaultsApplied = useRef(false);
+  const sidebarDefaultsApplied = useRef({ groups: false, folders: false });
   const tabDraftsRef = useRef<Record<string, TabEditorDraft>>({});
   const sessionHydratedRef = useRef(false);
   const workspacePersistRef = useRef<{ openTabs: string[]; activeTab: string | null }>({
@@ -688,20 +713,21 @@ export function ApiClient() {
   workspacePersistRef.current = { openTabs, activeTab };
 
   useEffect(() => {
-    if (sidebarDefaultsApplied.current) return;
-    const rootRequests = requests.filter((request) => !request.folderId);
+    const rootRequests = requests.filter(
+      (request) => normalizeFolderId(request.folderId) === null,
+    );
     const groups = groupByDate(rootRequests);
-    if (groups.length === 0 && folders.length === 0) return;
-    sidebarDefaultsApplied.current = true;
-    if (groups.length > 0) {
-      setExpandedGroups(new Set(groups.map((group) => group.label)));
-    }
-    if (folders.length > 0) {
-      setExpandedFolders(
-        new Set(
-          folders.map((folder) => String(folder.id || "")).filter(Boolean),
-        ),
+
+    if (groups.length > 0 && !sidebarDefaultsApplied.current.groups) {
+      sidebarDefaultsApplied.current.groups = true;
+      setExpandedGroups((prev) =>
+        prev.size > 0 ? prev : new Set(groups.map((group) => group.label)),
       );
+    }
+
+    if (folders.length > 0 && !sidebarDefaultsApplied.current.folders) {
+      sidebarDefaultsApplied.current.folders = true;
+      // Keep folders collapsed by default — expanding one should not open all.
     }
   }, [requests, folders]);
 
@@ -1179,13 +1205,27 @@ export function ApiClient() {
 
   const loadFolders = async () => {
     try {
-      const loadedFolders = getFolders(null);
-      loadedFolders.sort((a, b) => {
+      const loadedFolders = getFolders(null)
+        .map((folder) => ({
+          ...folder,
+          id: normalizeFolderId(folder.id) ?? undefined,
+        }))
+        .filter((folder) => {
+          if (!folder.id) return false;
+          return true;
+        });
+      const seenFolderIds = new Set<string>();
+      const uniqueFolders = loadedFolders.filter((folder) => {
+        if (!folder.id || seenFolderIds.has(folder.id)) return false;
+        seenFolderIds.add(folder.id);
+        return true;
+      });
+      uniqueFolders.sort((a, b) => {
         const dateA = new Date(a.createdAt || 0).getTime();
         const dateB = new Date(b.createdAt || 0).getTime();
         return dateB - dateA;
       });
-      setFolders(loadedFolders);
+      setFolders(uniqueFolders);
     } catch (err) {
       console.error("Failed to load folders:", err);
     }
@@ -1326,7 +1366,9 @@ export function ApiClient() {
         setShowNewFolderInput(false);
         // Auto-expand the new folder
         if (newFolder.id) {
-          setExpandedFolders((prev) => new Set(prev).add(newFolder.id!));
+          setExpandedFolders((prev) =>
+            new Set(prev).add(String(newFolder.id)),
+          );
         }
         if ((window as any).showToast) {
           (window as any).showToast("Folder created successfully", "success");
@@ -1348,18 +1390,26 @@ export function ApiClient() {
     if (!confirm("Delete this folder? Items inside will be moved to root."))
       return;
     try {
-      const success = deleteFolder(folderId);
+      const normalizedFolderId = normalizeFolderId(folderId);
+      if (!normalizedFolderId) return;
+
+      const success = deleteFolder(normalizedFolderId);
       if (success) {
-        const requestsInFolder = requests.filter(
-          (r) => r.folderId === folderId,
+        const folderName =
+          folders.find(
+            (folder) => normalizeFolderId(folder.id) === normalizedFolderId,
+          )?.name ?? "";
+        const updatedRequests = requests.map((r) =>
+          requestBelongsToFolder(r, normalizedFolderId, folderName)
+            ? { ...r, folderId: null }
+            : r,
         );
-        const updatedRequests = requests.map((r) => {
-          if (r.folderId === folderId) {
-            return { ...r, folderId: null };
-          }
-          return r;
-        });
         saveRequests(updatedRequests);
+        setExpandedFolders((prev) => {
+          const next = new Set(prev);
+          next.delete(normalizedFolderId);
+          return next;
+        });
         await loadFolders();
         await loadRequests();
       }
@@ -1408,7 +1458,11 @@ export function ApiClient() {
     }
 
     const request = requests.find((r) => r.id === requestId);
-    if (!request || request.folderId === targetFolderId) {
+    const normalizedTargetFolderId = normalizeFolderId(targetFolderId);
+    if (
+      !request ||
+      normalizeFolderId(request.folderId) === normalizedTargetFolderId
+    ) {
       setDraggedRequestId(null);
       return;
     }
@@ -1416,16 +1470,16 @@ export function ApiClient() {
     try {
       const updatedRequests = requests.map((r) => {
         if (r.id === requestId) {
-          return { ...r, folderId: targetFolderId };
+          return { ...r, folderId: normalizedTargetFolderId };
         }
         return r;
       });
       await saveRequests(updatedRequests);
 
-      // Sync the moved request to backend
-      // Sync removed - using file storage
-      if (targetFolderId) {
-        setExpandedFolders((prev) => new Set(prev).add(targetFolderId));
+      if (normalizedTargetFolderId) {
+        setExpandedFolders((prev) =>
+          new Set(prev).add(normalizedTargetFolderId),
+        );
       }
     } catch (err) {
       console.error("Failed to move request:", err);
@@ -1435,7 +1489,7 @@ export function ApiClient() {
   };
 
   const toggleFolder = (folderId: string) => {
-    const normalizedId = String(folderId || "");
+    const normalizedId = normalizeFolderId(folderId);
     if (!normalizedId) return;
     setExpandedFolders((prev) => {
       const newSet = new Set(prev);
@@ -1448,15 +1502,22 @@ export function ApiClient() {
     });
   };
 
-  const getRequestsInFolder = (folderId: string | null) => {
+  const getRequestsInFolder = (
+    folderId: string | null,
+    folderName = "",
+  ) => {
     if (folderId === null) {
       return requests.filter(
-        (request) =>
-          request.folderId === null || request.folderId === undefined,
+        (request) => normalizeFolderId(request.folderId) === null,
       );
-    } else {
-      return requests.filter((request) => request.folderId === folderId);
     }
+
+    const normalizedFolderId = normalizeFolderId(folderId);
+    if (!normalizedFolderId) return [];
+
+    return requests.filter((request) =>
+      requestBelongsToFolder(request, normalizedFolderId, folderName),
+    );
   };
 
   const toggleGroup = (label: string) => {
@@ -3079,7 +3140,9 @@ export function ApiClient() {
   // Filter folders and their requests
   const filteredFolders = folders.filter((folder) => {
     if (!searchQuery.trim()) return true;
-    const folderRequests = getRequestsInFolder(String(folder.id || ""));
+    const folderId = normalizeFolderId(folder.id);
+    if (!folderId) return false;
+    const folderRequests = getRequestsInFolder(folderId, folder.name);
     return (
       folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       filterRequests(folderRequests).length > 0
@@ -3432,9 +3495,12 @@ export function ApiClient() {
                     {filteredFolders.length > 0 && (
                       <div className="space-y-1">
                         {filteredFolders.map((folder) => {
-                          const folderId = String(folder.id || "");
+                          const folderId = normalizeFolderId(folder.id);
                           if (!folderId) return null;
-                          const folderRequests = getRequestsInFolder(folderId);
+                          const folderRequests = getRequestsInFolder(
+                            folderId,
+                            folder.name,
+                          );
                           const filteredFolderRequests =
                             filterRequests(folderRequests);
                           const isExpanded = expandedFolders.has(folderId);

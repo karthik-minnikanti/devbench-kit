@@ -16,7 +16,6 @@ import {
   Folder,
 } from "../services/sync";
 import { Icon } from "./Icon";
-import { hasNoteChanged } from "../utils/sync";
 import { NoteItem } from "./memoized-list-items";
 import {
   ToolSidebar,
@@ -31,9 +30,32 @@ import {
 } from "../utils/noteTemplates";
 import { getThemeForTemplate } from "../utils/blockNoteThemes";
 import { useStore } from "../state/store";
+import { getElectronAPI } from "../utils/electronAPI";
 
-// Survives React Strict Mode remounts — only one note create at a time app-wide
-let noteCreateMutex = false;
+const NOTES_SESSION_KEY = "devbench-notes-session";
+const GIT_DATA_CHANGED_EVENT = "devbench:git-data-changed";
+
+function readNotesSession(): { selectedNoteId: string | null } {
+  try {
+    const raw = localStorage.getItem(NOTES_SESSION_KEY);
+    if (!raw) return { selectedNoteId: null };
+    const parsed = JSON.parse(raw);
+    return { selectedNoteId: parsed?.selectedNoteId ?? null };
+  } catch {
+    return { selectedNoteId: null };
+  }
+}
+
+function persistNotesSession(selectedNoteId: string | null) {
+  try {
+    localStorage.setItem(
+      NOTES_SESSION_KEY,
+      JSON.stringify({ selectedNoteId }),
+    );
+  } catch {
+    // ignore quota errors
+  }
+}
 
 interface Note {
   id: string;
@@ -58,6 +80,7 @@ export function Notes({
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(true);
   const [dateGroups, setDateGroups] = useState<DateGroup[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
@@ -90,36 +113,16 @@ export function Notes({
   >(() => Promise.resolve());
   const selectedNoteRef = useRef<string | null>(null);
   const noteTitleRef = useRef("");
-  const sidebarDefaultsApplied = useRef(false);
+  const saveCurrentNoteRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
     selectedNoteRef.current = selectedNote;
+    persistNotesSession(selectedNote);
   }, [selectedNote]);
 
   useEffect(() => {
     noteTitleRef.current = noteTitle;
   }, [noteTitle]);
-
-  useEffect(() => {
-    loadNotes();
-    loadFolders();
-  }, []);
-
-  useEffect(() => {
-    if (sidebarDefaultsApplied.current) return;
-    if (dateGroups.length === 0 && folders.length === 0) return;
-    sidebarDefaultsApplied.current = true;
-    if (dateGroups.length > 0) {
-      setExpandedGroups(new Set(dateGroups.map((group) => group.label)));
-    }
-    if (folders.length > 0) {
-      setExpandedFolders(
-        new Set(
-          folders.map((folder) => String(folder.id || "")).filter(Boolean),
-        ),
-      );
-    }
-  }, [dateGroups, folders]);
 
   const normalizeNoteId = (note: any): string => {
     return String(note.id || note._id || "");
@@ -160,19 +163,85 @@ export function Notes({
     [dedupeNotesById],
   );
 
-  const loadNotes = async () => {
-    if (creatingNoteRef.current || noteCreateMutex) return;
-
-    const requestId = ++loadNotesRequestRef.current;
+  const loadFolders = useCallback(async () => {
     try {
-      const loadedNotes = await getNotes();
+      const loadedFolders = await getFolders();
+      const normalizedFolders = loadedFolders.map((folder) => ({
+        ...folder,
+        id: folder.id || (folder as any)._id,
+      }));
+      normalizedFolders.sort((a, b) => {
+        const dateA = new Date(a.createdAt || 0).getTime();
+        const dateB = new Date(b.createdAt || 0).getTime();
+        return dateB - dateA;
+      });
+      setFolders(normalizedFolders);
+    } catch (err) {
+      console.error("Failed to load folders:", err);
+    }
+  }, []);
+
+  const restoreSelectionAfterLoad = useCallback(
+    (mergedNotes: Note[]) => {
+      if (creatingNoteRef.current || pendingItemId) return;
+
+      const currentSelection = selectedNoteRef.current;
       if (
-        requestId !== loadNotesRequestRef.current ||
-        creatingNoteRef.current ||
-        noteCreateMutex
+        currentSelection &&
+        mergedNotes.some((note) => note.id === currentSelection)
       ) {
         return;
       }
+
+      const sessionId = readNotesSession().selectedNoteId;
+      const targetId =
+        sessionId && mergedNotes.some((note) => note.id === sessionId)
+          ? sessionId
+          : mergedNotes.length > 0
+            ? [...mergedNotes].sort(
+                (a, b) =>
+                  new Date(b.updatedAt).getTime() -
+                  new Date(a.updatedAt).getTime(),
+              )[0].id
+            : null;
+
+      if (!targetId) return;
+
+      const note = mergedNotes.find((item) => item.id === targetId);
+      if (!note) return;
+
+      setNoteTitle(note.title);
+      setSelectedNote(targetId);
+    },
+    [pendingItemId],
+  );
+
+  const loadNotes = useCallback(async () => {
+    const requestId = ++loadNotesRequestRef.current;
+    setNotesLoading(true);
+
+    try {
+      let loadedNotes = await getNotes();
+
+      if (loadedNotes.length === 0) {
+        const api = getElectronAPI();
+        if (api?.git?.getRepoPath) {
+          for (let attempt = 0; attempt < 4; attempt++) {
+            if (requestId !== loadNotesRequestRef.current) return;
+
+            const repo = await api.git.getRepoPath();
+            if (!repo.success || !repo.repoPath) break;
+
+            await new Promise((resolve) =>
+              setTimeout(resolve, 400 * (attempt + 1)),
+            );
+            loadedNotes = await getNotes();
+            if (loadedNotes.length > 0) break;
+          }
+        }
+      }
+
+      if (requestId !== loadNotesRequestRef.current) return;
 
       const transformedNotes = loadedNotes
         .map((note) => ({
@@ -201,32 +270,65 @@ export function Notes({
           });
         }
       });
+
+      restoreSelectionAfterLoad(mergedNotes);
     } catch (err) {
       console.error("Failed to load notes:", err);
     } finally {
       if (requestId === loadNotesRequestRef.current) {
         notesLoadedRef.current = true;
+        setNotesLoading(false);
       }
     }
-  };
+  }, [applyLoadedNotes, restoreSelectionAfterLoad]);
 
-  const loadFolders = async () => {
-    try {
-      const loadedFolders = await getFolders();
-      const normalizedFolders = loadedFolders.map((folder) => ({
-        ...folder,
-        id: folder.id || (folder as any)._id,
-      }));
-      normalizedFolders.sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0).getTime();
-        const dateB = new Date(b.createdAt || 0).getTime();
-        return dateB - dateA;
-      });
-      setFolders(normalizedFolders);
-    } catch (err) {
-      console.error("Failed to load folders:", err);
+  useEffect(() => {
+    void loadNotes();
+    void loadFolders();
+  }, [loadNotes, loadFolders]);
+
+  useEffect(() => {
+    if (dateGroups.length > 0) {
+      setExpandedGroups((prev) =>
+        prev.size > 0 ? prev : new Set(dateGroups.map((group) => group.label)),
+      );
     }
-  };
+  }, [dateGroups]);
+
+  useEffect(() => {
+    if (folders.length > 0) {
+      setExpandedFolders((prev) =>
+        prev.size > 0
+          ? prev
+          : new Set(
+              folders.map((folder) => String(folder.id || "")).filter(Boolean),
+            ),
+      );
+    }
+  }, [folders]);
+
+  useEffect(() => {
+    const onDataChanged = () => {
+      void loadNotes();
+      void loadFolders();
+    };
+
+    window.addEventListener(GIT_DATA_CHANGED_EVENT, onDataChanged);
+
+    const api = getElectronAPI();
+    let wasSyncing = false;
+    const onSyncState = (state: { isSyncing?: boolean }) => {
+      if (wasSyncing && !state.isSyncing) {
+        onDataChanged();
+      }
+      wasSyncing = Boolean(state.isSyncing);
+    };
+    api?.git?.onSyncStateChange?.(onSyncState);
+
+    return () => {
+      window.removeEventListener(GIT_DATA_CHANGED_EVENT, onDataChanged);
+    };
+  }, [loadNotes, loadFolders]);
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim() || loading) return;
@@ -579,8 +681,7 @@ export function Notes({
       if (
         isSavingRef.current ||
         !selectedNote ||
-        creatingNoteRef.current ||
-        noteCreateMutex
+        creatingNoteRef.current
       ) {
         return;
       }
@@ -618,8 +719,7 @@ export function Notes({
       !selectedNote ||
       !editorRef.current ||
       isSavingRef.current ||
-      creatingNoteRef.current ||
-      noteCreateMutex
+      creatingNoteRef.current
     ) {
       return;
     }
@@ -680,6 +780,29 @@ export function Notes({
     }
   }, [selectedNote, notes, noteTitle]);
 
+  saveCurrentNoteRef.current = saveCurrentNote;
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (titleSaveTimeoutRef.current) {
+        clearTimeout(titleSaveTimeoutRef.current);
+        titleSaveTimeoutRef.current = null;
+      }
+      persistNotesSession(selectedNoteRef.current);
+      if (
+        selectedNoteRef.current &&
+        editorRef.current &&
+        lastLoadedNoteIdRef.current === selectedNoteRef.current
+      ) {
+        void saveCurrentNoteRef.current();
+      }
+    };
+  }, []);
+
   const handleSelectNote = useCallback(
     async (noteId: string) => {
       const normalizedId = String(noteId || "");
@@ -734,14 +857,12 @@ export function Notes({
 
   const handleCreateNote = useCallback(
     async (templateId?: string) => {
-      if (noteCreateMutex || creatingNoteRef.current) return;
+      if (creatingNoteRef.current) return;
 
-      noteCreateMutex = true;
       creatingNoteRef.current = true;
       setIsCreatingNote(true);
       setLoading(true);
       setShowTemplateModal(false);
-      loadNotesRequestRef.current += 1;
       loadContentRequestRef.current += 1;
 
       const uniqueId = generateUUID();
@@ -762,52 +883,60 @@ export function Notes({
           folderId: null,
         } as NoteType);
 
-        if (newNote) {
-          const noteId = String(newNote.id || (newNote as any)._id || uniqueId);
-
-          setCurrentTemplateId(templateIdToUse);
-
-          const createdNote: Note = {
-            id: noteId,
-            title: newNote.title,
-            content: newNote.content || templateContent,
-            folderId: null,
-            createdAt: newNote.createdAt || new Date().toISOString(),
-            updatedAt: newNote.updatedAt || new Date().toISOString(),
-          };
-
-          setNotes((prev) => {
-            const deduped = dedupeNotesById([
-              ...prev.filter((n) => String(n.id) !== noteId),
-              createdNote,
-            ]);
-            setDateGroups(groupByDate(deduped));
-            return deduped;
-          });
-
-          lastSyncedStateRef.current.set(noteId, {
-            title: newNote.title,
-            content: newNote.content || templateContent,
-            folderId: null,
-          });
-
-          lastLoadedNoteIdRef.current = null;
-          setNoteTitle(newNote.title);
-          setSelectedNote(noteId);
+        if (!newNote) {
+          console.error("Failed to create note: save returned null");
+          return;
         }
+
+        const noteId = String(newNote.id || (newNote as any)._id || uniqueId);
+
+        setCurrentTemplateId(templateIdToUse);
+
+        const createdNote: Note = {
+          id: noteId,
+          title: newNote.title,
+          content: newNote.content || templateContent,
+          folderId: null,
+          createdAt: newNote.createdAt || new Date().toISOString(),
+          updatedAt: newNote.updatedAt || new Date().toISOString(),
+        };
+
+        setNotes((prev) => {
+          const deduped = dedupeNotesById([
+            ...prev.filter((n) => String(n.id) !== noteId),
+            createdNote,
+          ]);
+          const grouped = groupByDate(deduped);
+          setDateGroups(grouped);
+          setExpandedGroups(
+            (prevExpanded) =>
+              new Set([
+                ...prevExpanded,
+                ...grouped.map((group) => group.label),
+              ]),
+          );
+          return deduped;
+        });
+
+        lastSyncedStateRef.current.set(noteId, {
+          title: newNote.title,
+          content: newNote.content || templateContent,
+          folderId: null,
+        });
+
+        lastLoadedNoteIdRef.current = null;
+        setNoteTitle(newNote.title);
+        setSelectedNote(noteId);
       } catch (err) {
         console.error("Failed to create note:", err);
       } finally {
         setLoading(false);
         setIsCreatingNote(false);
-        window.setTimeout(() => {
-          loadNotesRequestRef.current += 1;
-          noteCreateMutex = false;
-          creatingNoteRef.current = false;
-        }, 400);
+        creatingNoteRef.current = false;
+        void loadNotes();
       }
     },
-    [generateUUID, dedupeNotesById],
+    [generateUUID, dedupeNotesById, loadNotes],
   );
 
   handleCreateNoteRef.current = handleCreateNote;
@@ -1032,7 +1161,7 @@ export function Notes({
       // Cmd/Ctrl + N: New note
       if ((e.metaKey || e.ctrlKey) && e.key === "n" && !e.shiftKey) {
         e.preventDefault();
-        if (!noteCreateMutex && !creatingNoteRef.current) {
+        if (!creatingNoteRef.current) {
           void handleCreateNoteRef.current("blank");
         }
       }
@@ -1448,7 +1577,16 @@ export function Notes({
           ) : (
             <div className="flex-1 flex items-center justify-center bg-[var(--color-background)] w-full h-full">
               <div className="text-center px-5 max-w-md">
-                {notes.length === 0 ? (
+                {notesLoading ? (
+                  <>
+                    <div className="mb-4">
+                      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--color-muted)] flex items-center justify-center animate-pulse" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-1.5">
+                      Loading notes...
+                    </h2>
+                  </>
+                ) : notes.length === 0 ? (
                   <>
                     <div className="mb-4">
                       <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--color-muted)] flex items-center justify-center">

@@ -133,10 +133,11 @@ export async function saveNote(note: Note): Promise<Note | null> {
         if (result.success && result.note) {
             return result.note;
         }
-        return updatedNote;
+        console.error('Failed to save note:', result.error || 'Unknown error');
+        return null;
     } catch (error: any) {
         console.error('Failed to save note:', error);
-        return note;
+        return null;
     }
 }
 
