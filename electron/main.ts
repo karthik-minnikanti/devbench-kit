@@ -1717,6 +1717,11 @@ async function activateK8sFromStore(clusterId?: string) {
     return null;
 }
 
+async function authenticateActiveK8sCluster() {
+    await activateK8sFromStore();
+    return k8sService.ensureAuthenticated();
+}
+
 // Kubernetes cluster registry handlers
 ipcMain.handle('k8s:clusters:list', async () => {
     try {
@@ -1762,7 +1767,8 @@ ipcMain.handle('k8s:clusters:add', async (_event: any, payload: {
 ipcMain.handle('k8s:clusters:activate', async (_event: any, clusterId: string) => {
     try {
         const cluster = await activateK8sFromStore(clusterId);
-        return { success: true, cluster };
+        const auth = await k8sService.ensureAuthenticated();
+        return { success: auth.success, cluster, auth };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }
@@ -1868,7 +1874,22 @@ ipcMain.handle('k8s:use-context', async (_event: any, context: string) => {
         if (active) {
             await k8sClusterStore.updateCluster(active.id, { context });
         }
-        return { success: true, output: `Switched to context: ${context}`, error: null };
+        const auth = await k8sService.ensureAuthenticated();
+        return {
+            success: auth.success,
+            output: auth.success ? `Switched to context: ${context}` : undefined,
+            error: auth.error ?? null,
+            auth,
+        };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:authenticate', async () => {
+    try {
+        const auth = await authenticateActiveK8sCluster();
+        return { success: auth.success, auth };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }

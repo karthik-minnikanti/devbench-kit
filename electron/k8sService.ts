@@ -3,6 +3,7 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
+import { ensureK8sAuthentication, type K8sAuthResult } from './k8sAuth';
 
 const execFileAsync = promisify(execFile);
 
@@ -211,6 +212,15 @@ export class K8sService {
             cluster: ctx.cluster,
             user: ctx.user,
         }));
+    }
+
+    getKubeConfig(): k8s.KubeConfig {
+        return this.kc;
+    }
+
+    async ensureAuthenticated(): Promise<K8sAuthResult> {
+        this.ensureInitialized();
+        return ensureK8sAuthentication(this.kc);
     }
 
     /**

@@ -139,6 +139,7 @@ try {
             contexts: () => ipcRenderer.invoke('k8s:contexts'),
             currentContext: () => ipcRenderer.invoke('k8s:current-context'),
             useContext: (context: string) => ipcRenderer.invoke('k8s:use-context', context),
+            authenticate: () => ipcRenderer.invoke('k8s:authenticate'),
             importConfig: (configPath: string) => ipcRenderer.invoke('k8s:import-config', configPath),
             pods: (namespace?: string) => ipcRenderer.invoke('k8s:pods', namespace),
             namespaces: () => ipcRenderer.invoke('k8s:namespaces'),
@@ -382,6 +383,7 @@ declare global {
                 contexts: () => Promise<any>;
                 currentContext: () => Promise<any>;
                 useContext: (context: string) => Promise<any>;
+                authenticate: () => Promise<any>;
                 importConfig: (configPath: string) => Promise<any>;
                 pods: (namespace?: string) => Promise<any>;
                 namespaces: () => Promise<any>;

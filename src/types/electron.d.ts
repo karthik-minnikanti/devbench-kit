@@ -146,7 +146,7 @@ declare global {
                     list: () => Promise<{ success: boolean; clusters: K8sClusterProfile[]; activeClusterId: string | null; error?: string }>;
                     getActive: () => Promise<{ success: boolean; cluster: K8sClusterProfile | null; error?: string }>;
                     add: (payload: { name: string; configPath: string; context: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
-                    activate: (clusterId: string) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
+                    activate: (clusterId: string) => Promise<{ success: boolean; cluster?: K8sClusterProfile; auth?: { success?: boolean; required?: boolean; openedUrls?: string[]; error?: string }; error?: string }>;
                     remove: (clusterId: string) => Promise<{ success: boolean; activeCluster?: K8sClusterProfile | null; error?: string }>;
                     update: (payload: { id: string; name?: string; context?: string; defaultNamespace?: string }) => Promise<{ success: boolean; cluster?: K8sClusterProfile; error?: string }>;
                 };
@@ -155,6 +155,7 @@ declare global {
                 contexts: () => Promise<any>;
                 currentContext: () => Promise<any>;
                 useContext: (context: string) => Promise<any>;
+                authenticate: () => Promise<any>;
                 importConfig: (configPath: string) => Promise<any>;
                 pods: (namespace?: string) => Promise<any>;
                 namespaces: () => Promise<any>;

@@ -120,6 +120,56 @@ export function K8sLensView() {
   const [searchResults, setSearchResults] = useState<any>(null);
   const [podDockTab, setPodDockTab] = useState<PodDockTab | null>(null);
   const [podDockTarget, setPodDockTarget] = useState<PodDockTarget | null>(null);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const applyAuthResult = (auth?: {
+    success?: boolean;
+    required?: boolean;
+    openedUrls?: string[];
+    error?: string;
+  }) => {
+    if (!auth?.required) {
+      setAuthMessage(null);
+      return true;
+    }
+    if (auth.success) {
+      setAuthMessage(
+        auth.openedUrls?.length
+          ? "Signed in. Cluster connection updated."
+          : null,
+      );
+      return true;
+    }
+    if (auth.openedUrls?.length) {
+      setAuthMessage("Browser opened for OIDC sign-in. Complete login, then click Sign in again.");
+    } else {
+      setAuthMessage(auth.error || "OIDC sign-in required for this context.");
+    }
+    return false;
+  };
+
+  const handleAuthenticate = async () => {
+    if (!window.electronAPI) return;
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const result = await window.electronAPI.k8s.authenticate();
+      if (result.auth) {
+        const ok = applyAuthResult(result.auth);
+        if (ok) {
+          await loadNamespaces();
+          await loadResources();
+        }
+      } else if (!result.success) {
+        setAuthMessage(result.error || "OIDC authentication failed.");
+      }
+    } catch (err) {
+      setAuthMessage(err instanceof Error ? err.message : "OIDC authentication failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   const closePodDock = () => {
     setPodDockTab(null);
@@ -224,18 +274,33 @@ export function K8sLensView() {
 
   const handleClusterChange = async (clusterId: string) => {
     if (!window.electronAPI || clusterId === activeClusterId) return;
-    const result = await window.electronAPI.k8s.clusters.activate(clusterId);
-    if (result.success && result.cluster) {
-      setActiveClusterId(clusterId);
-      setCurrentContext(result.cluster.context);
-      setSelectedNamespace(result.cluster.defaultNamespace ?? "default");
-      setClusters((prev) =>
-        prev.map((c) => (c.id === clusterId ? result.cluster! : c)),
-      );
-      await loadContexts();
-      await loadNamespaces();
-      setSelectedRow(null);
-      closePodDock();
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const result = await window.electronAPI.k8s.clusters.activate(clusterId);
+      if (result.cluster) {
+        setActiveClusterId(clusterId);
+        setCurrentContext(result.cluster.context);
+        setSelectedNamespace(result.cluster.defaultNamespace ?? "default");
+        setClusters((prev) =>
+          prev.map((c) => (c.id === clusterId ? result.cluster! : c)),
+        );
+        await loadContexts();
+        if (result.auth) {
+          const ok = applyAuthResult(result.auth);
+          if (ok) {
+            await loadNamespaces();
+          }
+        } else {
+          await loadNamespaces();
+        }
+        setSelectedRow(null);
+        closePodDock();
+      } else {
+        setError(result.error || "Failed to switch cluster");
+      }
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -259,15 +324,27 @@ export function K8sLensView() {
 
   const handleContextChange = async (context: string) => {
     if (!window.electronAPI) return;
-    const result = await window.electronAPI.k8s.useContext(context);
-    if (result.success) {
-      setCurrentContext(context);
-      if (activeClusterId) {
-        await window.electronAPI.k8s.clusters.update({ id: activeClusterId, context });
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const result = await window.electronAPI.k8s.useContext(context);
+      if (result.success) {
+        setCurrentContext(context);
+        if (activeClusterId) {
+          await window.electronAPI.k8s.clusters.update({ id: activeClusterId, context });
+        }
+        applyAuthResult(result.auth);
+        await loadNamespaces();
+        setSelectedRow(null);
+        closePodDock();
+      } else {
+        applyAuthResult(result.auth);
+        if (!result.auth?.openedUrls?.length) {
+          setError(result.error || result.auth?.error || "Failed to switch context");
+        }
       }
-      await loadNamespaces();
-      setSelectedRow(null);
-      closePodDock();
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -397,6 +474,21 @@ export function K8sLensView() {
           ))}
         </select>
         <div className="flex-1" />
+        {authMessage && (
+          <span className="text-[11px] text-[var(--color-text-secondary)] max-w-[280px] truncate" title={authMessage}>
+            {authMessage}
+          </span>
+        )}
+        {(authMessage || authLoading) && (
+          <button
+            onClick={handleAuthenticate}
+            disabled={authLoading}
+            className="btn-secondary !h-7 !py-0 !px-2 !text-xs"
+            title="Complete OIDC sign-in"
+          >
+            {authLoading ? "Signing in..." : "Sign in"}
+          </button>
+        )}
         <button
           onClick={() => setShowClusterPanel(true)}
           className="btn-secondary !h-7 !py-0 !px-2 !text-xs"
