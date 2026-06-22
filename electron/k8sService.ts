@@ -146,6 +146,7 @@ export class K8sService {
     private customObjectsApi: k8s.CustomObjectsApi;
     private watch: k8s.Watch;
     private initialized: boolean = false;
+    private kubeconfigPath?: string;
 
     constructor() {
         this.kc = new k8s.KubeConfig();
@@ -165,6 +166,7 @@ export class K8sService {
      */
     async initialize(kubeconfigPath?: string, contextName?: string): Promise<void> {
         try {
+            this.kubeconfigPath = kubeconfigPath;
             if (kubeconfigPath) {
                 this.kc.loadFromFile(kubeconfigPath);
             } else {
@@ -220,7 +222,16 @@ export class K8sService {
 
     async ensureAuthenticated(): Promise<K8sAuthResult> {
         this.ensureInitialized();
-        return ensureK8sAuthentication(this.kc);
+        const context = this.kc.getCurrentContext();
+        const result = await ensureK8sAuthentication(this.kc, { kubeconfigPath: this.kubeconfigPath });
+        if (result.success && this.kubeconfigPath) {
+            this.kc.loadFromFile(this.kubeconfigPath);
+            if (context) {
+                this.kc.setCurrentContext(context);
+            }
+            this.reinitializeClients();
+        }
+        return result;
     }
 
     /**

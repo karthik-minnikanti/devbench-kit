@@ -126,7 +126,6 @@ export function K8sLensView() {
   const applyAuthResult = (auth?: {
     success?: boolean;
     required?: boolean;
-    openedUrls?: string[];
     error?: string;
   }) => {
     if (!auth?.required) {
@@ -134,18 +133,10 @@ export function K8sLensView() {
       return true;
     }
     if (auth.success) {
-      setAuthMessage(
-        auth.openedUrls?.length
-          ? "Signed in. Cluster connection updated."
-          : null,
-      );
+      setAuthMessage(null);
       return true;
     }
-    if (auth.openedUrls?.length) {
-      setAuthMessage("Browser opened for OIDC sign-in. Complete login, then click Sign in again.");
-    } else {
-      setAuthMessage(auth.error || "OIDC sign-in required for this context.");
-    }
+    setAuthMessage(auth.error || "OIDC sign-in required for this context.");
     return false;
   };
 
@@ -339,7 +330,8 @@ export function K8sLensView() {
         closePodDock();
       } else {
         applyAuthResult(result.auth);
-        if (!result.auth?.openedUrls?.length) {
+        const authPending = result.auth?.required && !result.auth?.success;
+        if (!authPending) {
           setError(result.error || result.auth?.error || "Failed to switch context");
         }
       }
@@ -475,7 +467,10 @@ export function K8sLensView() {
         </select>
         <div className="flex-1" />
         {authMessage && (
-          <span className="text-[11px] text-[var(--color-text-secondary)] max-w-[280px] truncate" title={authMessage}>
+          <span
+            className="text-[11px] text-[var(--color-text-secondary)] max-w-md text-right leading-snug"
+            title={authMessage}
+          >
             {authMessage}
           </span>
         )}
