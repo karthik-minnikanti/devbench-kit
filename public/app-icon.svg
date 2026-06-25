@@ -1,0 +1,36 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- DevBench app icon — paths drawn in a nested 24×24 viewBox for crisp scaling -->
+  <rect width="1024" height="1024" rx="224" fill="#f7f7f4"/>
+  <rect
+    x="160"
+    y="160"
+    width="704"
+    height="704"
+    rx="168"
+    fill="#ffffff"
+    stroke="#e6e5e0"
+    stroke-width="5"
+  />
+  <svg x="272" y="272" width="480" height="480" viewBox="0 0 24 24" fill="none">
+    <path
+      d="M8 8.5L5.5 12L8 15.5"
+      stroke="#f54e00"
+      stroke-width="1.65"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M16 8.5L18.5 12L16 15.5"
+      stroke="#f54e00"
+      stroke-width="1.65"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M13.2 7.5L10.8 16.5"
+      stroke="#807d72"
+      stroke-width="1.45"
+      stroke-linecap="round"
+    />
+  </svg>
+</svg>

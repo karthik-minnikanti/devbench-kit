@@ -1,0 +1,1189 @@
+import * as k8s from '@kubernetes/client-node';
+import { execFile } from 'child_process';
+import * as path from 'path';
+import * as os from 'os';
+import { promisify } from 'util';
+import { ensureK8sAuthentication, getUserAuthType, patchKubeConfigForElectron, requiresInteractiveAuth, type K8sAuthResult } from './k8sAuth';
+import { enhancedPath, resolveExecutable } from './terminalShell';
+
+const execFileAsync = promisify(execFile);
+
+function escapeJsonPatchPathSegment(key: string): string {
+    return key.replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function jsonPatchAnnotation(
+    existingAnnotations: Record<string, string> | undefined,
+    key: string,
+    value: string,
+): Array<{ op: 'add' | 'replace'; path: string; value: unknown }> {
+    if (!existingAnnotations) {
+        return [{ op: 'add', path: '/metadata/annotations', value: { [key]: value } }];
+    }
+    const path = `/metadata/annotations/${escapeJsonPatchPathSegment(key)}`;
+    return [{ op: key in existingAnnotations ? 'replace' : 'add', path, value }];
+}
+function getListItems<T>(response: { items?: T[]; body?: { items?: T[] } }): T[] {
+    if (Array.isArray(response.items)) {
+        return response.items;
+    }
+    if (response.body?.items) {
+        return response.body.items;
+    }
+    return [];
+}
+
+/** Extract a single resource from client-node v1.x responses. */
+function getResource<T>(response: T | { body?: T }): T {
+    if (response && typeof response === 'object' && 'body' in response && (response as { body?: T }).body) {
+        return (response as { body: T }).body;
+    }
+    return response as T;
+}
+
+/** Extract log text from readNamespacedPodLog responses. */
+function getLogText(response: string | { body?: string }): string {
+    if (typeof response === 'string') {
+        return response;
+    }
+    if (response?.body) {
+        return response.body;
+    }
+    return '';
+}
+
+/**
+ * Production-grade Kubernetes service layer for DevBench
+ * Provides intelligent analysis, diagnosis, and safe actions
+ */
+
+export interface K8sResource {
+    kind: string;
+    name: string;
+    namespace?: string;
+    metadata: any;
+    spec?: any;
+    status?: any;
+}
+
+export interface PodDiagnostic {
+    podName: string;
+    namespace: string;
+    status: 'healthy' | 'warning' | 'critical' | 'unknown';
+    rootCause?: string;
+    evidence: string[];
+    suggestedFixes: string[];
+    resourceUsage?: {
+        cpu?: { request?: string; limit?: string; usage?: string; throttled?: boolean };
+        memory?: { request?: string; limit?: string; usage?: string; oomKilled?: boolean };
+    };
+    restartCount: number;
+    lastRestart?: Date;
+    events: K8sEvent[];
+}
+
+export interface K8sEvent {
+    type: 'Normal' | 'Warning';
+    reason: string;
+    message: string;
+    timestamp: string;
+    source: string;
+    count?: number;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
+}
+
+export interface PodMetrics {
+    cpu: string;
+    memory: string;
+}
+
+export interface RestartPodResult {
+    deletedPodName: string;
+    replacementPodName?: string;
+    ownerKind?: string;
+    message: string;
+}
+
+export interface TimelineEvent {
+    timestamp: Date;
+    type: 'deployment' | 'config' | 'secret' | 'scale' | 'image' | 'crash' | 'other';
+    source: string;
+    resource: string;
+    namespace: string;
+    description: string;
+    severity: 'info' | 'warning' | 'error';
+    metadata?: any;
+}
+
+export interface DependencyNode {
+    id: string;
+    type: 'ingress' | 'service' | 'pod' | 'deployment' | 'statefulset';
+    name: string;
+    namespace: string;
+    status: 'healthy' | 'warning' | 'broken';
+    metadata?: any;
+}
+
+export interface DependencyEdge {
+    from: string;
+    to: string;
+    type: 'routes' | 'selects' | 'manages';
+    status: 'healthy' | 'broken';
+    issue?: string;
+}
+
+export interface DependencyGraph {
+    nodes: DependencyNode[];
+    edges: DependencyEdge[];
+}
+
+export class K8sService {
+    private kc: k8s.KubeConfig;
+    private k8sApi: k8s.CoreV1Api;
+    private appsV1Api: k8s.AppsV1Api;
+    private networkingV1Api: k8s.NetworkingV1Api;
+    private batchV1Api: k8s.BatchV1Api;
+    private customObjectsApi: k8s.CustomObjectsApi;
+    private watch: k8s.Watch;
+    private initialized: boolean = false;
+    private kubeconfigPath?: string;
+    private clusterKey?: string;
+    private authOkForClusterKey?: string;
+
+    constructor() {
+        this.kc = new k8s.KubeConfig();
+        this.watch = new k8s.Watch(this.kc);
+    }
+
+    private clusterKeyFor(kubeconfigPath?: string, contextName?: string): string {
+        return `${kubeconfigPath ?? ''}\0${contextName ?? ''}`;
+    }
+
+    invalidateAuth(): void {
+        this.authOkForClusterKey = undefined;
+    }
+
+    private reinitializeClients(): void {
+        this.k8sApi = this.kc.makeApiClient(k8s.CoreV1Api);
+        this.appsV1Api = this.kc.makeApiClient(k8s.AppsV1Api);
+        this.networkingV1Api = this.kc.makeApiClient(k8s.NetworkingV1Api);
+        this.batchV1Api = this.kc.makeApiClient(k8s.BatchV1Api);
+        this.customObjectsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+    }
+
+    /**
+     * Initialize Kubernetes client with kubeconfig or in-cluster config
+     */
+    async initialize(kubeconfigPath?: string, contextName?: string): Promise<void> {
+        try {
+            const key = this.clusterKeyFor(kubeconfigPath, contextName);
+            if (this.initialized && this.clusterKey === key) {
+                return;
+            }
+
+            const switchingCluster = this.clusterKey !== undefined && this.clusterKey !== key;
+            if (!this.initialized || switchingCluster) {
+                this.kc = new k8s.KubeConfig();
+                this.watch = new k8s.Watch(this.kc);
+                this.authOkForClusterKey = undefined;
+            }
+
+            this.clusterKey = key;
+            this.kubeconfigPath = kubeconfigPath;
+            if (kubeconfigPath) {
+                this.kc.loadFromFile(kubeconfigPath);
+            } else {
+                try {
+                    this.kc.loadFromDefault();
+                } catch {
+                    try {
+                        this.kc.loadFromCluster();
+                    } catch {
+                        const defaultPath = path.join(os.homedir(), '.kube', 'config');
+                        this.kc.loadFromFile(defaultPath);
+                    }
+                }
+            }
+
+            if (contextName) {
+                this.kc.setCurrentContext(contextName);
+            }
+
+            patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
+            this.reinitializeClients();
+            this.initialized = true;
+        } catch (error: any) {
+            throw new Error(`Failed to initialize Kubernetes client: ${error.message}`);
+        }
+    }
+
+    /**
+     * List contexts available in a kubeconfig file (without switching active cluster)
+     */
+    getContextsFromFile(configPath: string): string[] {
+        const kc = new k8s.KubeConfig();
+        kc.loadFromFile(configPath);
+        return kc.getContexts().map(ctx => ctx.name);
+    }
+
+    getDefaultContextFromFile(configPath: string): string {
+        const kc = new k8s.KubeConfig();
+        kc.loadFromFile(configPath);
+        return kc.getCurrentContext();
+    }
+
+    getContextDetails(): Array<{ name: string; cluster: string; user: string }> {
+        return this.kc.getContexts().map(ctx => ({
+            name: ctx.name,
+            cluster: ctx.cluster,
+            user: ctx.user,
+        }));
+    }
+
+    getKubeConfig(): k8s.KubeConfig {
+        return this.kc;
+    }
+
+    async ensureAuthenticated(): Promise<K8sAuthResult> {
+        this.ensureInitialized();
+        const user = this.kc.getCurrentUser();
+        const authType = getUserAuthType(user);
+
+        if (this.authOkForClusterKey === this.clusterKey) {
+            return {
+                success: true,
+                required: authType !== 'none',
+                authType: authType === 'none' ? 'none' : authType,
+            };
+        }
+
+        try {
+            await this.k8sApi.listNamespace({});
+            this.authOkForClusterKey = this.clusterKey;
+            return {
+                success: true,
+                required: authType !== 'none',
+                authType: authType === 'none' ? 'none' : authType,
+            };
+        } catch {
+            // Fall through to interactive OIDC / exec login.
+        }
+
+        if (!user) {
+            return { success: true, required: false, authType: 'none' };
+        }
+
+        const needsInteractive =
+            authType === 'exec' || (authType === 'oidc' && requiresInteractiveAuth(user));
+
+        if (!needsInteractive) {
+            return {
+                success: false,
+                required: false,
+                authType,
+                error: 'Failed to connect to cluster',
+            };
+        }
+
+        const context = this.kc.getCurrentContext();
+        const result = await ensureK8sAuthentication(this.kc, { kubeconfigPath: this.kubeconfigPath });
+        if (result.success) {
+            this.authOkForClusterKey = this.clusterKey;
+            if (this.kubeconfigPath) {
+                this.kc.loadFromFile(this.kubeconfigPath);
+                if (context) {
+                    this.kc.setCurrentContext(context);
+                }
+                patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
+                this.reinitializeClients();
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Get current context
+     */
+    getCurrentContext(): string {
+        return this.kc.getCurrentContext();
+    }
+
+    /**
+     * Get all contexts
+     */
+    getContexts(): string[] {
+        return this.kc.getContexts().map(ctx => ctx.name);
+    }
+
+    /**
+     * Set current context
+     */
+    setContext(contextName: string): void {
+        this.kc.setCurrentContext(contextName);
+        const newKey = this.clusterKeyFor(this.kubeconfigPath, contextName);
+        if (newKey !== this.clusterKey) {
+            this.clusterKey = newKey;
+            this.authOkForClusterKey = undefined;
+        }
+        patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
+        this.reinitializeClients();
+    }
+
+    /**
+     * Load kubeconfig from file (uses selected file directly; does not corrupt ~/.kube/config)
+     */
+    async importKubeconfig(configPath: string): Promise<void> {
+        this.kubeconfigPath = configPath;
+        this.kc.loadFromFile(configPath);
+        patchKubeConfigForElectron(this.kc, this.kubeconfigPath);
+        this.reinitializeClients();
+        this.initialized = true;
+    }
+
+    /**
+     * Get all namespaces
+     */
+    async getNamespaces(): Promise<k8s.V1Namespace[]> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.listNamespace({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get all nodes
+     */
+    async getNodes(): Promise<k8s.V1Node[]> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.listNode({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get pods (optionally filtered by namespace)
+     */
+    async getPods(namespace?: string): Promise<k8s.V1Pod[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.k8sApi.listNamespacedPod({ namespace })
+            : await this.k8sApi.listPodForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Pod CPU/memory usage via metrics-server (kubectl top).
+     * Returns map keyed by pod name (single ns) or "namespace/name" (all namespaces).
+     */
+    async getPodMetrics(namespace?: string): Promise<Record<string, PodMetrics>> {
+        this.ensureInitialized();
+        try {
+            const args = ['top', 'pods', '--no-headers'];
+            const context = this.getCurrentContext();
+            if (this.kubeconfigPath) {
+                args.unshift('--kubeconfig', this.kubeconfigPath);
+            }
+            if (context) {
+                args.unshift('--context', context);
+            }
+            if (namespace) {
+                args.push('-n', namespace);
+            } else {
+                args.push('-A');
+            }
+
+            const { stdout } = await execFileAsync(resolveExecutable('kubectl'), args, {
+                env: { ...process.env, PATH: enhancedPath() },
+            });
+            const metrics: Record<string, PodMetrics> = {};
+            for (const line of stdout.trim().split('\n')) {
+                if (!line.trim()) continue;
+                const parts = line.trim().split(/\s+/);
+                if (namespace) {
+                    if (parts.length >= 3) {
+                        metrics[parts[0]] = { cpu: parts[1], memory: parts[2] };
+                    }
+                } else if (parts.length >= 4) {
+                    metrics[`${parts[0]}/${parts[1]}`] = { cpu: parts[2], memory: parts[3] };
+                }
+            }
+            return metrics;
+        } catch {
+            return {};
+        }
+    }
+
+    /**
+     * Get deployments
+     */
+    async getDeployments(namespace?: string): Promise<k8s.V1Deployment[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedDeployment({ namespace })
+            : await this.appsV1Api.listDeploymentForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get StatefulSets
+     */
+    async getStatefulSets(namespace?: string): Promise<k8s.V1StatefulSet[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedStatefulSet({ namespace })
+            : await this.appsV1Api.listStatefulSetForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get Jobs
+     */
+    async getJobs(namespace?: string): Promise<k8s.V1Job[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.batchV1Api.listNamespacedJob({ namespace })
+            : await this.batchV1Api.listJobForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get CronJobs
+     */
+    async getCronJobs(namespace?: string): Promise<k8s.V1CronJob[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.batchV1Api.listNamespacedCronJob({ namespace })
+            : await this.batchV1Api.listCronJobForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get Services
+     */
+    async getServices(namespace?: string): Promise<k8s.V1Service[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.k8sApi.listNamespacedService({ namespace })
+            : await this.k8sApi.listServiceForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get Ingress resources
+     */
+    async getIngresses(namespace?: string): Promise<k8s.V1Ingress[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.networkingV1Api.listNamespacedIngress({ namespace })
+            : await this.networkingV1Api.listIngressForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get ConfigMaps
+     */
+    async getConfigMaps(namespace?: string): Promise<k8s.V1ConfigMap[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.k8sApi.listNamespacedConfigMap({ namespace })
+            : await this.k8sApi.listConfigMapForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get Secrets (metadata only, values masked)
+     */
+    async getSecrets(namespace?: string): Promise<any[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.k8sApi.listNamespacedSecret({ namespace })
+            : await this.k8sApi.listSecretForAllNamespaces({});
+        
+        // Mask secret values for security
+        return getListItems(response).map(secret => ({
+            ...secret,
+            data: secret.data ? Object.keys(secret.data).reduce((acc, key) => {
+                acc[key] = '***MASKED***';
+                return acc;
+            }, {} as any) : undefined,
+        }));
+    }
+
+    /** Fetch and base64-decode a single Secret's data keys. */
+    async getSecretData(namespace: string, name: string): Promise<Record<string, string>> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.readNamespacedSecret({ name, namespace });
+        const secret = getResource(response);
+        const data = secret.data || {};
+        return Object.fromEntries(
+            Object.entries(data).map(([key, val]) => [
+                key,
+                typeof val === 'string'
+                    ? Buffer.from(val, 'base64').toString('utf8')
+                    : String(val ?? ''),
+            ]),
+        );
+    }
+
+    /**
+     * Get DaemonSets
+     */
+    async getDaemonSets(namespace?: string): Promise<k8s.V1DaemonSet[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedDaemonSet({ namespace })
+            : await this.appsV1Api.listDaemonSetForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get ReplicaSets
+     */
+    async getReplicaSets(namespace?: string): Promise<k8s.V1ReplicaSet[]> {
+        this.ensureInitialized();
+        const response = namespace
+            ? await this.appsV1Api.listNamespacedReplicaSet({ namespace })
+            : await this.appsV1Api.listReplicaSetForAllNamespaces({});
+        return getListItems(response);
+    }
+
+    /**
+     * Get events for a namespace or pod
+     */
+    async getEvents(namespace?: string, fieldSelector?: string): Promise<K8sEvent[]> {
+        this.ensureInitialized();
+        try {
+            const response = namespace
+                ? await this.k8sApi.listNamespacedEvent({
+                    namespace,
+                    fieldSelector,
+                })
+                : await this.k8sApi.listEventForAllNamespaces({
+                    fieldSelector,
+                });
+            
+            return getListItems(response).map(event => ({
+                type: (event.type === 'Warning' ? 'Warning' : 'Normal') as K8sEvent['type'],
+                reason: event.reason || '',
+                message: event.message || '',
+                timestamp: event.lastTimestamp
+                    ? new Date(event.lastTimestamp).toISOString()
+                    : new Date().toISOString(),
+                source: event.source?.component || 'unknown',
+                count: event.count,
+                firstTimestamp: event.firstTimestamp
+                    ? new Date(event.firstTimestamp).toISOString()
+                    : undefined,
+                lastTimestamp: event.lastTimestamp
+                    ? new Date(event.lastTimestamp).toISOString()
+                    : undefined,
+            }));
+        } catch (error: any) {
+            // If events API fails, return empty array
+            console.error('Failed to fetch events:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get pod logs
+     */
+    async getPodLogs(podName: string, namespace: string, container?: string, tailLines: number = 100): Promise<string> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.readNamespacedPodLog({
+            name: podName,
+            namespace,
+            container,
+            follow: false,
+            previous: false,
+            tailLines,
+        });
+        return getLogText(response);
+    }
+
+    /**
+     * Get previous container logs (for crashed containers)
+     */
+    async getPreviousPodLogs(podName: string, namespace: string, container?: string, tailLines: number = 100): Promise<string> {
+        this.ensureInitialized();
+        const response = await this.k8sApi.readNamespacedPodLog({
+            name: podName,
+            namespace,
+            container,
+            follow: false,
+            previous: true,
+            tailLines,
+        });
+        return getLogText(response);
+    }
+
+    /**
+     * Diagnose a pod - comprehensive analysis
+     */
+    async diagnosePod(podName: string, namespace: string): Promise<PodDiagnostic> {
+        this.ensureInitialized();
+        
+        const pod = getResource(await this.k8sApi.readNamespacedPod({ name: podName, namespace }));
+        const podData = pod;
+        
+        const events = await this.getEvents(namespace, `involvedObject.name=${podName}`);
+        const diagnostic: PodDiagnostic = {
+            podName,
+            namespace,
+            status: 'unknown',
+            evidence: [],
+            suggestedFixes: [],
+            restartCount: 0,
+            events: events,
+        };
+
+        // Analyze container statuses
+        if (podData.status?.containerStatuses) {
+            for (const containerStatus of podData.status.containerStatuses) {
+                diagnostic.restartCount += containerStatus.restartCount || 0;
+                
+                // Check for OOM kills
+                if (containerStatus.lastState?.terminated?.reason === 'OOMKilled') {
+                    diagnostic.status = 'critical';
+                    diagnostic.rootCause = 'Container killed due to memory limit exceeded';
+                    diagnostic.evidence.push(`Container ${containerStatus.name} was OOMKilled`);
+                    diagnostic.suggestedFixes.push('Increase memory limit');
+                    diagnostic.suggestedFixes.push('Check for memory leaks in application');
+                }
+                
+                // Check for crash loop
+                if (containerStatus.state?.waiting?.reason === 'CrashLoopBackOff') {
+                    diagnostic.status = 'critical';
+                    diagnostic.rootCause = 'Container is crash looping';
+                    diagnostic.evidence.push(`Container ${containerStatus.name} is in CrashLoopBackOff state`);
+                    diagnostic.suggestedFixes.push('Check container logs for errors');
+                    diagnostic.suggestedFixes.push('Verify application configuration');
+                }
+                
+                // Check for image pull errors
+                if (containerStatus.state?.waiting?.reason === 'ImagePullBackOff' || 
+                    containerStatus.state?.waiting?.reason === 'ErrImagePull') {
+                    diagnostic.status = 'critical';
+                    diagnostic.rootCause = 'Failed to pull container image';
+                    diagnostic.evidence.push(`Image pull failed: ${containerStatus.state.waiting.message || 'Unknown error'}`);
+                    diagnostic.suggestedFixes.push('Verify image name and tag');
+                    diagnostic.suggestedFixes.push('Check image pull secrets');
+                    diagnostic.suggestedFixes.push('Verify registry access');
+                }
+            }
+        }
+
+        // Analyze resource requests/limits
+        if (podData.spec?.containers) {
+            for (const container of podData.spec.containers) {
+                const resources = container.resources;
+                if (resources) {
+                    if (!diagnostic.resourceUsage) {
+                        diagnostic.resourceUsage = {};
+                    }
+                    
+                    diagnostic.resourceUsage.cpu = {
+                        request: resources.requests?.cpu,
+                        limit: resources.limits?.cpu,
+                    };
+                    
+                    diagnostic.resourceUsage.memory = {
+                        request: resources.requests?.memory,
+                        limit: resources.limits?.memory,
+                    };
+                }
+            }
+        }
+
+        // Analyze events for additional issues
+        for (const event of events) {
+            if (event.type === 'Warning') {
+                if (event.reason === 'Failed') {
+                    diagnostic.evidence.push(`Warning: ${event.message}`);
+                    if (diagnostic.status === 'unknown') {
+                        diagnostic.status = 'warning';
+                    }
+                }
+            }
+            
+            // Check for probe failures
+            if (event.reason === 'Unhealthy' || event.message.includes('probe')) {
+                diagnostic.evidence.push(`Health probe failed: ${event.message}`);
+                diagnostic.suggestedFixes.push('Check health probe configuration');
+                diagnostic.suggestedFixes.push('Verify application health endpoint');
+            }
+        }
+
+        // Determine overall status if not already set
+        if (diagnostic.status === 'unknown') {
+            const phase = podData.status?.phase;
+            if (phase === 'Running') {
+                diagnostic.status = 'healthy';
+            } else if (phase === 'Pending') {
+                diagnostic.status = 'warning';
+                diagnostic.evidence.push('Pod is in Pending state');
+            } else if (phase === 'Failed') {
+                diagnostic.status = 'critical';
+                if (!diagnostic.rootCause) {
+                    diagnostic.rootCause = 'Pod has failed';
+                }
+            }
+        }
+
+        return diagnostic;
+    }
+
+    /**
+     * Build change timeline for a pod or namespace
+     */
+    async getTimeline(namespace: string, podName?: string): Promise<TimelineEvent[]> {
+        this.ensureInitialized();
+        const timeline: TimelineEvent[] = [];
+
+        // Get deployments
+        const deployments = await this.getDeployments(namespace);
+        for (const deployment of deployments) {
+            if (podName && !deployment.metadata?.name.includes(podName.split('-')[0])) {
+                continue;
+            }
+            
+            timeline.push({
+                timestamp: new Date(deployment.metadata?.creationTimestamp || Date.now()),
+                type: 'deployment',
+                source: 'deployment',
+                resource: deployment.metadata?.name || '',
+                namespace: namespace,
+                description: `Deployment ${deployment.metadata?.name} created`,
+                severity: 'info',
+                metadata: {
+                    replicas: deployment.spec?.replicas,
+                    image: deployment.spec?.template.spec?.containers[0]?.image,
+                },
+            });
+        }
+
+        // Get ConfigMap changes (approximate - K8s doesn't track history)
+        const configMaps = await this.getConfigMaps(namespace);
+        for (const cm of configMaps) {
+            timeline.push({
+                timestamp: new Date(cm.metadata?.creationTimestamp || Date.now()),
+                type: 'config',
+                source: 'configmap',
+                resource: cm.metadata?.name || '',
+                namespace: namespace,
+                description: `ConfigMap ${cm.metadata?.name} exists`,
+                severity: 'info',
+            });
+        }
+
+        // Get events
+        const events = await this.getEvents(namespace, podName ? `involvedObject.name=${podName}` : undefined);
+        for (const event of events) {
+            let type: TimelineEvent['type'] = 'other';
+            let severity: TimelineEvent['severity'] = event.type === 'Warning' ? 'warning' : 'info';
+            
+            if (event.reason.includes('Created') || event.reason.includes('Started')) {
+                type = 'deployment';
+            } else if (event.reason.includes('Killing') || event.reason.includes('Failed')) {
+                type = 'crash';
+                severity = 'error';
+            }
+            
+            timeline.push({
+                timestamp: new Date(event.timestamp),
+                type,
+                source: event.source,
+                resource: podName || 'unknown',
+                namespace: namespace,
+                description: event.message,
+                severity,
+            });
+        }
+
+        // Sort by timestamp
+        timeline.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        
+        return timeline;
+    }
+
+    /**
+     * Build dependency graph for a namespace
+     */
+    async getDependencyGraph(namespace: string): Promise<DependencyGraph> {
+        this.ensureInitialized();
+        const nodes: DependencyNode[] = [];
+        const edges: DependencyEdge[] = [];
+
+        // Get all resources
+        const [ingresses, services, pods, deployments] = await Promise.all([
+            this.getIngresses(namespace),
+            this.getServices(namespace),
+            this.getPods(namespace),
+            this.getDeployments(namespace),
+        ]);
+
+        // Add ingress nodes
+        for (const ingress of ingresses) {
+            nodes.push({
+                id: `ingress-${ingress.metadata?.name}`,
+                type: 'ingress',
+                name: ingress.metadata?.name || '',
+                namespace: namespace,
+                status: 'healthy',
+            });
+        }
+
+        // Add service nodes
+        for (const service of services) {
+            const serviceName = service.metadata?.name || '';
+            const endpoints = await this.k8sApi.readNamespacedEndpoints({
+                name: serviceName,
+                namespace,
+            }).catch(() => null);
+            
+            const endpointsData = endpoints ? getResource(endpoints) : null;
+            const hasEndpoints = endpointsData?.subsets && endpointsData.subsets.length > 0;
+            
+            nodes.push({
+                id: `service-${service.metadata?.name}`,
+                type: 'service',
+                name: service.metadata?.name || '',
+                namespace: namespace,
+                status: hasEndpoints ? 'healthy' : 'broken',
+            });
+
+            // Link ingress to service
+            if (ingresses.some(ing => 
+                ing.spec?.rules?.some(rule => 
+                    rule.http?.paths?.some(path => path.backend.service?.name === service.metadata?.name)
+                )
+            )) {
+                const ingress = ingresses.find(ing => 
+                    ing.spec?.rules?.some(rule => 
+                        rule.http?.paths?.some(path => path.backend.service?.name === service.metadata?.name)
+                    )
+                );
+                
+                if (ingress) {
+                    edges.push({
+                        from: `ingress-${ingress.metadata?.name}`,
+                        to: `service-${service.metadata?.name}`,
+                        type: 'routes',
+                        status: hasEndpoints ? 'healthy' : 'broken',
+                        issue: hasEndpoints ? undefined : 'Service has no endpoints',
+                    });
+                }
+            }
+
+            // Link service to pods via selectors
+            const selector = service.spec?.selector;
+            if (selector) {
+                const matchingPods = pods.filter(pod => {
+                    const labels = pod.metadata?.labels || {};
+                    return Object.keys(selector).every(key => labels[key] === selector[key]);
+                });
+
+                for (const pod of matchingPods) {
+                    const podId = `pod-${pod.metadata?.name}`;
+                    
+                    // Add pod node if not already added
+                    if (!nodes.find(n => n.id === podId)) {
+                        const phase = pod.status?.phase || 'Unknown';
+                        nodes.push({
+                            id: podId,
+                            type: 'pod',
+                            name: pod.metadata?.name || '',
+                            namespace: namespace,
+                            status: phase === 'Running' ? 'healthy' : phase === 'Failed' ? 'broken' : 'warning',
+                        });
+                    }
+
+                    edges.push({
+                        from: `service-${service.metadata?.name}`,
+                        to: podId,
+                        type: 'selects',
+                        status: matchingPods.length > 0 ? 'healthy' : 'broken',
+                    });
+                }
+
+                if (matchingPods.length === 0) {
+                    edges.push({
+                        from: `service-${service.metadata?.name}`,
+                        to: `service-${service.metadata?.name}`,
+                        type: 'selects',
+                        status: 'broken',
+                        issue: 'No pods match service selector',
+                    });
+                }
+            }
+        }
+
+        // Link deployments to pods
+        for (const deployment of deployments) {
+            const deploymentId = `deployment-${deployment.metadata?.name}`;
+            nodes.push({
+                id: deploymentId,
+                type: 'deployment',
+                name: deployment.metadata?.name || '',
+                namespace: namespace,
+                status: 'healthy',
+            });
+
+            const selector = deployment.spec?.selector?.matchLabels;
+            if (selector) {
+                const matchingPods = pods.filter(pod => {
+                    const labels = pod.metadata?.labels || {};
+                    return Object.keys(selector).every(key => labels[key] === selector[key]);
+                });
+
+                for (const pod of matchingPods) {
+                    const podId = `pod-${pod.metadata?.name}`;
+                    edges.push({
+                        from: deploymentId,
+                        to: podId,
+                        type: 'manages',
+                        status: 'healthy',
+                    });
+                }
+            }
+        }
+
+        return { nodes, edges };
+    }
+
+    /**
+     * Auto-diagnose a failing pod
+     */
+    async autoDiagnose(podName: string, namespace: string): Promise<PodDiagnostic> {
+        return this.diagnosePod(podName, namespace);
+    }
+
+    /**
+     * Search for resources
+     */
+    async search(query: {
+        image?: string;
+        envVar?: string;
+        labelSelector?: string;
+        namespace?: string;
+    }): Promise<{
+        pods: k8s.V1Pod[];
+        deployments: k8s.V1Deployment[];
+        services: k8s.V1Service[];
+    }> {
+        this.ensureInitialized();
+        
+        const results = {
+            pods: [] as k8s.V1Pod[],
+            deployments: [] as k8s.V1Deployment[],
+            services: [] as k8s.V1Service[],
+        };
+
+        // Search pods
+        const pods = await this.getPods(query.namespace);
+        for (const pod of pods) {
+            let matches = true;
+            
+            if (query.image) {
+                matches = pod.spec?.containers?.some(c => c.image?.includes(query.image)) || false;
+            }
+            
+            if (query.envVar && matches) {
+                matches = pod.spec?.containers?.some(c => 
+                    c.env?.some(e => e.name === query.envVar)
+                ) || false;
+            }
+            
+            if (query.labelSelector && matches) {
+                const [key, value] = query.labelSelector.split('=');
+                matches = pod.metadata?.labels?.[key] === value;
+            }
+            
+            if (matches) {
+                results.pods.push(pod);
+            }
+        }
+
+        // Search deployments
+        const deployments = await this.getDeployments(query.namespace);
+        for (const deployment of deployments) {
+            let matches = true;
+            
+            if (query.image) {
+                matches = deployment.spec?.template.spec?.containers?.some(c => 
+                    c.image?.includes(query.image)
+                ) || false;
+            }
+            
+            if (query.envVar && matches) {
+                matches = deployment.spec?.template.spec?.containers?.some(c => 
+                    c.env?.some(e => e.name === query.envVar)
+                ) || false;
+            }
+            
+            if (matches) {
+                results.deployments.push(deployment);
+            }
+        }
+
+        // Search services
+        const services = await this.getServices(query.namespace);
+        if (query.labelSelector) {
+            const [key, value] = query.labelSelector.split('=');
+            results.services = services.filter(s => s.metadata?.labels?.[key] === value);
+        } else {
+            results.services = services;
+        }
+
+        return results;
+    }
+
+    /**
+     * Safe actions - Scale deployment
+     */
+    async scaleDeployment(name: string, namespace: string, replicas: number, environment?: string): Promise<void> {
+        this.ensureInitialized();
+        
+        // Guard: prevent scaling in production without explicit confirmation
+        if (environment === 'production' || namespace.includes('prod')) {
+            throw new Error('Cannot scale in production without explicit confirmation');
+        }
+        
+        await this.appsV1Api.patchNamespacedDeployment({
+            name,
+            namespace,
+            body: [{ op: 'replace', path: '/spec/replicas', value: replicas }],
+        });
+    }
+
+    /**
+     * Safe actions - Restart pod (delete + wait for controller replacement)
+     */
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private async waitForReplacementPod(
+        namespace: string,
+        deletedName: string,
+        ownerKind: string,
+        ownerName: string,
+    ): Promise<string | undefined> {
+        const deadline = Date.now() + 20000;
+
+        while (Date.now() < deadline) {
+            if (ownerKind === 'StatefulSet') {
+                try {
+                    const pod = getResource(
+                        await this.k8sApi.readNamespacedPod({ name: deletedName, namespace }),
+                    );
+                    if (pod.metadata?.name && !pod.metadata?.deletionTimestamp) {
+                        return deletedName;
+                    }
+                } catch {
+                    // Pod not recreated yet
+                }
+            } else {
+                const pods = await this.getPods(namespace);
+                const replacement = pods.find((p) => {
+                    const podName = p.metadata?.name;
+                    if (!podName || podName === deletedName) return false;
+                    return (p.metadata?.ownerReferences || []).some(
+                        (ref) => ref.kind === ownerKind && ref.name === ownerName,
+                    );
+                });
+                if (replacement?.metadata?.name) {
+                    return replacement.metadata.name;
+                }
+            }
+
+            await this.delay(500);
+        }
+
+        return undefined;
+    }
+
+    async restartPod(name: string, namespace: string, environment?: string): Promise<RestartPodResult> {
+        this.ensureInitialized();
+
+        if (environment === 'production' || namespace.includes('prod')) {
+            throw new Error('Cannot restart pod in production without explicit confirmation');
+        }
+
+        const pod = getResource(await this.k8sApi.readNamespacedPod({ name, namespace }));
+        const owner = pod.metadata?.ownerReferences?.[0];
+
+        if (!owner) {
+            throw new Error(
+                'This pod is not managed by a controller. Deleting it would remove it permanently.',
+            );
+        }
+
+        if (owner.kind === 'Job') {
+            throw new Error('Job pods cannot be restarted this way. Run the Job again instead.');
+        }
+
+        const supportedOwners = ['ReplicaSet', 'StatefulSet', 'DaemonSet', 'ReplicationController'];
+        if (!supportedOwners.includes(owner.kind)) {
+            throw new Error(`Restart is not supported for pods owned by ${owner.kind}.`);
+        }
+
+        await this.k8sApi.deleteNamespacedPod({ name, namespace });
+
+        const replacementPodName = await this.waitForReplacementPod(
+            namespace,
+            name,
+            owner.kind,
+            owner.name,
+        );
+
+        let message: string;
+        if (replacementPodName) {
+            message =
+                replacementPodName === name
+                    ? `Pod ${name} is restarting.`
+                    : `Pod replaced by ${replacementPodName}.`;
+        } else {
+            message =
+                'Pod deleted. Its controller should create a replacement shortly — refresh if it does not appear.';
+        }
+
+        return {
+            deletedPodName: name,
+            replacementPodName,
+            ownerKind: owner.kind,
+            message,
+        };
+    }
+
+    /**
+     * Safe actions - Rollout restart deployment
+     */
+    async rolloutRestart(name: string, namespace: string, environment?: string): Promise<void> {
+        this.ensureInitialized();
+        
+        if (environment === 'production' || namespace.includes('prod')) {
+            throw new Error('Cannot restart deployment in production without explicit confirmation');
+        }
+        
+        // Add annotation to trigger rollout restart
+        const deployment = getResource(await this.appsV1Api.readNamespacedDeployment({ name, namespace }));
+        const restartedAt = new Date().toISOString();
+        const restartAnnotation = 'kubectl.kubernetes.io/restartedAt';
+
+        await this.appsV1Api.patchNamespacedDeployment({
+            name,
+            namespace,
+            body: jsonPatchAnnotation(deployment.metadata?.annotations, restartAnnotation, restartedAt),
+        });
+    }
+
+    private ensureInitialized(): void {
+        if (!this.initialized) {
+            throw new Error('Kubernetes service not initialized. Call initialize() first.');
+        }
+    }
+}
+
+// Singleton instance
+export const k8sService = new K8sService();
+

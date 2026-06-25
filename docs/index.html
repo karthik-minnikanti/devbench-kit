@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="DevBench — an open-source desktop workbench for API testing, data utilities, Kubernetes, Docker, terminals, notes, and planning."
+    />
+    <title>DevBench — Developer workbench</title>
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container site-header__inner">
+        <a href="#" class="brand" aria-label="DevBench home">
+          <img src="logo.svg" alt="" class="brand__mark" width="26" height="26" />
+          <span>Dev<span class="brand__accent">Bench</span></span>
+        </a>
+        <nav class="site-nav" aria-label="Main">
+          <a href="#highlights">Highlights</a>
+          <a href="#tools">Tools</a>
+          <a href="#download">Download</a>
+        </nav>
+        <div class="header-actions">
+          <a
+            class="btn btn-secondary"
+            href="https://github.com/karthik-minnikanti/devbench-kit"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub
+          </a>
+          <a class="btn btn-primary" href="#download">Download</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero__watermark" aria-hidden="true">
+          <img src="logo.svg" alt="" class="hero__watermark-mark" />
+          <div class="hero__watermark-text">
+            Dev<span class="brand__accent">Bench</span>
+          </div>
+        </div>
+
+        <div class="container hero__inner">
+          <div class="hero__intro">
+            <p class="eyebrow">Desktop developer workbench</p>
+            <h1>The developer workbench <span>on your machine</span></h1>
+            <p class="hero__lead">
+              API testing, JSON utilities, Kubernetes and Docker tools, integrated
+              terminals, notes, and planning — one native app. No accounts. Your
+              data stays local.
+            </p>
+            <div class="hero__actions">
+              <a
+                class="btn btn-primary btn-lg"
+                href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Download for free
+              </a>
+              <a
+                class="btn btn-secondary btn-lg"
+                href="https://github.com/karthik-minnikanti/devbench-kit"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                View source
+              </a>
+            </div>
+          </div>
+
+          <div class="hero__visual">
+            <div class="terminal-mock" role="img" aria-label="DevBench DevShell terminal">
+              <div class="terminal-mock__tabs">
+                <span class="terminal-mock__tab terminal-mock__tab--active">DevShell · local</span>
+                <span class="terminal-mock__tab">DevShell · k8s/api-pod</span>
+                <span class="terminal-mock__tab">API Studio</span>
+              </div>
+              <div class="terminal-mock__body">
+                <pre class="terminal-mock__screen"><code><span class="t-dim">DevBench · Developer Tools</span>
+
+<span class="t-prompt">~</span> <span class="t-dim">$</span> curl localhost:8080/health
+{
+  <span class="t-key">"status"</span>: <span class="t-str">"ok"</span>
+}
+
+<span class="t-prompt">~</span> <span class="t-dim">$</span> <span class="t-cursor">▋</span></code></pre>
+              </div>
+              <div class="terminal-mock__status">
+                <span class="status-dot status-dot--ok"></span> connected
+                <span class="t-dim">·</span> xterm-256color
+              </div>
+            </div>
+          </div>
+
+          <dl class="hero__stats">
+            <div>
+              <dt>16</dt>
+              <dd>built-in tools</dd>
+            </div>
+            <div>
+              <dt>5</dt>
+              <dd>workflow groups</dd>
+            </div>
+            <div>
+              <dt>Free</dt>
+              <dd>to download</dd>
+            </div>
+            <div>
+              <dt>EULA</dt>
+              <dd>use only</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="workflow-band">
+        <div class="container workflow-band__grid">
+          <article class="workflow-chip">
+            <span class="workflow-chip__label">Build &amp; run</span>
+            <span class="workflow-chip__name">JS Runner</span>
+          </article>
+          <article class="workflow-chip">
+            <span class="workflow-chip__label">Debug &amp; inspect</span>
+            <span class="workflow-chip__name">API · Regex · JSON Diff</span>
+          </article>
+          <article class="workflow-chip">
+            <span class="workflow-chip__label">Transform data</span>
+            <span class="workflow-chip__name">Format · Schema · Encode</span>
+          </article>
+          <article class="workflow-chip workflow-chip--accent">
+            <span class="workflow-chip__label">Ship &amp; operate</span>
+            <span class="workflow-chip__name">Kube Lens · Docker · DevShell</span>
+          </article>
+          <article class="workflow-chip">
+            <span class="workflow-chip__label">Document &amp; plan</span>
+            <span class="workflow-chip__name">Notes · Planner · Diagrams</span>
+          </article>
+        </div>
+      </section>
+
+      <section id="highlights" class="section">
+        <div class="container">
+          <div class="section__header section__header--center">
+            <p class="caption-uppercase">Highlights</p>
+            <h2>What makes it useful day to day</h2>
+            <p>
+              Not a hosted platform — a desktop app you install once. These are the
+              areas people open most often.
+            </p>
+          </div>
+
+          <div class="highlights-grid">
+            <article class="highlight-card card">
+              <div class="highlight-card__icon">01</div>
+              <h3>API Studio</h3>
+              <p>
+                Send REST requests, save collections, import cURL and Postman
+                exports. Preview JSON responses, copy headers, keep history on disk.
+              </p>
+              <ul class="highlight-card__tags">
+                <li>Collections</li>
+                <li>cURL import</li>
+                <li>JSON preview</li>
+              </ul>
+            </article>
+
+            <article class="highlight-card card">
+              <div class="highlight-card__icon">02</div>
+              <h3>Kube Lens &amp; DevShell</h3>
+              <p>
+                Browse pods across clusters, tail logs in the panel, inspect env
+                vars, and open shells in DevShell — local, Kubernetes, or Docker —
+                with real terminal sessions.
+              </p>
+              <ul class="highlight-card__tags">
+                <li>Multi-cluster</li>
+                <li>Pod logs</li>
+                <li>PTY shells</li>
+              </ul>
+            </article>
+
+            <article class="highlight-card card">
+              <div class="highlight-card__icon">03</div>
+              <h3>Data utilities</h3>
+              <p>
+                Format and minify JSON, diff two payloads, generate schemas, convert
+                CSV and YAML, encode Base64 — Monaco editors throughout, built for
+                quick copy-paste work.
+              </p>
+              <ul class="highlight-card__tags">
+                <li>JSON Diff</li>
+                <li>Schema gen</li>
+                <li>Monaco</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="tools" class="section section--soft">
+        <div class="container">
+          <div class="section__header">
+            <p class="caption-uppercase">Full toolbox</p>
+            <h2>Every tool in DevBench</h2>
+            <p>
+              Same grouping as the in-app home screen. macOS, Windows, and Linux
+              builds available from GitHub Releases.
+            </p>
+          </div>
+
+          <div class="tools-columns">
+            <div class="tool-category card">
+              <h3>Build &amp; run</h3>
+              <ul class="tool-list">
+                <li><strong>JS Runner</strong><span>Run JavaScript snippets with npm</span></li>
+              </ul>
+            </div>
+
+            <div class="tool-category card">
+              <h3>Debug &amp; inspect</h3>
+              <ul class="tool-list">
+                <li><strong>API Studio</strong><span>REST requests, collections, cURL import</span></li>
+                <li><strong>Regex Tester</strong><span>Pattern matching and debugging</span></li>
+                <li><strong>JSON Diff</strong><span>Compare two JSON documents</span></li>
+              </ul>
+            </div>
+
+            <div class="tool-category card">
+              <h3>Transform data</h3>
+              <ul class="tool-list">
+                <li><strong>Formatter</strong><span>Format JSON, XML, and text</span></li>
+                <li><strong>Schema Generator</strong><span>Generate types from JSON</span></li>
+                <li><strong>JSON / XML</strong><span>Convert between formats</span></li>
+                <li><strong>Encoder</strong><span>Base64 and URL encoding</span></li>
+                <li><strong>CSV / YAML</strong><span>Convert tabular and config data</span></li>
+              </ul>
+            </div>
+
+            <div class="tool-category card">
+              <h3>Ship &amp; operate</h3>
+              <ul class="tool-list">
+                <li><strong>Kube Lens</strong><span>Browse pods, tail logs, open shells, view env</span></li>
+                <li><strong>Docker</strong><span>Containers, images, logs, shell</span></li>
+                <li><strong>DevShell</strong><span>Terminal tabs for local, K8s, and Docker</span></li>
+              </ul>
+            </div>
+
+            <div class="tool-category card tool-category--wide">
+              <h3>Document &amp; plan</h3>
+              <ul class="tool-list tool-list--row">
+                <li><strong>Notes</strong><span>Rich text notes with templates</span></li>
+                <li><strong>Daily Planner</strong><span>Tasks, habits, daily reflection</span></li>
+                <li><strong>Excalidraw</strong><span>Diagrams and whiteboards</span></li>
+                <li><strong>UML Editor</strong><span>PlantUML diagrams</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="download" class="download">
+        <div class="container download__card card">
+          <div class="download__copy">
+            <p class="caption-uppercase">Download</p>
+            <h2>Ready to try DevBench?</h2>
+            <p>
+              Free to download. Licensed for personal and internal use — not for
+              redistribution or resale. By downloading, you agree to the
+              <a class="download__inline-link" href="eula.html">End User License Agreement</a>.
+            </p>
+            <div class="download__actions">
+              <a
+                class="btn btn-primary btn-lg"
+                href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Get latest release
+              </a>
+              <a
+                class="btn btn-secondary btn-lg"
+                href="https://github.com/karthik-minnikanti/devbench-kit#readme"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Read the docs
+              </a>
+            </div>
+          </div>
+          <div class="download__side">
+            <div class="install-block">
+            <p class="install-block__label">Download links</p>
+            <ul class="download__platform-links">
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >macOS (Apple Silicon)</a
+                >
+                <span>— pick the <code>arm64</code> DMG</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >macOS (Intel)</a
+                >
+                <span>— pick the <code>x64</code> DMG</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Windows</a
+                >
+                <span>— installer or portable <code>.exe</code></span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Linux</a
+                >
+                <span>— AppImage or <code>.deb</code></span>
+              </li>
+            </ul>
+            <p class="download__note">
+              All builds are on the
+              <a
+                href="https://github.com/karthik-minnikanti/devbench-kit/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+                >latest GitHub release</a
+              >.
+            </p>
+            </div>
+            <div class="install-block install-block--notice">
+            <p class="install-block__label">macOS — please allow the app</p>
+            <p class="download__notice">
+              We are working on obtaining an Apple Developer signature and
+              notarization. Until then, macOS may block DevBench on first
+              launch — this is expected, not a bad download.
+            </p>
+            <p class="download__notice">
+              <strong>Right-click</strong> DevBench in Applications →
+              <strong>Open</strong> → confirm <strong>Open</strong> again. If
+              macOS says the app is damaged or corrupted, use the same
+              right-click → Open flow.
+            </p>
+            <p class="download__notice">
+              Please share feedback while we complete signing:
+              <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+            </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="container enterprise-cta card">
+          <div class="enterprise-cta__copy">
+            <p class="caption-uppercase">Feedback &amp; issues</p>
+            <h2>Report a bug or share ideas</h2>
+            <p>
+              Email us at
+              <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+              or
+              <a
+                href="https://github.com/karthik-minnikanti/devbench-kit/issues/new"
+                target="_blank"
+                rel="noopener noreferrer"
+                >create an issue on GitHub</a
+              >. We read every report.
+            </p>
+          </div>
+          <a class="btn btn-primary btn-lg" href="mailto:contact@devbench.in">contact@devbench.in</a>
+        </div>
+
+        <div class="container enterprise-cta card enterprise-cta--secondary">
+          <div class="enterprise-cta__copy">
+            <p class="caption-uppercase">Enterprise</p>
+            <h2>DevBench for teams</h2>
+            <p>
+              Enterprise licensing is available for organizations — team rollout,
+              priority support, and subscription management. Get in touch to get started.
+            </p>
+          </div>
+          <a class="btn btn-primary btn-lg" href="mailto:contact@devbench.in">contact@devbench.in</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container site-footer__inner">
+        <div class="brand">
+          <img src="logo.svg" alt="" class="brand__mark" width="22" height="22" />
+          <span>Dev<span class="brand__accent">Bench</span></span>
+        </div>
+        <div class="site-footer__links">
+          <a href="eula.html">License (EULA)</a>
+          <a href="https://devbench.in">devbench.in</a>
+          <a href="mailto:contact@devbench.in">contact@devbench.in</a>
+          <a
+            href="https://github.com/karthik-minnikanti/devbench-kit/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Report issue</a
+          >
+          <a href="https://github.com/karthik-minnikanti/devbench-kit" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://github.com/karthik-minnikanti/devbench-kit/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        </div>
+        <span>© 2026 DevBench · All rights reserved</span>
+      </div>
+    </footer>
+  </body>
+</html>

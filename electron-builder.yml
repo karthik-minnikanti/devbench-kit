@@ -1,0 +1,119 @@
+appId: com.devbench.app
+productName: DevBench
+electronVersion: 32.0.0
+directories:
+  buildResources: public
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+# Rebuild only node-pty (see rebuild:native). Full npmRebuild also tries to compile
+# optional ssh2/cpu-features, which fails on Electron 32 without C++20.
+npmRebuild: false
+asarUnpack:
+  - node_modules/node-pty/**/*
+publish:
+  provider: github
+  owner: karthik-minnikanti
+  repo: devbench-kit
+  releaseType: release
+afterPack: scripts/ad-hoc-sign-mac.js
+protocols:
+  name: DevBench
+  schemes:
+    - devbench
+  # Auto-update will work for all platforms when releases are published to GitHub
+  # Mac: Works with DMG (code signing recommended for best experience)
+  # Windows: Works with NSIS installer and portable
+  # Linux: Works with AppImage (deb/rpm have limited support)
+mac:
+  category: public.app-category.developer-tools
+  # PNG required — electron-builder cannot convert SVG to .icns
+  icon: icon.png
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    # zip is required for latest-mac.yml / electron-updater (even when distributing dmg)
+    - target: zip
+      arch:
+        - x64
+        - arm64
+    - target: mas
+      arch:
+        - x64
+        - arm64
+  # Ad-hoc sign (free, no Apple Developer account). Avoids Gatekeeper's false
+  # "damaged/corrupted" error on Apple Silicon for fully unsigned builds.
+  identity: '-'
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  # For production with code signing, uncomment and set:
+  # hardenedRuntime: true
+  # identity: "Developer ID Application: Your Name (TEAM_ID)"
+  # entitlements: build/entitlements.mas.plist
+  # entitlementsInherit: build/entitlements.mas.inherit.plist
+mas:
+  entitlements: build/entitlements.mas.plist
+  entitlementsInherit: build/entitlements.mas.inherit.plist
+  # Uncomment and set these for App Store submission:
+  # type: distribution
+  # identity: "3rd Party Mac Developer Application: Your Name (TEAM_ID)"
+dmg:
+  # Unique volume name per arch — same title for x64+arm64 in one CI job causes hdiutil detach failures.
+  title: ${productName} ${version} ${arch}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  # Uncomment for notarization:
+  # sign: true
+win:
+  icon: icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+    - target: portable
+      arch:
+        - x64
+        - ia32
+  publisherName: Karthik Minnikanti
+  # Signing certificate (uncomment for code signing):
+  # certificateFile: path/to/certificate.pfx
+  # certificatePassword: your-password
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DevBench
+  # Optional: Custom installer script
+  # include: build/installer.nsh
+linux:
+  icon: icon.png
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+  category: Development
+  maintainer: Karthik Minnikanti <contact@devbench.in>
+  desktop:
+    Name: DevBench
+    Comment: Developer Tools Suite
+    Categories: Development;Utility;
