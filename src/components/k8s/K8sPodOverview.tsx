@@ -12,8 +12,8 @@ interface ActiveForward {
   forwardId: string;
   localPort: number;
   remotePort: number;
-  portKey: string;
-  status: "active" | "error";
+  portKey?: string;
+  status: "active" | "paused" | "error";
   message?: string;
 }
 
@@ -25,6 +25,8 @@ interface K8sPodOverviewProps {
   onLocalPortChange: (key: string, value: string) => void;
   onPortForward: (port: PodPortInfo) => void;
   onStopPortForward: (portKey: string) => void;
+  onPausePortForward?: (portKey: string) => void;
+  onResumePortForward?: (portKey: string) => void;
   onRestartPod: () => void;
 }
 
@@ -152,6 +154,8 @@ function PortRow({
   onLocalPortChange,
   onPortForward,
   onStopPortForward,
+  onPausePortForward,
+  onResumePortForward,
 }: {
   port: PodPortInfo;
   active?: ActiveForward;
@@ -159,8 +163,12 @@ function PortRow({
   onLocalPortChange: (key: string, value: string) => void;
   onPortForward: (port: PodPortInfo) => void;
   onStopPortForward: (portKey: string) => void;
+  onPausePortForward?: (portKey: string) => void;
+  onResumePortForward?: (portKey: string) => void;
 }) {
   const isActiveForward = active?.status === "active";
+  const isPausedForward = active?.status === "paused";
+  const hasForward = Boolean(active);
   const defaultLocal = suggestLocalPort(port.containerPort);
 
   return (
@@ -177,30 +185,64 @@ function PortRow({
           <span className="text-[10px] text-[var(--color-primary)]">{port.serviceName}</span>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <input
           type="number"
           min={1}
           max={65535}
-          disabled={isActiveForward}
+          disabled={hasForward}
           value={localPorts[port.key] ?? String(defaultLocal)}
           onChange={(e) => onLocalPortChange(port.key, e.target.value)}
           className="w-16 h-7 px-2 rounded border border-[var(--color-border)] bg-[var(--color-background)] text-xs font-mono"
           title={`Pod port ${port.containerPort}. Use ≥1024 on macOS.`}
         />
-        {isActiveForward ? (
-          <button
-            onClick={() => onStopPortForward(port.key)}
-            className="btn-secondary !h-7 !px-2 !text-[10px]"
-          >
-            Stop :{active.localPort}
-          </button>
-        ) : (
+        {!hasForward && (
           <button onClick={() => onPortForward(port)} className="btn-primary !h-7 !px-2 !text-[10px]">
             Forward
           </button>
         )}
+        {isActiveForward && (
+          <>
+            {onPausePortForward && (
+              <button
+                onClick={() => onPausePortForward(port.key)}
+                className="btn-secondary !h-7 !px-2 !text-[10px]"
+              >
+                Pause
+              </button>
+            )}
+            <button
+              onClick={() => onStopPortForward(port.key)}
+              className="btn-secondary !h-7 !px-2 !text-[10px]"
+            >
+              Stop :{active.localPort}
+            </button>
+          </>
+        )}
+        {(isPausedForward || active?.status === "error") && (
+          <>
+            {onResumePortForward && (
+              <button
+                onClick={() => onResumePortForward(port.key)}
+                className="btn-primary !h-7 !px-2 !text-[10px]"
+              >
+                Start
+              </button>
+            )}
+            <button
+              onClick={() => onStopPortForward(port.key)}
+              className="btn-secondary !h-7 !px-2 !text-[10px]"
+            >
+              Stop
+            </button>
+          </>
+        )}
       </div>
+      {active?.status === "paused" && (
+        <div className="text-[10px] text-[var(--color-semantic-warning)]">
+          Paused on localhost:{active.localPort}
+        </div>
+      )}
       {active?.status === "error" && (
         <div className="text-[10px] text-[var(--color-semantic-error)]">{active.message || "Failed"}</div>
       )}
@@ -216,6 +258,8 @@ export function K8sPodOverview({
   onLocalPortChange,
   onPortForward,
   onStopPortForward,
+  onPausePortForward,
+  onResumePortForward,
   onRestartPod,
 }: K8sPodOverviewProps) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
@@ -421,6 +465,8 @@ export function K8sPodOverview({
                   onLocalPortChange={onLocalPortChange}
                   onPortForward={onPortForward}
                   onStopPortForward={onStopPortForward}
+                  onPausePortForward={onPausePortForward}
+                  onResumePortForward={onResumePortForward}
                 />
               ))}
             </div>

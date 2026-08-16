@@ -167,7 +167,27 @@ declare global {
                     localPort: number,
                     remotePort: number,
                     address?: string,
-                ) => Promise<{ success: boolean; forwardId?: string; localPort?: number; remotePort?: number; address?: string; error?: string }>;
+                    portKey?: string,
+                ) => Promise<{
+                    success: boolean;
+                    forwardId?: string;
+                    localPort?: number;
+                    remotePort?: number;
+                    address?: string;
+                    forward?: K8sPortForwardInfo;
+                    error?: string;
+                }>;
+                listPortForwards: () => Promise<{
+                    success: boolean;
+                    forwards?: K8sPortForwardInfo[];
+                    error?: string;
+                }>;
+                pausePortForward: (
+                    forwardId: string,
+                ) => Promise<{ success: boolean; forward?: K8sPortForwardInfo; error?: string }>;
+                resumePortForward: (
+                    forwardId: string,
+                ) => Promise<{ success: boolean; forward?: K8sPortForwardInfo; error?: string }>;
                 stopPortForward: (forwardId: string) => Promise<{ success: boolean; error?: string }>;
                 stopPodPortForwards: (podName: string, namespace: string) => Promise<{ success: boolean; error?: string }>;
                 exec: (podName: string, namespace: string, command: string) => Promise<any>;
@@ -323,7 +343,7 @@ declare global {
             onDockerShellOutput: (callback: (data: any) => void) => void;
             onDockerExecOutput: (callback: (data: any) => void) => void;
             onDockerExecExit: (callback: (data: any) => void) => void;
-            onK8sLog: (callback: (data: any) => void) => void;
+            onK8sLog: (callback: (data: any) => void) => () => void;
             onK8sShellOutput: (callback: (data: any) => void) => void;
             onK8sExecOutput: (callback: (data: any) => void) => void;
             onK8sExecExit: (callback: (data: any) => void) => void;
@@ -333,7 +353,23 @@ declare global {
             onK8sPortForwardMessage: (
                 callback: (data: { forwardId: string; message: string }) => void,
             ) => () => void;
+            onK8sPortForwardList: (
+                callback: (forwards: K8sPortForwardInfo[]) => void,
+            ) => () => void;
         };
+    }
+
+    interface K8sPortForwardInfo {
+        forwardId: string;
+        podName: string;
+        namespace: string;
+        localPort: number;
+        remotePort: number;
+        address: string;
+        status: 'active' | 'paused' | 'error';
+        message?: string;
+        startedAt: number;
+        portKey?: string;
     }
 }
 

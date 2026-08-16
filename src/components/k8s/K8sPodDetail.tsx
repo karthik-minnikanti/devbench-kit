@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Editor } from "@monaco-editor/react";
 import { getMonacoTheme, onMonacoBeforeMount } from "../../utils/theme";
 import { Icon } from "../Icon";
+import { useK8sPortForwardStore } from "../../state/k8sPortForwardStore";
 import { K8sPodOverview } from "./K8sPodOverview";
 import { PodDockTab } from "./K8sPodBottomPanel";
 import {
@@ -40,15 +41,6 @@ const POD_TABS: { id: PodTab; label: string }[] = [
   { id: "yaml", label: "YAML" },
 ];
 
-interface ActiveForward {
-  forwardId: string;
-  localPort: number;
-  remotePort: number;
-  portKey: string;
-  status: "active" | "error";
-  message?: string;
-}
-
 function formatEventTime(value: unknown): string {
   if (!value) return "—";
   if (value instanceof Date) return value.toLocaleString();
@@ -57,15 +49,6 @@ function formatEventTime(value: unknown): string {
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
   }
   return String(value);
-}
-
-async function stopPodPortForwardsSafe(podName: string, podNamespace: string) {
-  if (!window.electronAPI?.k8s.stopPodPortForwards) return;
-  try {
-    await window.electronAPI.k8s.stopPodPortForwards(podName, podNamespace);
-  } catch {
-    /* main process may not have handler until electron rebuild */
-  }
 }
 
 export function K8sPodDetail({
@@ -83,8 +66,58 @@ export function K8sPodDetail({
   const [events, setEvents] = useState<any[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [forwards, setForwards] = useState<Record<string, ActiveForward>>({});
   const [localPorts, setLocalPorts] = useState<Record<string, string>>({});
+
+  const allForwards = useK8sPortForwardStore((state) => state.forwards);
+  const startForward = useK8sPortForwardStore((state) => state.start);
+  const pauseForward = useK8sPortForwardStore((state) => state.pause);
+  const resumeForward = useK8sPortForwardStore((state) => state.resume);
+  const stopForward = useK8sPortForwardStore((state) => state.stop);
+
+  const forwards = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        forwardId: string;
+        localPort: number;
+        remotePort: number;
+        portKey?: string;
+        status: "active" | "paused" | "error";
+        message?: string;
+      }
+    > = {};
+    const ports = summary?.ports || [];
+    for (const forward of allForwards) {
+      if (forward.podName !== name || forward.namespace !== namespace) continue;
+      const matchedPort =
+        (forward.portKey && ports.find((port) => port.key === forward.portKey)) ||
+        ports.find((port) => port.containerPort === forward.remotePort);
+      const key = forward.portKey || matchedPort?.key;
+      if (!key) continue;
+      map[key] = {
+        forwardId: forward.forwardId,
+        localPort: forward.localPort,
+        remotePort: forward.remotePort,
+        portKey: forward.portKey || key,
+        status: forward.status,
+        message: forward.message,
+      };
+    }
+    return map;
+  }, [allForwards, name, namespace, summary]);
+
+  const findForwardForPort = (portKey: string) => {
+    const mapped = forwards[portKey];
+    if (mapped) {
+      return allForwards.find((forward) => forward.forwardId === mapped.forwardId);
+    }
+    return allForwards.find(
+      (forward) =>
+        forward.podName === name &&
+        forward.namespace === namespace &&
+        forward.portKey === portKey,
+    );
+  };
 
   const loadEvents = async () => {
     if (!window.electronAPI) return;
@@ -114,7 +147,6 @@ export function K8sPodDetail({
     setEvents([]);
     setActionMsg(null);
     setTab("overview");
-    setForwards({});
     setLocalPorts({});
 
     const load = async () => {
@@ -150,58 +182,24 @@ export function K8sPodDetail({
         setSummary(podSummary);
         const defaults: Record<string, string> = {};
         for (const port of podSummary?.ports || []) {
-          defaults[port.key] = String(suggestLocalPort(port.containerPort));
+          const existing = useK8sPortForwardStore
+            .getState()
+            .forwards.find(
+              (forward) =>
+                forward.podName === name &&
+                forward.namespace === namespace &&
+                (forward.portKey === port.key ||
+                  forward.remotePort === port.containerPort),
+            );
+          defaults[port.key] = String(
+            existing?.localPort ?? suggestLocalPort(port.containerPort),
+          );
         }
         setLocalPorts(defaults);
       }
     };
     load();
-
-    return () => {
-      void stopPodPortForwardsSafe(name, namespace);
-    };
   }, [name, namespace]);
-
-  useEffect(() => {
-    if (!window.electronAPI) return;
-    const unsubExit = window.electronAPI.onK8sPortForwardExit(({ forwardId, error: exitError, exitCode }) => {
-      setForwards((prev) => {
-        const next = { ...prev };
-        for (const key of Object.keys(next)) {
-          if (next[key].forwardId === forwardId) {
-            if (exitError || (exitCode !== undefined && exitCode !== 0)) {
-              next[key] = {
-                ...next[key],
-                status: "error",
-                message: exitError || `Port forward stopped (code ${exitCode})`,
-              };
-            } else {
-              delete next[key];
-            }
-          }
-        }
-        return next;
-      });
-      if (exitError || (exitCode !== undefined && exitCode !== 0)) {
-        setActionMsg(exitError || `Port forward stopped (code ${exitCode})`);
-      }
-    });
-    const unsubMsg = window.electronAPI.onK8sPortForwardMessage(({ forwardId, message }) => {
-      setForwards((prev) => {
-        const next = { ...prev };
-        for (const key of Object.keys(next)) {
-          if (next[key].forwardId === forwardId) {
-            next[key] = { ...next[key], message };
-          }
-        }
-        return next;
-      });
-    });
-    return () => {
-      unsubExit();
-      unsubMsg();
-    };
-  }, []);
 
   useEffect(() => {
     if (tab === "events") loadEvents();
@@ -230,12 +228,6 @@ export function K8sPodDetail({
   };
 
   const handlePortForward = async (port: PodPortInfo) => {
-    if (!window.electronAPI) return;
-    setForwards((prev) => {
-      const next = { ...prev };
-      delete next[port.key];
-      return next;
-    });
     const defaultLocal = suggestLocalPort(port.containerPort);
     const localPort = parseInt(localPorts[port.key] || String(defaultLocal), 10);
     if (Number.isNaN(localPort) || localPort < 1 || localPort > 65535) {
@@ -249,23 +241,14 @@ export function K8sPodDetail({
       return;
     }
     setActionMsg(`Starting port forward on localhost:${localPort}...`);
-    const result = await window.electronAPI.k8s.portForward(
-      name,
+    const result = await startForward({
+      podName: name,
       namespace,
       localPort,
-      port.containerPort,
-    );
-    if (result.success && result.forwardId) {
-      setForwards((prev) => ({
-        ...prev,
-        [port.key]: {
-          forwardId: result.forwardId!,
-          localPort,
-          remotePort: port.containerPort,
-          portKey: port.key,
-          status: "active",
-        },
-      }));
+      remotePort: port.containerPort,
+      portKey: port.key,
+    });
+    if (result.success) {
       setActionMsg(`Forwarding localhost:${localPort} → pod:${port.containerPort}`);
     } else {
       setActionMsg(result.error || "Port forward failed");
@@ -273,14 +256,37 @@ export function K8sPodDetail({
   };
 
   const handleStopPortForward = async (portKey: string) => {
-    const forward = forwards[portKey];
-    if (!forward || !window.electronAPI) return;
-    await window.electronAPI.k8s.stopPortForward(forward.forwardId);
-    setForwards((prev) => {
-      const next = { ...prev };
-      delete next[portKey];
-      return next;
-    });
+    const forward = findForwardForPort(portKey);
+    if (!forward) return;
+    const result = await stopForward(forward.forwardId);
+    if (result.success) {
+      setActionMsg("Port forward stopped");
+    } else {
+      setActionMsg(result.error || "Failed to stop port forward");
+    }
+  };
+
+  const handlePausePortForward = async (portKey: string) => {
+    const forward = findForwardForPort(portKey);
+    if (!forward) return;
+    const result = await pauseForward(forward.forwardId);
+    if (result.success) {
+      setActionMsg(`Paused localhost:${forward.localPort}`);
+    } else {
+      setActionMsg(result.error || "Failed to pause port forward");
+    }
+  };
+
+  const handleResumePortForward = async (portKey: string) => {
+    const forward = findForwardForPort(portKey);
+    if (!forward) return;
+    setActionMsg(`Starting port forward on localhost:${forward.localPort}...`);
+    const result = await resumeForward(forward.forwardId);
+    if (result.success) {
+      setActionMsg(`Forwarding localhost:${forward.localPort} → pod:${forward.remotePort}`);
+    } else {
+      setActionMsg(result.error || "Failed to start port forward");
+    }
   };
 
   return (
@@ -374,6 +380,8 @@ export function K8sPodDetail({
               }
               onPortForward={handlePortForward}
               onStopPortForward={handleStopPortForward}
+              onPausePortForward={handlePausePortForward}
+              onResumePortForward={handleResumePortForward}
               onRestartPod={handleRestartPod}
             />
           ) : (

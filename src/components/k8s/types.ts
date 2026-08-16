@@ -15,7 +15,8 @@ export type K8sResourceKind =
   | "events"
   | "timeline"
   | "dependency-graph"
-  | "search";
+  | "search"
+  | "port-forwards";
 
 export interface K8sResourceRow {
   id: string;

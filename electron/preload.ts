@@ -146,8 +146,11 @@ try {
             namespaces: () => ipcRenderer.invoke('k8s:namespaces'),
             logs: (podName: string, namespace: string, tail?: number, container?: string) => ipcRenderer.invoke('k8s:logs', podName, namespace, tail, container),
             stopLogs: (podName: string, namespace: string) => ipcRenderer.invoke('k8s:stop-logs', podName, namespace),
-            portForward: (podName: string, namespace: string, localPort: number, remotePort: number, address?: string) =>
-                ipcRenderer.invoke('k8s:port-forward', podName, namespace, localPort, remotePort, address),
+            portForward: (podName: string, namespace: string, localPort: number, remotePort: number, address?: string, portKey?: string) =>
+                ipcRenderer.invoke('k8s:port-forward', podName, namespace, localPort, remotePort, address, portKey),
+            listPortForwards: () => ipcRenderer.invoke('k8s:list-port-forwards'),
+            pausePortForward: (forwardId: string) => ipcRenderer.invoke('k8s:pause-port-forward', forwardId),
+            resumePortForward: (forwardId: string) => ipcRenderer.invoke('k8s:resume-port-forward', forwardId),
             stopPortForward: (forwardId: string) => ipcRenderer.invoke('k8s:stop-port-forward', forwardId),
             stopPodPortForwards: (podName: string, namespace: string) =>
                 ipcRenderer.invoke('k8s:stop-pod-port-forwards', podName, namespace),
@@ -183,7 +186,9 @@ try {
             replicaSets: (namespace?: string) => ipcRenderer.invoke('k8s:replicasets', namespace),
         },
         onK8sLog: (callback: (data: any) => void) => {
-            ipcRenderer.on('k8s:log', (_event: any, data: any) => callback(data));
+            const handler = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('k8s:log', handler);
+            return () => ipcRenderer.removeListener('k8s:log', handler);
         },
         onK8sShellOutput: (callback: (data: any) => void) => {
             ipcRenderer.on('k8s:shell:output', (_event: any, data: any) => callback(data));
@@ -203,6 +208,11 @@ try {
             const handler = (_event: any, data: any) => callback(data);
             ipcRenderer.on('k8s:port-forward:message', handler);
             return () => ipcRenderer.removeListener('k8s:port-forward:message', handler);
+        },
+        onK8sPortForwardList: (callback: (forwards: any[]) => void) => {
+            const handler = (_event: any, forwards: any[]) => callback(forwards);
+            ipcRenderer.on('k8s:port-forward:list', handler);
+            return () => ipcRenderer.removeListener('k8s:port-forward:list', handler);
         },
         notes: {
             list: () => ipcRenderer.invoke('notes:list'),
@@ -497,7 +507,7 @@ declare global {
             onDockerShellOutput: (callback: (data: any) => void) => void;
             onDockerExecOutput: (callback: (data: any) => void) => void;
             onDockerExecExit: (callback: (data: any) => void) => void;
-            onK8sLog: (callback: (data: any) => void) => void;
+            onK8sLog: (callback: (data: any) => void) => () => void;
             onK8sShellOutput: (callback: (data: any) => void) => void;
             onK8sExecOutput: (callback: (data: any) => void) => void;
             onK8sExecExit: (callback: (data: any) => void) => void;

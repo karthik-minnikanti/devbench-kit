@@ -40,6 +40,7 @@ export interface TerminalViewHandle {
     runCommand: (command: string) => void;
     insertText: (text: string) => void;
     focus: () => void;
+    fit: () => void;
 }
 
 interface TerminalViewProps {
@@ -105,6 +106,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         const selectedSuggestionRef = useRef(0);
         const persistCommandRef = useRef<(command: string) => void>(() => {});
         const writeToTerminalRef = useRef<(data: string) => void>(() => {});
+        const syncSizeRef = useRef<() => void>(() => {});
         const onExitRef = useRef(onExit);
         const onReadyRef = useRef(onReady);
         const onLineChangeRef = useRef(onLineChange);
@@ -177,6 +179,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             runCommand,
             insertText,
             focus: () => termRef.current?.focus(),
+            fit: () => syncSizeRef.current(),
         }));
 
         useEffect(() => {
@@ -293,6 +296,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                     term.scrollToBottom();
                 });
             };
+            syncSizeRef.current = syncSize;
 
             const completeSuggestion = (command: string) => {
                 const suffix = command.slice(trackerRef.current.getLine().length);
@@ -443,6 +447,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
 
             return () => {
                 disposed = true;
+                syncSizeRef.current = () => {};
                 unsubscribeTheme();
                 resizeObserver?.disconnect();
                 removeDataListener?.();

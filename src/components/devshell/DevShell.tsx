@@ -16,7 +16,7 @@ import {
 } from "../../utils/devShellPreferences";
 import { openTool } from "../../utils/appEvents";
 
-export function DevShell() {
+export function DevShell({ visible = true }: { visible?: boolean }) {
   const tabs = useDevShellStore((state) => state.tabs);
   const activeTabId = useDevShellStore((state) => state.activeTabId);
   const showHistory = useDevShellStore((state) => state.showHistory);
@@ -66,6 +66,16 @@ export function DevShell() {
   useEffect(() => {
     ensureDevShellInitialized();
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const timers = [0, 50, 150].map((delay) =>
+      window.setTimeout(() => {
+        terminalRefs.current.forEach((handle) => handle.fit());
+      }, delay),
+    );
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, [visible, activeTabId]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {

@@ -2032,7 +2032,7 @@ ipcMain.handle('terminal:history:removeSession', async (_event, id: string) => {
 
 ipcMain.handle('k8s:logs', async (_event: any, podName: string, namespace: string, tail: number = 100, container?: string) => {
     try {
-        await activateK8sFromStore();
+        const active = await activateK8sFromStore();
         // For streaming logs, we still use kubectl for now (K8s client doesn't support streaming easily)
         // But we can get initial logs from the service
         const initialLogs = await k8sService.getPodLogs(podName, namespace, container, tail);
@@ -2051,7 +2051,7 @@ ipcMain.handle('k8s:logs', async (_event: any, podName: string, namespace: strin
         return new Promise((resolve) => {
             const logProcess = spawn(
                 kubectlPath(),
-                [...getKubectlContextArgs(), 'logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])],
+                [...getKubectlContextArgs(active), 'logs', '-f', `--tail=${tail}`, podName, '-n', namespace, ...(container ? ['-c', container] : [])],
                 { env: kubectlSpawnEnv() },
             );
 
@@ -2104,15 +2104,183 @@ ipcMain.handle('k8s:stop-logs', async (_event: any, podName: string, namespace: 
     }
 });
 
-function getK8sPortForwardMap(): Map<string, import('child_process').ChildProcess> {
-    if (!(global as any).k8sPortForwardProcesses) {
-        (global as any).k8sPortForwardProcesses = new Map();
-    }
-    return (global as any).k8sPortForwardProcesses;
-}
-
 function k8sPortForwardId(namespace: string, podName: string, localPort: number): string {
     return `${namespace}/${podName}:${localPort}`;
+}
+
+type PortForwardStatus = 'active' | 'paused' | 'error';
+
+interface PortForwardEntry {
+    forwardId: string;
+    podName: string;
+    namespace: string;
+    localPort: number;
+    remotePort: number;
+    address: string;
+    status: PortForwardStatus;
+    message?: string;
+    startedAt: number;
+    portKey?: string;
+    process?: import('child_process').ChildProcess;
+    intentionalStop?: boolean;
+}
+
+function getK8sPortForwardRegistry(): Map<string, PortForwardEntry> {
+    if (!(global as any).k8sPortForwardRegistry) {
+        (global as any).k8sPortForwardRegistry = new Map();
+    }
+    return (global as any).k8sPortForwardRegistry;
+}
+
+function serializePortForward(entry: PortForwardEntry) {
+    return {
+        forwardId: entry.forwardId,
+        podName: entry.podName,
+        namespace: entry.namespace,
+        localPort: entry.localPort,
+        remotePort: entry.remotePort,
+        address: entry.address,
+        status: entry.status,
+        message: entry.message,
+        startedAt: entry.startedAt,
+        portKey: entry.portKey,
+    };
+}
+
+function listSerializedPortForwards() {
+    return Array.from(getK8sPortForwardRegistry().values()).map(serializePortForward);
+}
+
+function broadcastPortForwards() {
+    if (mainWindow) {
+        mainWindow.webContents.send('k8s:port-forward:list', listSerializedPortForwards());
+    }
+}
+
+async function spawnPortForwardProcess(
+    entry: PortForwardEntry,
+): Promise<{ success: boolean; error?: string }> {
+    const active = await activateK8sFromStore();
+    const registry = getK8sPortForwardRegistry();
+    const pfArgs = [
+        ...getKubectlContextArgs(active),
+        'port-forward',
+        '--address',
+        entry.address,
+        `pod/${entry.podName}`,
+        '-n',
+        entry.namespace,
+        `${entry.localPort}:${entry.remotePort}`,
+    ];
+
+    return await new Promise<{ success: boolean; error?: string }>((resolve) => {
+        const pfProcess = spawn(kubectlPath(), pfArgs, { env: kubectlSpawnEnv() });
+        let settled = false;
+        let stderrBuf = '';
+        entry.process = pfProcess;
+        entry.intentionalStop = false;
+        entry.status = 'active';
+        entry.message = undefined;
+        registry.set(entry.forwardId, entry);
+
+        const finish = (result: { success: boolean; error?: string }) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(readyTimeout);
+            resolve(result);
+        };
+
+        const readyTimeout = setTimeout(() => {
+            if (pfProcess.exitCode !== null) return;
+            entry.status = 'active';
+            registry.set(entry.forwardId, entry);
+            broadcastPortForwards();
+            finish({ success: true });
+        }, 500);
+
+        pfProcess.stderr.on('data', (data) => {
+            const message = data.toString();
+            stderrBuf += message;
+            const trimmed = message.trim();
+            if (mainWindow && trimmed) {
+                mainWindow.webContents.send('k8s:port-forward:message', {
+                    forwardId: entry.forwardId,
+                    message: trimmed,
+                });
+            }
+            if (
+                trimmed.includes('Unable to listen') ||
+                trimmed.includes('unable to forward') ||
+                trimmed.includes('not found') ||
+                trimmed.includes('error:') ||
+                trimmed.includes('Error from server')
+            ) {
+                entry.intentionalStop = true;
+                pfProcess.kill();
+                entry.process = undefined;
+                entry.status = 'error';
+                entry.message = trimmed;
+                registry.set(entry.forwardId, entry);
+                broadcastPortForwards();
+                finish({ success: false, error: trimmed });
+            } else if (trimmed.includes('Forwarding from')) {
+                entry.status = 'active';
+                entry.message = trimmed;
+                registry.set(entry.forwardId, entry);
+                broadcastPortForwards();
+                finish({ success: true });
+            }
+        });
+
+        pfProcess.on('error', (error) => {
+            entry.process = undefined;
+            if (!entry.intentionalStop) {
+                entry.status = 'error';
+                entry.message = error.message;
+                registry.set(entry.forwardId, entry);
+                broadcastPortForwards();
+                if (mainWindow) {
+                    mainWindow.webContents.send('k8s:port-forward:exit', {
+                        forwardId: entry.forwardId,
+                        error: error.message,
+                    });
+                }
+            }
+            finish({ success: false, error: error.message });
+        });
+
+        pfProcess.on('exit', (code) => {
+            entry.process = undefined;
+            const errorMessage =
+                code !== 0 && code !== null
+                    ? stderrBuf.trim() || `Port forward exited with code ${code}`
+                    : undefined;
+
+            if (entry.intentionalStop) {
+                // pause/stop already updated registry status
+                if (!settled) {
+                    finish({ success: false, error: errorMessage || 'Port forward stopped' });
+                }
+                return;
+            }
+
+            entry.status = 'error';
+            entry.message = errorMessage || 'Port forward stopped';
+            registry.set(entry.forwardId, entry);
+            broadcastPortForwards();
+
+            if (!settled) {
+                finish({ success: false, error: errorMessage || 'Port forward failed to start' });
+            }
+            if (mainWindow) {
+                mainWindow.webContents.send('k8s:port-forward:exit', {
+                    forwardId: entry.forwardId,
+                    exitCode: code ?? undefined,
+                    error: errorMessage,
+                });
+            }
+        });
+    });
 }
 
 ipcMain.handle(
@@ -2124,12 +2292,13 @@ ipcMain.handle(
         localPort: number,
         remotePort: number,
         address: string = '127.0.0.1',
+        portKey?: string,
     ) => {
         try {
-            await activateK8sFromStore();
             const forwardId = k8sPortForwardId(namespace, podName, localPort);
-            const map = getK8sPortForwardMap();
-            if (map.has(forwardId)) {
+            const registry = getK8sPortForwardRegistry();
+            const existing = registry.get(forwardId);
+            if (existing?.status === 'active' && existing.process) {
                 return { success: false, error: 'Port forward already active for this local port' };
             }
 
@@ -2141,116 +2310,113 @@ ipcMain.handle(
                 };
             }
 
-            const pfArgs = [
-                ...getKubectlContextArgs(),
-                'port-forward',
-                '--address',
-                address,
-                `pod/${podName}`,
-                '-n',
+            const entry: PortForwardEntry = existing ?? {
+                forwardId,
+                podName,
                 namespace,
-                `${localPort}:${remotePort}`,
-            ];
+                localPort,
+                remotePort,
+                address: address || '127.0.0.1',
+                status: 'active',
+                startedAt: Date.now(),
+                portKey,
+            };
+            entry.podName = podName;
+            entry.namespace = namespace;
+            entry.localPort = localPort;
+            entry.remotePort = remotePort;
+            entry.address = address || '127.0.0.1';
+            entry.startedAt = Date.now();
+            if (portKey) entry.portKey = portKey;
 
-            return await new Promise<{
-                success: boolean;
-                forwardId?: string;
-                localPort?: number;
-                remotePort?: number;
-                address?: string;
-                error?: string;
-            }>((resolve) => {
-                const pfProcess = spawn(kubectlPath(), pfArgs, { env: kubectlSpawnEnv() });
-                let settled = false;
-                let stderrBuf = '';
-
-                const finish = (result: {
-                    success: boolean;
-                    forwardId?: string;
-                    localPort?: number;
-                    remotePort?: number;
-                    address?: string;
-                    error?: string;
-                }) => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(readyTimeout);
-                    resolve(result);
+            const result = await spawnPortForwardProcess(entry);
+            if (result.success) {
+                broadcastPortForwards();
+                return {
+                    success: true,
+                    forwardId,
+                    localPort,
+                    remotePort,
+                    address: entry.address,
+                    forward: serializePortForward(entry),
                 };
-
-                const readyTimeout = setTimeout(() => {
-                    if (pfProcess.exitCode !== null) return;
-                    map.set(forwardId, pfProcess);
-                    finish({ success: true, forwardId, localPort, remotePort, address });
-                }, 500);
-
-                pfProcess.stderr.on('data', (data) => {
-                    const message = data.toString();
-                    stderrBuf += message;
-                    const trimmed = message.trim();
-                    if (mainWindow && trimmed) {
-                        mainWindow.webContents.send('k8s:port-forward:message', { forwardId, message: trimmed });
-                    }
-                    if (
-                        trimmed.includes('Unable to listen') ||
-                        trimmed.includes('unable to forward') ||
-                        trimmed.includes('not found') ||
-                        trimmed.includes('error:') ||
-                        trimmed.includes('Error from server')
-                    ) {
-                        pfProcess.kill();
-                        map.delete(forwardId);
-                        finish({ success: false, error: trimmed });
-                    } else if (trimmed.includes('Forwarding from')) {
-                        map.set(forwardId, pfProcess);
-                        finish({ success: true, forwardId, localPort, remotePort, address });
-                    }
-                });
-
-                pfProcess.on('error', (error) => {
-                    map.delete(forwardId);
-                    finish({ success: false, error: error.message });
-                    if (mainWindow) {
-                        mainWindow.webContents.send('k8s:port-forward:exit', {
-                            forwardId,
-                            error: error.message,
-                        });
-                    }
-                });
-
-                pfProcess.on('exit', (code) => {
-                    map.delete(forwardId);
-                    const errorMessage =
-                        code !== 0 && code !== null
-                            ? stderrBuf.trim() || `Port forward exited with code ${code}`
-                            : undefined;
-                    if (!settled) {
-                        finish({ success: false, error: errorMessage || 'Port forward failed to start' });
-                    }
-                    if (mainWindow) {
-                        mainWindow.webContents.send('k8s:port-forward:exit', {
-                            forwardId,
-                            exitCode: code ?? undefined,
-                            error: errorMessage,
-                        });
-                    }
-                });
-            });
+            }
+            return { success: false, error: result.error, forwardId, forward: serializePortForward(entry) };
         } catch (error: any) {
             return { success: false, error: error.message || String(error) };
         }
     },
 );
 
+ipcMain.handle('k8s:list-port-forwards', async () => {
+    try {
+        return { success: true, forwards: listSerializedPortForwards() };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), forwards: [] };
+    }
+});
+
+ipcMain.handle('k8s:pause-port-forward', async (_event: any, forwardId: string) => {
+    try {
+        const registry = getK8sPortForwardRegistry();
+        const entry = registry.get(forwardId);
+        if (!entry) {
+            return { success: false, error: 'Port forward not found' };
+        }
+        if (entry.status === 'paused') {
+            return { success: true, forward: serializePortForward(entry) };
+        }
+        entry.intentionalStop = true;
+        if (entry.process) {
+            entry.process.kill();
+            entry.process = undefined;
+        }
+        entry.status = 'paused';
+        entry.message = 'Paused';
+        registry.set(forwardId, entry);
+        broadcastPortForwards();
+        return { success: true, forward: serializePortForward(entry) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('k8s:resume-port-forward', async (_event: any, forwardId: string) => {
+    try {
+        const registry = getK8sPortForwardRegistry();
+        const entry = registry.get(forwardId);
+        if (!entry) {
+            return { success: false, error: 'Port forward not found' };
+        }
+        if (entry.status === 'active' && entry.process) {
+            return { success: true, forward: serializePortForward(entry) };
+        }
+        const result = await spawnPortForwardProcess(entry);
+        broadcastPortForwards();
+        if (result.success) {
+            return { success: true, forward: serializePortForward(entry) };
+        }
+        return { success: false, error: result.error, forward: serializePortForward(entry) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
 ipcMain.handle('k8s:stop-port-forward', async (_event: any, forwardId: string) => {
     try {
-        const map = getK8sPortForwardMap();
-        if (map.has(forwardId)) {
-            map.get(forwardId)!.kill();
-            map.delete(forwardId);
-            return { success: true };
+        const registry = getK8sPortForwardRegistry();
+        const entry = registry.get(forwardId);
+        if (!entry) {
+            return { success: false, error: 'Port forward not found' };
         }
-        return { success: false, error: 'Port forward not found' };
+        entry.intentionalStop = true;
+        if (entry.process) {
+            entry.process.kill();
+            entry.process = undefined;
+        }
+        registry.delete(forwardId);
+        broadcastPortForwards();
+        return { success: true };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }
@@ -2259,13 +2425,18 @@ ipcMain.handle('k8s:stop-port-forward', async (_event: any, forwardId: string) =
 ipcMain.handle('k8s:stop-pod-port-forwards', async (_event: any, podName: string, namespace: string) => {
     try {
         const prefix = `${namespace}/${podName}:`;
-        const map = getK8sPortForwardMap();
-        for (const [id, proc] of map.entries()) {
+        const registry = getK8sPortForwardRegistry();
+        for (const [id, entry] of registry.entries()) {
             if (id.startsWith(prefix)) {
-                proc.kill();
-                map.delete(id);
+                entry.intentionalStop = true;
+                if (entry.process) {
+                    entry.process.kill();
+                    entry.process = undefined;
+                }
+                registry.delete(id);
             }
         }
+        broadcastPortForwards();
         return { success: true };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
@@ -2273,11 +2444,12 @@ ipcMain.handle('k8s:stop-pod-port-forwards', async (_event: any, podName: string
 });
 
 ipcMain.handle('k8s:exec', async (_event: any, podName: string, namespace: string, initialCommand: string) => {
+    const active = await activateK8sFromStore();
     return new Promise((resolve) => {
         // Start an interactive shell session
         const execProcess = spawn(
             kubectlPath(),
-            [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', 'sh'],
+            [...getKubectlContextArgs(active), 'exec', '-i', podName, '-n', namespace, '--', 'sh'],
             { stdio: ['pipe', 'pipe', 'pipe'], env: kubectlSpawnEnv() },
         );
 
@@ -2356,10 +2528,11 @@ ipcMain.handle('k8s:exec:stop', async (_event: any, podName: string, namespace: 
 });
 
 ipcMain.handle('k8s:shell', async (_event: any, podName: string, namespace: string, shell: string = '/bin/sh') => {
+    const active = await activateK8sFromStore();
     return new Promise((resolve) => {
         const shellProcess = spawn(
             kubectlPath(),
-            [...getKubectlContextArgs(), 'exec', '-i', podName, '-n', namespace, '--', shell],
+            [...getKubectlContextArgs(active), 'exec', '-i', podName, '-n', namespace, '--', shell],
             { stdio: ['pipe', 'pipe', 'pipe'], env: kubectlSpawnEnv() },
         );
 
@@ -2422,8 +2595,8 @@ ipcMain.handle('k8s:shell:stop', async (_event: any, podName: string, namespace:
 
 ipcMain.handle('k8s:command', async (_event: any, command: string) => {
     try {
-        await activateK8sFromStore();
-        const contextArgs = getKubectlContextArgs().join(' ');
+        const active = await activateK8sFromStore();
+        const contextArgs = getKubectlContextArgs(active).join(' ');
         const { stdout, stderr } = await execAsync(
             `"${kubectlPath()}" ${contextArgs} ${command}`.replace(/\s+/g, ' ').trim(),
             { env: kubectlSpawnEnv() },

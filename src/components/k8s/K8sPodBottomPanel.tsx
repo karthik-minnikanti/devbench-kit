@@ -163,11 +163,17 @@ export function K8sPodBottomPanel({
     setError(null);
     setIsStreaming(false);
     setLogContainer(undefined);
-    setTerminalContainer(containerNames[0]);
+    setFetchedContainerNames([]);
+    setTerminalContainer(undefined);
     return () => {
-      stopLogs();
+      void stopLogs();
     };
-  }, [name, namespace, containerNames.join("|"), stopLogs]);
+  }, [name, namespace, stopLogs]);
+
+  useEffect(() => {
+    if (containerNames.length === 0) return;
+    setTerminalContainer((prev) => prev ?? containerNames[0]);
+  }, [containerNames.join("|")]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -176,7 +182,10 @@ export function K8sPodBottomPanel({
         setLogs((prev) => prev + data.line + "\n");
       }
     };
-    window.electronAPI.onK8sLog(handleLog);
+    const unsubscribe = window.electronAPI.onK8sLog?.(handleLog);
+    return () => {
+      unsubscribe?.();
+    };
   }, [name, namespace]);
 
   useEffect(() => {

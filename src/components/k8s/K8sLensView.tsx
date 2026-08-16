@@ -4,10 +4,12 @@ import { K8sIntelligencePanel } from "./K8sIntelligencePanel";
 import { K8sNavigator } from "./K8sNavigator";
 import { K8sPodBottomPanel, PodDockTab } from "./K8sPodBottomPanel";
 import { K8sPodDetail } from "./K8sPodDetail";
+import { K8sPortForwardsPanel } from "./K8sPortForwardsPanel";
 import { K8sResourceDetail } from "./K8sResourceDetail";
 import { K8sResourceTable } from "./K8sResourceTable";
 import { ALL_NAMESPACES, K8sResourceKind, K8sResourceRow } from "./types";
-import { isIntelligenceView, mapResources } from "./utils";
+import { isIntelligenceView, isPortForwardsView, mapResources } from "./utils";
+import { useK8sPortForwardStore } from "../../state/k8sPortForwardStore";
 
 interface PodDockTarget {
   name: string;
@@ -128,6 +130,9 @@ export function K8sLensView() {
   const prevKindRef = useRef<K8sResourceKind>(activeKind);
   const prevNamespaceRef = useRef(selectedNamespace);
   const prevClusterRef = useRef<string | null>(activeClusterId);
+  const startPortForwardListening = useK8sPortForwardStore((state) => state.startListening);
+
+  useEffect(() => startPortForwardListening(), [startPortForwardListening]);
 
   const bumpClusterEpoch = () => {
     clusterEpochRef.current += 1;
@@ -238,6 +243,10 @@ export function K8sLensView() {
       setError(null);
     }
     try {
+      if (isPortForwardsView(kind)) {
+        if (!silent) setRows([]);
+        return;
+      }
       if (isIntelligenceView(kind)) {
         const ns = namespace === ALL_NAMESPACES ? "default" : namespace;
         if (kind === "timeline") {
@@ -585,7 +594,9 @@ export function K8sLensView() {
       <div className="flex-1 flex overflow-hidden min-h-0">
         <K8sNavigator activeKind={activeKind} onSelect={handleNavSelect} />
 
-        {isIntelligenceView(activeKind) ? (
+        {isPortForwardsView(activeKind) ? (
+          <K8sPortForwardsPanel />
+        ) : isIntelligenceView(activeKind) ? (
           <K8sIntelligencePanel
             kind={activeKind}
             namespace={selectedNamespace}

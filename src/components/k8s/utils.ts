@@ -332,6 +332,7 @@ export const TABLE_COLUMNS: Record<
   timeline: [],
   "dependency-graph": [],
   search: [],
+  "port-forwards": [],
 };
 
 export const NAV_SECTIONS = [
@@ -362,6 +363,7 @@ export const NAV_SECTIONS = [
     items: [
       { kind: "services" as K8sResourceKind, label: "Services" },
       { kind: "ingresses" as K8sResourceKind, label: "Ingresses" },
+      { kind: "port-forwards" as K8sResourceKind, label: "Port Forwards" },
     ],
   },
   {
@@ -386,4 +388,8 @@ export const NAV_SECTIONS = [
 
 export function isIntelligenceView(kind: K8sResourceKind): boolean {
   return ["events", "timeline", "dependency-graph", "search"].includes(kind);
+}
+
+export function isPortForwardsView(kind: K8sResourceKind): boolean {
+  return kind === "port-forwards";
 }

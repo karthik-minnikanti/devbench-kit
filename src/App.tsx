@@ -60,6 +60,7 @@ function App() {
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [showGitSetup, setShowGitSetup] = useState(false);
     const [gitRepoPath, setGitRepoPath] = useState<string | null>(null);
+    const [devShellMounted, setDevShellMounted] = useState(false);
     const [pendingItemNav, setPendingItemNav] = useState<{
         toolType: TabType;
         itemId: string;
@@ -95,6 +96,12 @@ function App() {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [loadConfig, loadHistory]);
+
+    useEffect(() => {
+        if (activeTab === 'devshell' || activeTab === 'terminal') {
+            setDevShellMounted(true);
+        }
+    }, [activeTab]);
 
 
     const checkGitSetup = useCallback(async () => {
@@ -267,11 +274,7 @@ function App() {
                 );
             case 'devshell':
             case 'terminal':
-                return (
-                    <Suspense fallback={<ComponentLoader />}>
-                        <DevShell />
-                    </Suspense>
-                );
+                return null;
             case 'notes':
                 return null;
             case 'planner':
@@ -384,6 +387,25 @@ function App() {
                                     onPendingItemHandled={() => setPendingItemNav(null)}
                                 />
                             </Suspense>
+                        </div>
+                        <div
+                            className={
+                                activeTab === 'devshell' || activeTab === 'terminal'
+                                    ? 'absolute inset-0 flex flex-col min-h-0'
+                                    : 'hidden'
+                            }
+                            aria-hidden={activeTab !== 'devshell' && activeTab !== 'terminal'}
+                        >
+                            {devShellMounted && (
+                                <Suspense fallback={<ComponentLoader />}>
+                                    <DevShell
+                                        visible={
+                                            activeTab === 'devshell' ||
+                                            activeTab === 'terminal'
+                                        }
+                                    />
+                                </Suspense>
+                            )}
                         </div>
                     </div>
                 </div>
