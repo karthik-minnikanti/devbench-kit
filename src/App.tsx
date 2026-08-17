@@ -37,6 +37,9 @@ const CsvYamlConverter = lazy(() => import('./components/CsvYamlConverter').then
 const GlobalSearch = lazy(() => import('./components/GlobalSearch').then(m => ({ default: m.GlobalSearch })));
 const DailyPlanner = lazy(() => import('./components/DailyPlanner').then(m => ({ default: m.DailyPlanner })));
 const DevShell = lazy(() => import('./components/devshell/DevShell').then(m => ({ default: m.DevShell })));
+const PasswordManager = lazy(() =>
+    import('./components/passwords/PasswordManager').then((m) => ({ default: m.PasswordManager })),
+);
 // Home is the default view, so import it directly (not lazy) to avoid loading delays
 import { Home } from './components/Home';
 
@@ -61,6 +64,7 @@ function App() {
     const [showGitSetup, setShowGitSetup] = useState(false);
     const [gitRepoPath, setGitRepoPath] = useState<string | null>(null);
     const [devShellMounted, setDevShellMounted] = useState(false);
+    const [vaultMounted, setVaultMounted] = useState(false);
     const [pendingItemNav, setPendingItemNav] = useState<{
         toolType: TabType;
         itemId: string;
@@ -101,6 +105,9 @@ function App() {
         if (activeTab === 'devshell' || activeTab === 'terminal') {
             setDevShellMounted(true);
         }
+        if (activeTab === 'passwords') {
+            setVaultMounted(true);
+        }
     }, [activeTab]);
 
 
@@ -139,7 +146,7 @@ function App() {
     }, [config?.theme]);
 
     // Allowed tabs visible in navigation
-    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'excalidraw', 'uml', 'k8s', 'devshell'];
+    const ALLOWED_TABS: TabType[] = ['home', 'api', 'planner', 'js-runner', 'notes', 'passwords', 'excalidraw', 'uml', 'k8s', 'devshell'];
 
     // Define all tabs array with icon components (keeping all code, but filtering for display)
     const allTabs = [
@@ -158,6 +165,7 @@ function App() {
         { id: 'devshell' as TabType, label: 'DevShell', icon: 'Terminal', description: 'Chrome-style tabs for local, K8s, and Docker shells' },
         { id: 'terminal' as TabType, label: 'DevShell', icon: 'Terminal', description: 'Chrome-style tabs for local, K8s, and Docker shells' },
         { id: 'notes' as TabType, label: 'Notes', icon: 'FileText', description: 'Take and organize notes' },
+        { id: 'passwords' as TabType, label: 'Vault', icon: 'Key', description: 'Encrypted password manager' },
         { id: 'planner' as TabType, label: 'Daily Planner', icon: 'Calendar', description: 'Plan your day with tasks and notes' },
         { id: 'excalidraw' as TabType, label: 'Excalidraw', icon: 'Pen', description: 'Create diagrams' },
         { id: 'uml' as TabType, label: 'UML Editor', icon: 'Chart', description: 'Create UML diagrams' },
@@ -276,6 +284,8 @@ function App() {
             case 'terminal':
                 return null;
             case 'notes':
+                return null;
+            case 'passwords':
                 return null;
             case 'planner':
                 return (
@@ -403,6 +413,28 @@ function App() {
                                             activeTab === 'devshell' ||
                                             activeTab === 'terminal'
                                         }
+                                    />
+                                </Suspense>
+                            )}
+                        </div>
+                        <div
+                            className={
+                                activeTab === 'passwords'
+                                    ? 'absolute inset-0 flex flex-col min-h-0'
+                                    : 'hidden'
+                            }
+                            aria-hidden={activeTab !== 'passwords'}
+                        >
+                            {vaultMounted && (
+                                <Suspense fallback={<ComponentLoader />}>
+                                    <PasswordManager
+                                        visible={activeTab === 'passwords'}
+                                        pendingItemId={
+                                            pendingItemNav?.toolType === 'passwords'
+                                                ? pendingItemNav.itemId
+                                                : undefined
+                                        }
+                                        onPendingItemHandled={() => setPendingItemNav(null)}
                                     />
                                 </Suspense>
                             )}

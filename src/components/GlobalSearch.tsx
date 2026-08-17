@@ -15,7 +15,8 @@ type SearchResultType =
   | "history"
   | "snippet"
   | "command"
-  | "devshell";
+  | "devshell"
+  | "vault";
 
 interface SearchResult {
   id: string;
@@ -85,6 +86,14 @@ const DEVSHELL_QUICK_ACTIONS: SearchResult[] = [
 
 const OTHER_QUICK_ACTIONS: SearchResult[] = [
   {
+    id: "cmd-open-vault",
+    type: "command",
+    title: "Open Vault",
+    content: "Encrypted password manager — copy logins in one click",
+    keywords: ["password", "vault", "login", "credential", "key"],
+    action: () => openTool("passwords"),
+  },
+  {
     id: "cmd-new-note",
     type: "command",
     title: "Create New Note",
@@ -121,6 +130,8 @@ function resultIcon(type: SearchResultType): string {
   switch (type) {
     case "devshell":
       return "⌘";
+    case "vault":
+      return "🔐";
     case "note":
       return "📝";
     case "drawing":
@@ -145,6 +156,7 @@ export function GlobalSearch() {
   const [drawings, setDrawings] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [snippets, setSnippets] = useState<any[]>([]);
+  const [logins, setLogins] = useState<PasswordVaultSummary[]>([]);
 
   const closeSearch = useCallback(() => {
     setIsOpen(false);
@@ -187,6 +199,12 @@ export function GlobalSearch() {
       if (snippetsResult.snippets) {
         setSnippets(snippetsResult.snippets || []);
       }
+
+      if (electronAPI.passwords) {
+        const vault = await electronAPI.passwords.list();
+        if (vault.success) setLogins(vault.entries || []);
+        else setLogins([]);
+      }
     } catch (err) {
       console.error("Failed to load data for search:", err);
     }
@@ -196,6 +214,7 @@ export function GlobalSearch() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
+        void loadData();
         setIsOpen(true);
         setTimeout(() => inputRef.current?.focus(), 0);
       }
@@ -326,8 +345,24 @@ export function GlobalSearch() {
       }
     });
 
+    logins.forEach((login) => {
+      if (
+        login.title.toLowerCase().includes(lowerQuery) ||
+        login.username.toLowerCase().includes(lowerQuery) ||
+        login.domain.toLowerCase().includes(lowerQuery)
+      ) {
+        results.push({
+          id: login.id,
+          type: "vault",
+          title: login.title,
+          content: [login.username, login.domain].filter(Boolean).join(" · "),
+          action: () => openTool("passwords", { itemId: login.id }),
+        });
+      }
+    });
+
     return results.slice(0, 12);
-  }, [debouncedQuery, notes, drawings, history, snippets]);
+  }, [debouncedQuery, notes, drawings, history, snippets, logins]);
 
   useEffect(() => {
     setResults(searchResults);

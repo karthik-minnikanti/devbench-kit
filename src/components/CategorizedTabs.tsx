@@ -26,7 +26,8 @@ export type TabType =
   | "regex"
   | "csv-yaml"
   | "profile"
-  | "git-settings";
+  | "git-settings"
+  | "passwords";
 
 interface Tab {
   id: TabType;

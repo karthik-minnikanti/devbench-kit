@@ -227,6 +227,18 @@ declare global {
                 delete: (noteId: string) => Promise<any>;
                 load: (noteId: string) => Promise<any>;
             };
+            passwords: {
+                status: () => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; count?: number; error?: string }>;
+                setup: (masterPassword: string) => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; error?: string }>;
+                unlock: (masterPassword: string) => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; error?: string }>;
+                lock: () => Promise<{ success: boolean; unlocked?: boolean; error?: string }>;
+                changeMaster: (currentPassword: string, nextPassword: string) => Promise<{ success: boolean; error?: string }>;
+                list: () => Promise<{ success: boolean; entries?: PasswordVaultSummary[]; error?: string }>;
+                get: (id: string) => Promise<{ success: boolean; entry?: PasswordVaultEntry; error?: string }>;
+                save: (entry: Partial<PasswordVaultEntry>) => Promise<{ success: boolean; entry?: PasswordVaultEntry; summary?: PasswordVaultSummary; error?: string }>;
+                delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+                copy: (id: string, field: 'password' | 'username' | 'domain') => Promise<{ success: boolean; field?: string; clearsInMs?: number; error?: string }>;
+            };
             drawings: {
                 list: () => Promise<any>;
                 save: (drawing: any) => Promise<any>;
@@ -308,6 +320,7 @@ declare global {
                     message?: string;
                     releasesUrl?: string;
                 } | null>;
+                openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;
@@ -370,6 +383,35 @@ declare global {
         message?: string;
         startedAt: number;
         portKey?: string;
+    }
+
+    interface PasswordVaultEntry {
+        id: string;
+        title: string;
+        username: string;
+        password: string;
+        domain: string;
+        notes: string;
+        favorite: boolean;
+        createdAt: number;
+        updatedAt: number;
+        lastUsedAt?: number;
+        strength?: 'weak' | 'fair' | 'good' | 'strong';
+    }
+
+    interface PasswordVaultSummary {
+        id: string;
+        title: string;
+        username: string;
+        domain: string;
+        notes: string;
+        favorite: boolean;
+        createdAt: number;
+        updatedAt: number;
+        lastUsedAt?: number;
+        passwordLength: number;
+        strength: 'weak' | 'fair' | 'good' | 'strong';
+        reusedCount: number;
     }
 }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron';
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
@@ -21,6 +21,7 @@ import { terminalService } from './terminalService';
 import { terminalHistoryStore } from './terminalHistoryStore';
 import { kubectlPath, kubectlSpawnEnv } from './terminalShell';
 import { getArchMismatchWarning } from './archMismatch';
+import { vaultStore } from './vaultStore';
 import {
     getAutoUpdateStatus,
     isAutoUpdateEnabled,
@@ -295,9 +296,14 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+    vaultStore.lock();
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+app.on('before-quit', () => {
+    vaultStore.lock();
 });
 
 function getUserDataPath(filename: string): string {
@@ -2870,6 +2876,86 @@ ipcMain.handle('notes:load', async (_event: any, noteId: string) => {
     }
 });
 
+ipcMain.handle('passwords:status', async () => {
+    try {
+        return { success: true, ...(await vaultStore.status()) };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), exists: false, unlocked: false };
+    }
+});
+
+ipcMain.handle('passwords:setup', async (_event: any, masterPassword: string) => {
+    try {
+        return await vaultStore.setup(masterPassword);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:unlock', async (_event: any, masterPassword: string) => {
+    try {
+        return await vaultStore.unlock(masterPassword);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:lock', async () => {
+    try {
+        return vaultStore.lock();
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:change-master', async (_event: any, currentPassword: string, nextPassword: string) => {
+    try {
+        return await vaultStore.changeMasterPassword(currentPassword, nextPassword);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:list', async () => {
+    try {
+        return vaultStore.list();
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error), entries: [] };
+    }
+});
+
+ipcMain.handle('passwords:get', async (_event: any, id: string) => {
+    try {
+        return vaultStore.get(id);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:save', async (_event: any, entry: any) => {
+    try {
+        return await vaultStore.save(entry);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:delete', async (_event: any, id: string) => {
+    try {
+        return await vaultStore.remove(id);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('passwords:copy', async (_event: any, id: string, field: 'password' | 'username' | 'domain') => {
+    try {
+        return await vaultStore.copyField(id, field);
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
 // Drawings handlers
 ipcMain.handle('drawings:list', async () => {
     try {
@@ -3724,6 +3810,22 @@ ipcMain.handle('updater:getStatus', () => {
 
 ipcMain.handle('app:getArchMismatch', () => {
     return getArchMismatchWarning();
+});
+
+ipcMain.handle('app:openExternal', async (_event: any, url: string) => {
+    try {
+        if (!url || typeof url !== 'string') {
+            return { success: false, error: 'Invalid URL' };
+        }
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return { success: false, error: 'Only http(s) URLs are allowed' };
+        }
+        await shell.openExternal(parsed.toString());
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
 });
 
 // Auto-updater event listeners

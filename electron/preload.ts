@@ -220,6 +220,20 @@ try {
             delete: (noteId: string) => ipcRenderer.invoke('notes:delete', noteId),
             load: (noteId: string) => ipcRenderer.invoke('notes:load', noteId),
         },
+        passwords: {
+            status: () => ipcRenderer.invoke('passwords:status'),
+            setup: (masterPassword: string) => ipcRenderer.invoke('passwords:setup', masterPassword),
+            unlock: (masterPassword: string) => ipcRenderer.invoke('passwords:unlock', masterPassword),
+            lock: () => ipcRenderer.invoke('passwords:lock'),
+            changeMaster: (currentPassword: string, nextPassword: string) =>
+                ipcRenderer.invoke('passwords:change-master', currentPassword, nextPassword),
+            list: () => ipcRenderer.invoke('passwords:list'),
+            get: (id: string) => ipcRenderer.invoke('passwords:get', id),
+            save: (entry: any) => ipcRenderer.invoke('passwords:save', entry),
+            delete: (id: string) => ipcRenderer.invoke('passwords:delete', id),
+            copy: (id: string, field: 'password' | 'username' | 'domain') =>
+                ipcRenderer.invoke('passwords:copy', id, field),
+        },
         drawings: {
             list: () => ipcRenderer.invoke('drawings:list'),
             save: (drawing: any) => ipcRenderer.invoke('drawings:save', drawing),
@@ -298,6 +312,7 @@ try {
         },
         app: {
             getArchMismatch: () => ipcRenderer.invoke('app:getArchMismatch'),
+            openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
         },
         updater: {
             checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
@@ -435,6 +450,18 @@ declare global {
                 delete: (noteId: string) => Promise<any>;
                 load: (noteId: string) => Promise<any>;
             };
+            passwords: {
+                status: () => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; count?: number; error?: string }>;
+                setup: (masterPassword: string) => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; error?: string }>;
+                unlock: (masterPassword: string) => Promise<{ success: boolean; exists?: boolean; unlocked?: boolean; error?: string }>;
+                lock: () => Promise<{ success: boolean; unlocked?: boolean; error?: string }>;
+                changeMaster: (currentPassword: string, nextPassword: string) => Promise<{ success: boolean; error?: string }>;
+                list: () => Promise<{ success: boolean; entries?: any[]; error?: string }>;
+                get: (id: string) => Promise<{ success: boolean; entry?: any; error?: string }>;
+                save: (entry: any) => Promise<{ success: boolean; entry?: any; summary?: any; error?: string }>;
+                delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+                copy: (id: string, field: 'password' | 'username' | 'domain') => Promise<{ success: boolean; field?: string; clearsInMs?: number; error?: string }>;
+            };
             drawings: {
                 list: () => Promise<any>;
                 save: (drawing: any) => Promise<any>;
@@ -487,6 +514,7 @@ declare global {
             };
             app: {
                 getArchMismatch: () => Promise<any>;
+                openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;

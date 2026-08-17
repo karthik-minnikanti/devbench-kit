@@ -21,6 +21,10 @@ type ContinueItem = {
 const TOOL_SECTIONS = HOME_TOOL_SECTIONS;
 type ToolSectionId = HomeToolSectionId;
 
+const VAULT_TOOL = HOME_TOOL_SECTIONS.flatMap((section) => section.tools).find(
+  (tool) => tool.id === "passwords",
+);
+
 function greetingForHour(hour: number): string {
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
@@ -64,6 +68,7 @@ export function Home() {
     history: 0,
     notes: 0,
     drawings: 0,
+    vault: "—" as string | number,
     tasksDone: 0,
     tasksTotal: 0,
   });
@@ -74,10 +79,12 @@ export function Home() {
       const { getElectronAPI } = await import("../utils/electronAPI");
       if (!getElectronAPI()) return;
 
-      const [history, notes, drawings] = await Promise.all([
+      const [history, notes, drawings, vaultStatus] = await Promise.all([
         getHistory().catch(() => []),
         getNotes().catch(() => []),
         getDrawings().catch(() => []),
+        getElectronAPI()?.passwords?.status()?.catch(() => null) ??
+          Promise.resolve(null),
       ]);
 
       const plannerEntry = await getPlannerEntry(formatDateLocal()).catch(
@@ -109,6 +116,11 @@ export function Home() {
         history: history.length,
         notes: notes.length,
         drawings: drawings.length,
+        vault: !vaultStatus?.exists
+          ? "—"
+          : vaultStatus.unlocked
+            ? vaultStatus.count ?? 0
+            : "Locked",
         tasksDone: tasks.filter((t: any) => t.completed).length,
         tasksTotal: tasks.length,
       });
@@ -141,7 +153,7 @@ export function Home() {
     () => [
       { label: "History", value: stats.history },
       { label: "Notes", value: stats.notes },
-      { label: "Drawings", value: stats.drawings },
+      { label: "Vault", value: stats.vault },
       {
         label: "Tasks today",
         value:
@@ -151,8 +163,10 @@ export function Home() {
     [stats],
   );
 
-  const activeTools =
-    TOOL_SECTIONS.find((s) => s.id === activeSection)?.tools ?? [];
+  const activeTools = (
+    TOOL_SECTIONS.find((s) => s.id === activeSection)?.tools ?? []
+  ).filter((tool) => tool.id !== "passwords");
+  const homeTools = VAULT_TOOL ? [VAULT_TOOL, ...activeTools] : activeTools;
 
   const openContinue = (item: ContinueItem) => {
     openTool(item.type === "note" ? "notes" : "excalidraw", {
@@ -201,9 +215,13 @@ export function Home() {
               <PanelHeader
                 title="Continue"
                 action={
-                  <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                    Notes & drawings
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openTool("passwords")}
+                    className="text-[10px] text-[var(--color-primary)] hover:underline"
+                  >
+                    Vault
+                  </button>
                 }
               />
               {continueItems.length === 0 ? (
@@ -302,19 +320,35 @@ export function Home() {
 
           {/* Metrics strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[var(--color-border)] border border-[var(--color-border)] rounded-lg overflow-hidden">
-            {metrics.map((metric) => (
-              <div
-                key={metric.label}
-                className="bg-[var(--color-card)] px-4 py-3 flex flex-col gap-0.5"
-              >
-                <span className="caption-uppercase !text-[10px]">
-                  {metric.label}
-                </span>
-                <span className="text-lg font-mono font-medium text-[var(--color-text-primary)] tabular-nums leading-none">
-                  {loading ? "—" : metric.value}
-                </span>
-              </div>
-            ))}
+            {metrics.map((metric) => {
+              const isVault = metric.label === "Vault";
+              const className =
+                "bg-[var(--color-card)] px-4 py-3 flex flex-col gap-0.5 text-left w-full";
+              const body = (
+                <>
+                  <span className="caption-uppercase !text-[10px]">
+                    {metric.label}
+                  </span>
+                  <span className="text-lg font-mono font-medium text-[var(--color-text-primary)] tabular-nums leading-none">
+                    {loading ? "—" : metric.value}
+                  </span>
+                </>
+              );
+              return isVault ? (
+                <button
+                  key={metric.label}
+                  type="button"
+                  onClick={() => openTool("passwords")}
+                  className={`${className} hover:bg-[var(--color-muted)]/60 transition-colors`}
+                >
+                  {body}
+                </button>
+              ) : (
+                <div key={metric.label} className={className}>
+                  {body}
+                </div>
+              );
+            })}
           </div>
 
           {/* Tools */}
@@ -339,20 +373,22 @@ export function Home() {
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {activeTools.map((tool) => (
+              {homeTools.map((tool) => {
+                const featured = tool.id === "passwords" || tool.id === "devshell";
+                return (
                 <button
                   key={tool.id}
                   type="button"
                   onClick={() => openTool(tool.id)}
                   className={`card p-4 text-left transition-colors hover:border-[var(--color-border-strong)] group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] ${
-                    tool.id === "devshell" ? "devshell-tool-tile--featured" : ""
+                    featured ? "devshell-tool-tile--featured" : ""
                   }`}
                   aria-label={`Open ${tool.label}. ${tool.description}`}
                 >
                   <div className="flex items-start gap-3">
                     <div
                       className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                        tool.id === "devshell"
+                        featured
                           ? "bg-[var(--color-primary)]/15 group-hover:bg-[var(--color-primary)]/20"
                           : "bg-[var(--color-muted)] group-hover:bg-[var(--color-primary)]/10"
                       }`}
@@ -360,7 +396,7 @@ export function Home() {
                       <Icon
                         name={tool.icon}
                         className={`w-4 h-4 ${
-                          tool.id === "devshell"
+                          featured
                             ? "text-[var(--color-primary)]"
                             : "text-[var(--color-text-secondary)] group-hover:text-[var(--color-primary)]"
                         }`}
@@ -370,6 +406,9 @@ export function Home() {
                     <div className="min-w-0 pt-0.5">
                       <p className="text-sm font-semibold text-[var(--color-text-primary)] leading-snug flex items-center gap-2">
                         {tool.label}
+                        {tool.id === "passwords" && (
+                          <span className="devshell-featured-badge">Pinned</span>
+                        )}
                         {tool.id === "devshell" && (
                           <span className="devshell-featured-badge">Featured</span>
                         )}
@@ -380,7 +419,8 @@ export function Home() {
                     </div>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
