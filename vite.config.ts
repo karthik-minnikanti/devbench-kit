@@ -66,6 +66,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         planner: path.resolve(__dirname, 'planner.html'),
+        wellness: path.resolve(__dirname, 'wellness.html'),
       },
       output: {
         manualChunks: (id) => {

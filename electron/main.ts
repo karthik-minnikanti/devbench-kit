@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, shell, Notification, screen } from 'electron';
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
@@ -425,6 +425,139 @@ ipcMain.handle('window:openPlanner', async () => {
     plannerWindow.on('closed', () => {
         plannerWindow = null;
     });
+});
+
+async function resolvePreloadPath(): Promise<string> {
+    let preloadPath = path.resolve(__dirname, 'preload.mjs');
+    try {
+        await fs.access(preloadPath);
+        return preloadPath;
+    } catch {
+        const alternatives = [
+            path.resolve(__dirname, 'preload.js'),
+            path.resolve(__dirname, 'preload.mjs'),
+            path.join(__dirname, 'preload.js'),
+            path.join(__dirname, 'preload.mjs'),
+        ];
+        for (const altPath of alternatives) {
+            try {
+                await fs.access(altPath);
+                return altPath;
+            } catch {
+                // Continue trying
+            }
+        }
+    }
+    return preloadPath;
+}
+
+// Wellness break floating window (outside main app, bottom of screen)
+let wellnessWindow: BrowserWindow | null = null;
+let wellnessAllowClose = false;
+
+function positionWellnessWindow(win: BrowserWindow) {
+    const display = screen.getPrimaryDisplay();
+    const { x, y, width, height } = display.workArea;
+    const margin = 20;
+    const winW = 380;
+    const winH = 420;
+    win.setSize(winW, winH);
+    win.setPosition(
+        Math.round(x + (width - winW) / 2),
+        Math.round(y + height - winH - margin),
+    );
+}
+
+ipcMain.handle('window:openWellnessBreak', async () => {
+    if (wellnessWindow && !wellnessWindow.isDestroyed()) {
+        positionWellnessWindow(wellnessWindow);
+        wellnessWindow.show();
+        wellnessWindow.focus();
+        wellnessWindow.webContents.send('wellness:reset');
+        return { success: true };
+    }
+
+    const preloadPath = await resolvePreloadPath();
+    const winW = 380;
+    const winH = 420;
+    wellnessAllowClose = false;
+
+    wellnessWindow = new BrowserWindow({
+        width: winW,
+        height: winH,
+        show: false,
+        title: 'Hourly reset',
+        frame: false,
+        transparent: true,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        fullscreenable: false,
+        closable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        hasShadow: false,
+        focusable: true,
+        webPreferences: {
+            preload: preloadPath,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: false,
+            webSecurity: true,
+        },
+        ...(process.platform === 'darwin'
+            ? {
+                  type: 'panel' as const,
+              }
+            : {}),
+    });
+
+    wellnessWindow.setAlwaysOnTop(true, 'floating');
+    if (process.platform === 'darwin') {
+        wellnessWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+    positionWellnessWindow(wellnessWindow);
+
+    wellnessWindow.on('close', (event) => {
+        if (!wellnessAllowClose) {
+            event.preventDefault();
+        }
+    });
+
+    if (isDev) {
+        wellnessWindow.loadURL('http://localhost:5173/wellness.html');
+    } else {
+        wellnessWindow.loadFile(path.join(__dirname, '../dist/wellness.html'));
+    }
+
+    wellnessWindow.once('ready-to-show', () => {
+        if (wellnessWindow && !wellnessWindow.isDestroyed()) {
+            positionWellnessWindow(wellnessWindow);
+            wellnessWindow.show();
+            wellnessWindow.focus();
+        }
+    });
+
+    wellnessWindow.on('closed', () => {
+        wellnessWindow = null;
+        wellnessAllowClose = false;
+        BrowserWindow.getAllWindows().forEach((window) => {
+            if (!window.isDestroyed()) {
+                window.webContents.send('wellness:closed');
+            }
+        });
+    });
+
+    return { success: true };
+});
+
+ipcMain.handle('window:closeWellnessBreak', async () => {
+    if (wellnessWindow && !wellnessWindow.isDestroyed()) {
+        wellnessAllowClose = true;
+        wellnessWindow.setClosable(true);
+        wellnessWindow.close();
+    }
+    return { success: true };
 });
 
 // Planner update broadcast handler
@@ -3822,6 +3955,32 @@ ipcMain.handle('app:openExternal', async (_event: any, url: string) => {
             return { success: false, error: 'Only http(s) URLs are allowed' };
         }
         await shell.openExternal(parsed.toString());
+        return { success: true };
+    } catch (error: any) {
+        return { success: false, error: error.message || String(error) };
+    }
+});
+
+ipcMain.handle('notification:show', async (_event: any, payload: { title?: string; body?: string; silent?: boolean }) => {
+    try {
+        if (!Notification.isSupported()) {
+            return { success: false, error: 'Notifications are not supported on this system' };
+        }
+        const title = (payload?.title || 'DevBench').trim() || 'DevBench';
+        const body = (payload?.body || '').trim();
+        const notification = new Notification({
+            title,
+            body,
+            silent: Boolean(payload?.silent),
+        });
+        notification.on('click', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                mainWindow.show();
+                mainWindow.focus();
+            }
+        });
+        notification.show();
         return { success: true };
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };

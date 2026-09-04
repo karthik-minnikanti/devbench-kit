@@ -2218,6 +2218,387 @@ input[type="radio"]:disabled {
   }
 }
 
+/* Hourly wellness break (original squat + glass, smoother motion) */
+.wellness-window-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem;
+  box-sizing: border-box;
+  background: transparent;
+  overflow: hidden;
+}
+
+.wellness-break {
+  width: min(22rem, 100%);
+  border-radius: 0.875rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 12%, transparent);
+  overflow: hidden;
+}
+
+.wellness-break__drag {
+  height: 0.7rem;
+  -webkit-app-region: drag;
+  app-region: drag;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-muted) 70%, transparent),
+    transparent
+  );
+}
+
+.wellness-break__stage {
+  position: relative;
+  height: 8.25rem;
+  background:
+    radial-gradient(ellipse at 28% 85%, color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 52%),
+    radial-gradient(ellipse at 72% 88%, color-mix(in srgb, #3b82a8 12%, transparent), transparent 48%),
+    linear-gradient(180deg, var(--color-background-soft, var(--color-muted)) 0%, var(--color-card) 100%);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2.75rem;
+  padding-bottom: 1rem;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  overflow: hidden;
+}
+
+.wellness-break__floor {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 0.55rem;
+  height: 0.35rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  pointer-events: none;
+}
+
+.wellness-break__content {
+  padding: 0.875rem 1rem 1rem;
+  border-top: 1px solid var(--color-border);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.wellness-break__action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.wellness-break__action:hover {
+  border-color: var(--color-border-strong);
+  transform: translateY(-1px);
+}
+
+.wellness-break__action:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.wellness-break__action--done {
+  border-color: color-mix(in srgb, var(--color-semantic-success) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-semantic-success) 8%, var(--color-background));
+}
+
+.wellness-squatter {
+  position: relative;
+  width: 2.6rem;
+  height: 4.7rem;
+  transform-origin: 50% 100%;
+  z-index: 1;
+}
+
+.wellness-squatter__shadow {
+  position: absolute;
+  left: 50%;
+  bottom: -0.15rem;
+  width: 1.8rem;
+  height: 0.28rem;
+  margin-left: -0.9rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+  animation: wellness-shadow 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-squatter--active {
+  animation: wellness-squat 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-squatter--rep {
+  animation: wellness-squat-rep 0.42s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+.wellness-squatter--done {
+  animation: wellness-squat-done 0.7s ease-out 1 both;
+}
+
+.wellness-squatter--done .wellness-squatter__shadow {
+  animation: none;
+}
+
+.wellness-squatter__arms {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 1.15rem;
+  height: 1.2rem;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.wellness-squatter__arms span {
+  width: 0.32rem;
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--color-text-secondary);
+  transform-origin: top center;
+}
+
+.wellness-squatter--active .wellness-squatter__arms span:first-child {
+  animation: wellness-arm-l 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-squatter--active .wellness-squatter__arms span:last-child {
+  animation: wellness-arm-r 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-squatter__head {
+  position: absolute;
+  left: 50%;
+  top: 0.05rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-left: -0.45rem;
+  border-radius: 9999px;
+  background: var(--color-text-primary);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 12%, transparent);
+}
+
+.wellness-squatter__body {
+  position: absolute;
+  left: 50%;
+  top: 1.05rem;
+  width: 1.2rem;
+  height: 1.6rem;
+  margin-left: -0.6rem;
+  border-radius: 0.4rem;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-primary) 88%, #fff),
+    color-mix(in srgb, var(--color-primary) 70%, var(--color-text-primary))
+  );
+}
+
+.wellness-squatter__legs {
+  position: absolute;
+  left: 0.22rem;
+  right: 0.22rem;
+  bottom: 0.05rem;
+  height: 1.85rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.wellness-squatter__legs span {
+  width: 0.46rem;
+  height: 100%;
+  border-radius: 0.28rem;
+  background: var(--color-text-secondary);
+  transform-origin: top center;
+}
+
+.wellness-squatter--active .wellness-squatter__legs span:first-child {
+  animation: wellness-leg-l 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-squatter--active .wellness-squatter__legs span:last-child {
+  animation: wellness-leg-r 1.05s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.wellness-glass {
+  position: relative;
+  width: 2.15rem;
+  height: 2.85rem;
+  border: 2px solid color-mix(in srgb, var(--color-text-secondary) 90%, transparent);
+  border-top: none;
+  border-radius: 0.12rem 0.12rem 0.5rem 0.5rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-background) 65%, transparent);
+  transform-origin: 50% 100%;
+  animation: wellness-glass-idle 2.8s ease-in-out infinite;
+  z-index: 1;
+}
+
+.wellness-glass--full {
+  animation: wellness-glass-cheers 0.7s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+
+.wellness-glass__rim {
+  position: absolute;
+  top: -0.14rem;
+  left: -0.22rem;
+  right: -0.22rem;
+  height: 0.28rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-text-secondary) 92%, transparent);
+  z-index: 3;
+}
+
+.wellness-glass__shine {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.28rem;
+  width: 0.26rem;
+  height: 52%;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), transparent);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.wellness-glass__water {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #6eb8d6 80%, #fff),
+    color-mix(in srgb, #2f7ea3 75%, var(--color-primary))
+  );
+  transition: height 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+
+.wellness-glass__wave {
+  position: absolute;
+  top: -0.28rem;
+  left: -35%;
+  width: 170%;
+  height: 0.55rem;
+  border-radius: 40%;
+  background: rgba(255, 255, 255, 0.35);
+  animation: wellness-wave 1.8s linear infinite;
+}
+
+.wellness-glass--filling .wellness-glass__water,
+.wellness-glass--full .wellness-glass__water {
+  animation: wellness-ripple 1.5s ease-in-out infinite;
+}
+
+.wellness-break__confetti {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 18% 28%, var(--color-primary) 0 2.5px, transparent 3.5px),
+    radial-gradient(circle at 72% 22%, var(--color-semantic-success) 0 2.5px, transparent 3.5px),
+    radial-gradient(circle at 40% 68%, var(--color-semantic-warning) 0 2px, transparent 3px),
+    radial-gradient(circle at 82% 58%, var(--color-primary) 0 2px, transparent 3px),
+    radial-gradient(circle at 55% 16%, #5eb0d4 0 2px, transparent 3px);
+  animation: wellness-pop 0.95s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.wellness-break__stage.is-celebrating .wellness-squatter,
+.wellness-break__stage.is-celebrating .wellness-glass {
+  animation: wellness-win 0.75s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+
+@keyframes wellness-squat {
+  0%, 100% { transform: scaleY(1) translateY(0); }
+  40% { transform: scaleY(0.78) translateY(0.48rem); }
+  55% { transform: scaleY(0.8) translateY(0.42rem); }
+}
+
+@keyframes wellness-squat-rep {
+  0% { transform: scaleY(1) translateY(0); }
+  45% { transform: scaleY(0.72) translateY(0.55rem); }
+  100% { transform: scaleY(1) translateY(0); }
+}
+
+@keyframes wellness-squat-done {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(-0.35rem); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes wellness-arm-l {
+  0%, 100% { transform: rotate(6deg); }
+  40% { transform: rotate(22deg); }
+  55% { transform: rotate(20deg); }
+}
+
+@keyframes wellness-arm-r {
+  0%, 100% { transform: rotate(-6deg); }
+  40% { transform: rotate(-22deg); }
+  55% { transform: rotate(-20deg); }
+}
+
+@keyframes wellness-leg-l {
+  0%, 100% { transform: rotate(0deg); }
+  40% { transform: rotate(16deg); }
+  55% { transform: rotate(14deg); }
+}
+
+@keyframes wellness-leg-r {
+  0%, 100% { transform: rotate(0deg); }
+  40% { transform: rotate(-16deg); }
+  55% { transform: rotate(-14deg); }
+}
+
+@keyframes wellness-shadow {
+  0%, 100% { transform: scaleX(1); opacity: 0.85; }
+  40% { transform: scaleX(1.2); opacity: 1; }
+  55% { transform: scaleX(1.15); opacity: 1; }
+}
+
+@keyframes wellness-glass-idle {
+  0%, 100% { transform: rotate(-1.2deg); }
+  50% { transform: rotate(1.2deg); }
+}
+
+@keyframes wellness-glass-cheers {
+  0% { transform: rotate(0) translateY(0); }
+  40% { transform: rotate(-10deg) translateY(-5px); }
+  100% { transform: rotate(0) translateY(0); }
+}
+
+@keyframes wellness-wave {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(18%); }
+}
+
+@keyframes wellness-ripple {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.1); }
+}
+
+@keyframes wellness-pop {
+  0% { opacity: 0; transform: scale(0.85); }
+  35% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+@keyframes wellness-win {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06) translateY(-3px); }
+  100% { transform: scale(1); }
+}
+
 .devshell-tool-tile--featured {
   border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
   background: color-mix(in srgb, var(--color-primary) 4%, var(--color-card));

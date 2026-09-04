@@ -8,6 +8,7 @@ import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { GitSetupDialog } from './components/GitSetupDialog';
 import { GitSettings } from './components/GitSettings';
 import { UpdateNotification } from './components/UpdateNotification';
+import { WellnessBreak } from './components/WellnessBreak';
 import { ArchMismatchBanner } from './components/ArchMismatchBanner';
 import { EulaModal } from './components/EulaModal';
 import { isEulaAccepted } from './utils/eula';
@@ -480,6 +481,7 @@ function App() {
 
             {/* Update Notification */}
             <UpdateNotification />
+            <WellnessBreak />
 
             {!eulaAccepted && (
                 <EulaModal onAccepted={() => setEulaAccepted(true)} />

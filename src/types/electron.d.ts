@@ -250,6 +250,10 @@ declare global {
                 maximize: () => Promise<void>;
                 close: () => Promise<void>;
                 openPlanner: () => Promise<void>;
+                openWellnessBreak: () => Promise<{ success: boolean }>;
+                closeWellnessBreak: () => Promise<{ success: boolean }>;
+                onWellnessReset: (callback: () => void) => () => void;
+                onWellnessClosed: (callback: () => void) => () => void;
             };
             planner: {
                 get: (date: string) => Promise<any>;
@@ -321,6 +325,13 @@ declare global {
                     releasesUrl?: string;
                 } | null>;
                 openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+            };
+            notification: {
+                show: (payload: {
+                    title?: string;
+                    body?: string;
+                    silent?: boolean;
+                }) => Promise<{ success: boolean; error?: string }>;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;

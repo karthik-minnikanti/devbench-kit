@@ -245,6 +245,18 @@ try {
             maximize: () => ipcRenderer.invoke('window:maximize'),
             close: () => ipcRenderer.invoke('window:close'),
             openPlanner: () => ipcRenderer.invoke('window:openPlanner'),
+            openWellnessBreak: () => ipcRenderer.invoke('window:openWellnessBreak'),
+            closeWellnessBreak: () => ipcRenderer.invoke('window:closeWellnessBreak'),
+            onWellnessReset: (callback: () => void) => {
+                const handler = () => callback();
+                ipcRenderer.on('wellness:reset', handler);
+                return () => ipcRenderer.removeListener('wellness:reset', handler);
+            },
+            onWellnessClosed: (callback: () => void) => {
+                const handler = () => callback();
+                ipcRenderer.on('wellness:closed', handler);
+                return () => ipcRenderer.removeListener('wellness:closed', handler);
+            },
         },
         planner: {
             get: (date: string) => ipcRenderer.invoke('planner:get', date),
@@ -313,6 +325,10 @@ try {
         app: {
             getArchMismatch: () => ipcRenderer.invoke('app:getArchMismatch'),
             openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+        },
+        notification: {
+            show: (payload: { title?: string; body?: string; silent?: boolean }) =>
+                ipcRenderer.invoke('notification:show', payload),
         },
         updater: {
             checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
@@ -473,6 +489,10 @@ declare global {
                 maximize: () => Promise<void>;
                 close: () => Promise<void>;
                 openPlanner: () => Promise<void>;
+                openWellnessBreak: () => Promise<{ success: boolean }>;
+                closeWellnessBreak: () => Promise<{ success: boolean }>;
+                onWellnessReset: (callback: () => void) => () => void;
+                onWellnessClosed: (callback: () => void) => () => void;
             };
             planner: {
                 get: (date: string) => Promise<any>;
@@ -515,6 +535,13 @@ declare global {
             app: {
                 getArchMismatch: () => Promise<any>;
                 openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+            };
+            notification: {
+                show: (payload: {
+                    title?: string;
+                    body?: string;
+                    silent?: boolean;
+                }) => Promise<{ success: boolean; error?: string }>;
             };
             updater: {
                 checkForUpdates: () => Promise<any>;
